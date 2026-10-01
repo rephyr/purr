@@ -137,7 +137,9 @@ you first: ctrl+s sends it, ctrl+o sends yours.
 
 `/pr` turns the changes into a GitHub pull request: the model drafts the title and description,
 you edit them in a popup, and only then purr makes a branch, commits with
-`Co-Authored-By: purr-<model>`, pushes and runs `gh pr create`. For a cute avatar on those
+`Co-Authored-By: purr-<model>`, pushes and runs `gh pr create`. The title ends with the model
+(`Fix the discount · qwen3-coder-32k`, so with squash merging it shows on main) and the PR gets
+a pink `🐾 <model>` label. For a cute avatar on those
 commits, give purr its own GitHub account and set `co_author_email` in `config.toml`.
 
 ## Benchmark: purr vs OpenCode

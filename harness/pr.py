@@ -65,7 +65,22 @@ def draft(agent):
     m = re.search(r"TITLE:\s*(.+)", text)
     title = (m.group(1).strip().strip('"') if m else text.splitlines()[0] if text else "Changes from purr")[:100]
     body = text.split("BODY:", 1)[1].strip() if "BODY:" in text else text
-    return title, body
+    return with_model(title, agent.model_name), body
+
+
+def with_model(title, model):
+    """"Fix the discount · qwen3-coder-32k": with squash merging the PR title becomes the commit
+    title on main, so the model shows in GitHub's top bar (the avatar can only say purr-harness)."""
+    return title if title.endswith(f"· {model}") else f"{title} · {model}"
+
+
+def label(root, model):
+    """A pink "🐾 <model>" label for the PR (made the first time). None if GitHub says no."""
+    name = f"🐾 {model}"[:50]
+    r = subprocess.run(["gh", "label", "create", name, "--color", "f5a9d0", "--force",
+                        "--description", f"made by purr with {model}"[:100]],
+                       cwd=root, capture_output=True, text=True, timeout=60)
+    return name if r.returncode == 0 else None
 
 
 def slug(title):
@@ -89,14 +104,18 @@ def create(agent, title, body):
     # account with a cute picture and put its noreply email in config.toml (co_author_email)
     email = agent.config.get("co_author_email", CO_AUTHOR_EMAIL)
     co_author = f"Co-Authored-By: purr-{agent.model_name} <{email}>"
+    title = with_model(title, agent.model_name)
     git(root, "add", "-A", check=True)
-    git(root, "commit", "-m", title, "-m", body, "-m", co_author, check=True)
+    git(root, "commit", "-m", title, "-m", body, "-m", f"Model: {agent.model_name}\n{co_author}", check=True)
     git(root, "push", "-u", "origin", branch, check=True)
     badge = agent.config.get("co_author_github")  # its picture in the PR, if it has an account
     pic = f'<img src="https://github.com/{badge}.png" width="20" height="20"> ' if badge else "🐾 "
     pr_body = f"{body}\n\n---\n{pic}made with purr ({agent.model_name})"
-    r = subprocess.run(["gh", "pr", "create", "--title", title, "--body", pr_body, "--head", branch],
-                       cwd=root, capture_output=True, text=True, timeout=120)
+    cmd = ["gh", "pr", "create", "--title", title, "--body", pr_body, "--head", branch]
+    tag = label(root, agent.model_name)
+    if tag:
+        cmd += ["--label", tag]
+    r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=120)
     if r.returncode:
         raise RuntimeError(f"pushed {branch}, but gh pr create failed: {(r.stderr or r.stdout).strip()[:300]}")
     return r.stdout.strip().splitlines()[-1]
