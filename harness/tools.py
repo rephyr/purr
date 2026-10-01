@@ -13,8 +13,10 @@ import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
+from .limits import Limits
 
-MAX_OUTPUT = 12000  # characters a tool result may send back to the model
+
+MAX_OUTPUT = 12000  # fallback: characters a tool result may send back to the model
 
 
 def _schema(name, desc, props, required):
@@ -28,7 +30,7 @@ SCHEMAS = [
             "Use offset/limit for big files.", {
         "path": {"type": "string"},
         "offset": {"type": "integer", "description": "First line, 1-based. Default 1."},
-        "limit": {"type": "integer", "description": "How many lines. Default 400."},
+        "limit": {"type": "integer", "description": "How many lines. Default {read_lines}."},
     }, ["path"]),
     _schema("list_files", "List files under a folder (skips .gitignored files). Optional glob like '*.gd'.", {
         "path": {"type": "string", "description": "Folder. Default '.'"},
@@ -77,8 +79,11 @@ SHELL_CHAINING = set(";&|`$()<>\n")
 TWO_WORD = {"git", "npm", "pnpm", "yarn", "uv", "pip", "cargo", "go", "docker", "systemctl", "godot"}
 
 
-def schemas(read_only=False):
-    return [s for s in SCHEMAS if not read_only or s["function"]["name"] in READ_ONLY]
+def schemas(read_only=False, read_lines=400):
+    """The tool list for the model. read_lines is this model's read_file default."""
+    out = [s for s in SCHEMAS if not read_only or s["function"]["name"] in READ_ONLY]
+    text = json.dumps(out).replace("{read_lines}", str(read_lines))
+    return json.loads(text)
 
 
 def command_head(command):
@@ -92,11 +97,11 @@ def command_head(command):
     return words[0]
 
 
-def clip(s):
-    if len(s) <= MAX_OUTPUT:
+def clip(s, limit=MAX_OUTPUT):
+    if len(s) <= limit:
         return s
-    half = MAX_OUTPUT // 2
-    return s[:half] + f"\n... [{len(s) - MAX_OUTPUT} characters cut] ...\n" + s[-half:]
+    half = limit // 2
+    return s[:half] + f"\n... [{len(s) - limit} characters cut] ...\n" + s[-half:]
 
 
 def _lead(line):
@@ -141,10 +146,11 @@ def _loose_match(text, old, new):
     return real_text, "\n".join(fixed) + ending
 
 class Tools:
-    def __init__(self, root, view, read_only=False, allow_run=()):
+    def __init__(self, root, view, read_only=False, allow_run=(), limits=None):
         self.root = Path(root).resolve()
         self.view = view
         self.read_only = read_only
+        self.limits = limits or Limits.for_model({})
         self.allow_run = list(allow_run)  # patterns from config.toml that never ask
         self.always = set()      # tools you said "always" to this session
         self.always_run = set()  # command heads you said "always" to ("git status", "python3")
@@ -178,7 +184,7 @@ class Tools:
         if name != "todo":
             self.view.tool(self.summary(name, args))
         try:
-            return clip(fn(**args))
+            return clip(fn(**args), self.limits.tool_output)
         except TypeError as e:
             return f"error: wrong arguments for {name}: {e}"
         except Exception as e:
@@ -239,11 +245,12 @@ class Tools:
 
     # ---- tools ----
 
-    def t_read_file(self, path, offset=1, limit=400):
+    def t_read_file(self, path, offset=1, limit=None):
         p = self._path(path)
         lines = p.read_text(errors="replace").splitlines()
         offset = max(1, int(offset))
-        chunk = lines[offset - 1: offset - 1 + int(limit)]
+        limit = self.limits.read_lines if limit is None else int(limit)
+        chunk = lines[offset - 1: offset - 1 + limit]
         body = "\n".join(f"{n:>5}\t{line[:500]}" for n, line in enumerate(chunk, offset))
         end = offset + len(chunk) - 1
         if end < len(lines):
@@ -257,8 +264,9 @@ class Tools:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         files = [os.path.relpath(f, self.root) for f in res.stdout.splitlines()]
         files.sort()
-        if len(files) > 300:
-            return "\n".join(files[:300]) + f"\n[{len(files) - 300} more; narrow it with glob]"
+        most = self.limits.list_files
+        if len(files) > most:
+            return "\n".join(files[:most]) + f"\n[{len(files) - most} more; narrow it with glob]"
         return "\n".join(files) or "(no files)"
 
     def t_grep(self, pattern, path=".", glob=None):
@@ -271,8 +279,9 @@ class Tools:
         if res.returncode > 1:
             return "error: " + res.stderr.strip()
         lines = [line.replace(str(self.root) + "/", "", 1) for line in res.stdout.splitlines()]
-        if len(lines) > 200:
-            return "\n".join(lines[:200]) + f"\n[{len(lines) - 200} more matches]"
+        most = self.limits.grep_matches
+        if len(lines) > most:
+            return "\n".join(lines[:most]) + f"\n[{len(lines) - most} more matches]"
         return "\n".join(lines)
 
     def t_fetch_url(self, url):

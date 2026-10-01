@@ -5,6 +5,13 @@ default_model = "qwen3-coder-32k"
 # Max model calls in one turn before purr stops and asks you.
 max_steps = 40
 
+# purr adapts its limits to each model's `context` below: a 32k local model gets
+# smaller tool results and compacts sooner than a 1M API model. A model that needs
+# different numbers can override any of them, e.g.:
+#   limits = { tool_output = 8000, compact_at = 0.7 }
+# (keys: tool_output, read_lines, list_files, grep_matches, attach_max, compact_at,
+#  prune_at, keep_recent_tools, repeat_limit)
+
 [providers.ollama]
 base_url = "http://127.0.0.1:11434/v1"
 

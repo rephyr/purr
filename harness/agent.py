@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import ui
 from .api import ApiError, Stopped, stream_chat
+from .limits import Limits
 from .tools import Tools, clip, run_shell, schemas
 
 SYSTEM = """You are {model}, an AI model, working as a coding agent. You are running inside purr, \
@@ -70,9 +71,8 @@ LOG_DIR = STATE_DIR / "sessions"
 GLOBAL_NOTES = Path.home() / ".config/purr/AGENTS.md"
 NOTES_FILES = ["AGENTS.md"]
 NOTES_MAX = 20000
-ATTACH_MAX = 20000
-COMPACT_AT = 0.85  # compact by itself when the context is this full
 RETRY_WAITS = [2, 5, 10]  # seconds between tries when the server hiccups
+REPEAT_NUDGE = 2  # same tool call this many times: tell the model to stop repeating
 
 
 def _notes(path, label):
@@ -121,6 +121,23 @@ def calls_from_text(text):
         calls.append({"id": f"text_call_{n}", "name": name, "args": json.dumps(args)})
     cleaned = re.sub(r"</?tool_call>", "", TEXT_CALL.sub("", text)).strip()
     return calls, cleaned
+
+
+def _stable(raw):
+    """A tool call's arguments, normalised so the same call matches itself."""
+    try:
+        return json.dumps(json.loads(raw or "{}"), sort_keys=True)
+    except ValueError:
+        return raw or ""
+
+
+def _looks_failed(result):
+    """Whether a tool result reads like a failure (so a repeat is worth stopping)."""
+    text = (result or "").lstrip()
+    if text.startswith("error:"):
+        return True
+    m = re.search(r"\[exit code (-?\d+)\]", result or "")
+    return bool(m and m.group(1) != "0")
 
 
 _OPENCODE_KEYS = {}
@@ -225,6 +242,9 @@ class Agent:
                                + (f" or `opencode auth login {provider['opencode_auth']}`"
                                   if provider.get("opencode_auth") else ""))
         self.model_name, self.model, self.provider, self.key = name, model, provider, key
+        self.limits = Limits.for_model(model)
+        if getattr(self, "tools", None):
+            self.tools.limits = self.limits  # 32k and 1M models need different caps
         if getattr(self, "messages", None):
             # the system prompt names the model, so it changes with it
             self.messages[0] = {"role": "system", "content": self._system()}
@@ -279,7 +299,7 @@ class Agent:
             "stream_options": {"include_usage": True},
         }
         if tools:
-            body["tools"] = schemas(read_only=self.helper)
+            body["tools"] = schemas(read_only=self.helper, read_lines=self.limits.read_lines)
         body.update(self.model.get("body", {}))
         on_text = (lambda s: None) if quiet else self.view.text
         on_think = (lambda s: None) if quiet else self.view.thinking
@@ -346,6 +366,7 @@ class Agent:
         turn_cost = 0.0
         steps = 0
         retries = 0
+        self._repeats = {}  # (tool, args) -> how often it's been called, and the last result
         try:
             while True:
                 steps += 1
@@ -355,8 +376,13 @@ class Agent:
                         break
                     steps = 1
                 ctx = self.model.get("context", 0)
-                if ctx and self.context_used() > ctx * COMPACT_AT and len(self.messages) > 4:
-                    self.compact(auto=True)
+                if ctx and len(self.messages) > 4:
+                    used = self.context_used()
+                    if used > ctx * self.limits.prune_at:
+                        self._prune_old_tools()
+                        used = self.context_used()
+                    if used > ctx * self.limits.compact_at:
+                        self.compact(auto=True)
                 try:
                     reply = self._call()
                 except ApiError as e:
@@ -393,6 +419,13 @@ class Agent:
                 if self._run_tools(reply["tool_calls"]):
                     self.view.note("waiting for you", "info")
                     break
+                nudge = self._check_repeats()
+                if nudge and nudge.startswith("stop"):
+                    what = "failing step" if nudge == "stop failed" else "step and getting the same result"
+                    self.view.note(f"it kept repeating the same {what}, so purr stopped the turn", "error")
+                    break
+                if nudge:
+                    self.messages.append({"role": "user", "content": nudge})
         except Stopped:
             self.view.note("stopped", "warn")
         self.save_log()
@@ -402,6 +435,7 @@ class Agent:
         """Runs the tool calls. Returns True when you said a plain no (the turn ends)."""
         done = 0
         self.tools.halt = False
+        self._executed = []  # (name, args, result) for the repeat check
         try:
             for c in calls:
                 if self.stopping():
@@ -410,6 +444,7 @@ class Agent:
                     result = "skipped: the user stopped to give new instructions"
                 else:
                     result = self.tools.call(c["name"], c["args"])
+                    self._executed.append((c["name"], c["args"], result))
                 self.messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
                 done += 1
             return self.tools.halt
@@ -419,6 +454,63 @@ class Agent:
                 self.messages.append({"role": "tool", "tool_call_id": c["id"],
                                       "content": "cancelled: the user stopped it"})
             raise
+
+    def _check_repeats(self):
+        """A small model can get stuck making the same call and learning nothing.
+        Count identical calls, nudge once, then stop the turn before it eats the
+        whole context. Returns a message to send, "stop failed", "stop same", or None."""
+        worst, worst_name = None, ""
+        for name, args, result in getattr(self, "_executed", []):
+            if name == "todo":  # updating the task list over and over is normal
+                continue
+            key = (name, _stable(args))
+            failed = _looks_failed(result)
+            rec = self._repeats.get(key)
+            if rec and rec["result"] == result:
+                # the same call came back byte-for-byte the same: it is going nowhere
+                rec["n"] += 1
+                rec["failed"] = rec["failed"] or failed
+            else:
+                rec = {"n": 1, "result": result, "failed": failed, "warned": False}
+                self._repeats[key] = rec
+            if worst is None or rec["n"] > worst["n"]:
+                worst, worst_name = rec, name
+        if not worst:
+            return None
+        # a failing call gets repeat_limit tries; one that works (re-reading a file) gets two more
+        if worst["n"] >= self.limits.repeat_limit + (0 if worst["failed"] else 2):
+            return "stop failed" if worst["failed"] else "stop same"
+        if worst["n"] >= REPEAT_NUDGE and not worst["warned"]:
+            worst["warned"] = True
+            what = "keeps failing" if worst["failed"] else "returns the same thing"
+            return (f"(purr: you have now called `{worst_name}` with the same arguments "
+                    f"{worst['n']} times and it {what}. Don't repeat it. Read the result, "
+                    f"try a different approach or different arguments, or stop and tell the "
+                    f"user what is wrong.)")
+        return None
+
+    def _prune_old_tools(self):
+        """Free room cheaply by eliding old tool output, keeping the newest results whole.
+        Cheaper than a full compaction: no model call, and it keeps the messages."""
+        tools = [m for m in self.messages if m.get("role") == "tool"]
+        older = tools[:max(0, len(tools) - self.limits.keep_recent_tools)]
+        # the stub names the call it came from, so the model knows what to redo if it needs it
+        calls = {c["id"]: c["function"] for m in self.messages if m.get("role") == "assistant"
+                 for c in m.get("tool_calls") or []}
+        freed = 0
+        for m in older:
+            content = m.get("content") or ""
+            if len(content) <= 400 or content.startswith("[old output of"):
+                continue
+            fn = calls.get(m.get("tool_call_id"), {})
+            call = f"{fn.get('name', 'a tool')}({(fn.get('arguments') or '')[:160]})"
+            m["content"] = (f"[old output of {call} removed to save room "
+                            f"({len(content)} characters); run it again if you need it]")
+            freed += len(content) - len(m["content"])
+        if freed:
+            self.last_usage = None  # the old count is stale; use the fresh size guess
+            self.view.note(f"trimmed old tool output to save room ({ui.short(freed)} characters)", "info")
+        return freed
 
     def _status(self, turn_cost):
         if not self.last_usage:
@@ -435,7 +527,9 @@ class Agent:
     # ---- compacting ----
 
     def transcript(self, messages):
-        """The chat as plain text for the summary. Long tool results are cut short."""
+        """The chat as plain text for the summary. Long tool results are cut short
+        (harder on a small context, which can't afford a long transcript)."""
+        cut = min(4000, max(800, self.limits.tool_output // 6))  # 32k: ~1.1k chars, 1M: 4k
         out = []
         for m in messages:
             role, content = m.get("role"), m.get("content") or ""
@@ -446,8 +540,16 @@ class Agent:
                          for c in m.get("tool_calls") or []]
                 out.append("ASSISTANT: " + content + (f"\n[called: {'; '.join(calls)}]" if calls else ""))
             elif role == "tool":
-                out.append("TOOL RESULT: " + (content if len(content) < 1500 else content[:1500] + " [...]"))
-        return "\n\n".join(out)
+                out.append("TOOL RESULT: " + (content if len(content) < cut else content[:cut] + " [...]"))
+        text = "\n\n".join(out)
+        # the whole summary request must fit too: about half the context (4 chars a token),
+        # keeping the start (what the user asked for) and the most recent work
+        budget = self.limits.context * 2
+        if len(text) > budget:
+            head = budget // 4
+            text = (text[:head] + f"\n\n[... {len(text) - budget} characters of the middle left out ...]\n\n"
+                    + text[-(budget - head):])
+        return text
 
     def compact(self, auto=False):
         """Swap the chat for a summary of it. Returns (tokens before, tokens after) or None."""
@@ -498,8 +600,8 @@ class Agent:
                     body = p.read_text(errors="replace")
                 except OSError:
                     continue
-                if len(body) > ATTACH_MAX:
-                    body = body[:ATTACH_MAX] + "\n[file cut short; use read_file for the rest]"
+                if len(body) > self.limits.attach_max:
+                    body = body[:self.limits.attach_max] + "\n[file cut short; use read_file for the rest]"
                 files.append((name, body))
         if not files:
             return text
@@ -509,7 +611,8 @@ class Agent:
         """!command: you run it yourself; the model sees the output next time."""
         output, code = run_shell(command, self.root)
         self.messages.append({"role": "user", "content":
-                              f"(I ran this myself: `{command}`, exit code {code})\n```\n{clip(output)}\n```"})
+                              f"(I ran this myself: `{command}`, exit code {code})\n```\n"
+                              f"{clip(output, self.limits.tool_output)}\n```"})
         self.save_log()
         return output, code
 

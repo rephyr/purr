@@ -54,6 +54,7 @@ covers that kind of command only (`git status`, not all of git).
 | `harness/commands.py` | the /commands (both modes use them) |
 | `harness/api.py` | streams replies from any OpenAI-compatible API |
 | `harness/tools.py` | the tools, permissions, undo |
+| `harness/limits.py` | per-model limits, derived from the model's `context` |
 | `harness/ui.py` | colours, diffs, the plain mode's view |
 | `config.toml` | providers, models, prices |
 
@@ -70,6 +71,27 @@ Local model quirks purr works around: edits with slightly wrong indentation stil
 (`_loose_match` in tools.py), and tool calls that Qwen writes as text
 (`<function=...>`) get turned into real calls (`calls_from_text` in agent.py).
 
+## Different models, different limits
+
+purr adapts to the model it is running. The `context` in `config.toml` sets how big a
+tool result may be, how many lines `read_file` returns by default, how many files or
+grep matches are listed, how large an `@file` attachment may be, when the chat compacts
+by itself, and how many recent tool results stay whole. A 32k local model gets small,
+quick limits; a 1M API model gets much bigger ones. Any model can override a number
+with a `limits = { ... }` table (`harness/limits.py` shows the keys and the defaults).
+
+Two things that mostly bite small models:
+
+- **Going in circles.** If the model makes the same tool call with the same arguments
+  and gets nothing new, purr says so once. A failing call is stopped after 3 tries (4 on
+  big models); one that works but gives the same thing (re-reading a file) gets 2 more.
+  A test that fails with a different error each time is not a loop.
+- **Old tool output.** Before summarising the whole chat, purr elides the contents of
+  older tool results (keeping the newest ones whole), leaving a note of which call it
+  was so the model can run it again. That frees room with no model
+  call, so a small model spends its context on the current job rather than on output
+  it has already read.
+
 ## DeepSeek
 
 Put the key in `~/.zshrc`: `export DEEPSEEK_API_KEY=sk-...`, open a new terminal, then `/model flash`.
@@ -82,6 +104,10 @@ Uses the key you saved with `opencode auth login openrouter` (or `OPENROUTER_API
 DeepSeek works the same way). Models: `ds-pro-or`, `ds-flash-or`, `luna`, `sonnet`, `glm`,
 `qwen-flash`, `kimi`. For another one, copy an entry in `config.toml` and change `id` and `price`
 (both are on openrouter.ai). The cost purr shows is OpenRouter's real one.
+
+## Tests
+
+`python3 -m unittest discover tests` (no model is called).
 
 ## Ideas for next steps
 
