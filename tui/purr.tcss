@@ -1,0 +1,270 @@
+/* purr's look: dark plum, pink and lilac */
+
+Screen {
+    layers: base above;
+    background: #1b1722;
+    color: #e9dff2;
+}
+
+#chat {
+    padding: 0 2 1 2;
+    scrollbar-size-vertical: 1;
+    scrollbar-color: #4a3a5c;
+    scrollbar-color-hover: #6b4f8a;
+    scrollbar-background: #1b1722;
+}
+
+.user {
+    margin-top: 1;
+    padding: 1 2;
+    border-left: outer #f5a9d0;
+    background: #262030;
+    color: #f7d6ea;
+}
+
+.assistant {
+    margin: 1 0 0 0;
+    padding: 0 1;
+    background: transparent;
+}
+.assistant > *:last-child {
+    margin-bottom: 0;
+}
+
+.line {
+    padding: 0 1;
+}
+.tool { color: #c8a2f0; margin-top: 1; }
+.dim { color: #82788f; padding-left: 3; }
+.info { color: #c8a2f0; margin-top: 1; }
+.warn { color: #f0d28c; margin-top: 1; }
+.error { color: #f0829b; margin-top: 1; }
+
+.diff {
+    padding: 0 1 0 3;
+}
+
+.output {
+    padding: 0 1 0 3;
+}
+
+.todos {
+    margin-top: 1;
+    padding: 0 2;
+    border-left: outer #6b4f8a;
+}
+
+.thinking {
+    margin-top: 1;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+.thinking CollapsibleTitle {
+    color: #82788f;
+    background: transparent;
+    padding: 0 1;
+    text-style: none;
+}
+.thinking CollapsibleTitle:hover, .thinking CollapsibleTitle:focus {
+    color: #c8a2f0;
+    background: transparent;
+}
+.thinking Contents {
+    padding: 0 0 0 3;
+}
+.thinking-text {
+    color: #82788f;
+}
+
+/* ---- layout: start screen (.home) vs chat ---- */
+
+#main {
+    height: 1fr;
+}
+.home #main {
+    align-vertical: middle;
+}
+#dockrow {
+    height: auto;
+}
+
+#chat {
+    height: 1fr;
+}
+.home #chat {
+    display: none;
+}
+
+#logo {
+    display: none;
+    width: 100%;
+    text-align: center;
+    margin-bottom: 2;
+}
+.home #logo {
+    display: block;
+}
+
+#dock {
+    height: auto;
+    padding: 0 2 1 2;
+}
+.home #dock {
+    width: 80;
+    max-width: 100%;
+    padding: 0 2;
+}
+
+#menu {
+    display: none;
+    layer: above;
+    position: absolute;
+    border: none;
+    padding: 0 1;
+    background: #2e2639;
+    scrollbar-size-vertical: 1;
+}
+#menu.show {
+    display: block;
+}
+#menu > .option-list--option-highlighted {
+    background: #3a2a4c;
+}
+
+/* the message box: a lighter panel with a bar on the left, like OpenCode */
+#box {
+    height: auto;
+    padding: 1 2;
+    background: #262030;
+    border-left: outer #c8a2f0;
+}
+#box:focus-within {
+    border-left: outer #f5a9d0;
+}
+#prompt, #prompt:focus {
+    height: auto;
+    max-height: 10;
+    padding: 0;
+    border: none;
+    background: transparent;
+    scrollbar-size-vertical: 1;
+}
+#prompt > .text-area--placeholder {
+    color: #6f6580;
+}
+#prompt > .text-area--cursor-line {
+    background: transparent;
+}
+#prompt > .text-area--selection {
+    background: #4a3a5c;
+}
+#modelline {
+    height: 1;
+    margin-top: 1;
+}
+#model {
+    width: 1fr;
+}
+#status {
+    width: auto;
+}
+
+#under {
+    height: 1;
+    margin-top: 1;
+}
+#where {
+    width: 1fr;
+    margin-right: 2;
+}
+#keys {
+    width: auto;
+}
+
+#version {
+    display: none;
+    dock: bottom;
+    width: 100%;
+    padding: 0 3 1 0;
+    text-align: right;
+    color: #5e5469;
+}
+.home #version {
+    display: block;
+}
+
+AskScreen {
+    align: center middle;
+    background: #0c0810 70%;
+}
+#askbox {
+    width: 72;
+    max-width: 95%;
+    height: auto;
+    padding: 1 2;
+    border: round #f0d28c;
+    background: #1d1626;
+}
+#question {
+    color: #f0d28c;
+    margin-bottom: 1;
+}
+#buttons {
+    height: auto;
+    margin-bottom: 1;
+}
+#buttons Button {
+    margin-right: 2;
+    min-width: 12;
+    border: none;
+    background: #2b2038;
+    color: #e9dff2;
+}
+#buttons Button:focus {
+    background: #f5a9d0;
+    color: #15101c;
+    text-style: bold;
+}
+#reason {
+    border: round #4a3a5c;
+    background: #15101c;
+}
+#reason:focus {
+    border: round #c8a2f0;
+}
+
+Picker {
+    align: center middle;
+    background: #0c0810 60%;
+}
+#pickbox {
+    width: 84;
+    max-width: 95%;
+    height: auto;
+    padding: 1 2;
+    background: #262030;
+    border-left: outer #c8a2f0;
+}
+#picktitle {
+    color: #f5a9d0;
+    text-style: bold;
+    margin-bottom: 1;
+}
+#search, #search:focus {
+    height: 1;
+    padding: 0;
+    margin-bottom: 1;
+    border: none;
+    background: transparent;
+}
+#picklist {
+    height: auto;
+    max-height: 16;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+#picklist > .option-list--option-highlighted {
+    background: #3a2a4c;
+}

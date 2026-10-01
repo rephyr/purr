@@ -1,0 +1,62 @@
+# purr settings. Pick a model with /model inside purr, or `purr -m <name>`.
+
+default_model = "qwen3-coder-32k"
+
+# Max model calls in one turn before purr stops and asks you.
+max_steps = 40
+
+[providers.ollama]
+base_url = "http://127.0.0.1:11434/v1"
+
+[providers.deepseek]
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+# DeepSeek wants its thinking text sent back on every turn when tools are used (400 error otherwise).
+echo_reasoning = "reasoning_content"
+# Weekdays, UTC hours where prices are doubled.
+peak_hours_utc = [[1, 4], [6, 10]]
+
+# ---- local models (free) ----
+
+[models.qwen3-coder-32k]
+provider = "ollama"
+id = "qwen3-coder-32k"
+context = 32768
+body = { temperature = 0.7, top_p = 0.8 }
+
+[models.qwen3-coder-64k]
+provider = "ollama"
+id = "qwen3-coder-64k"
+context = 65536
+body = { temperature = 0.7, top_p = 0.8 }
+
+[models.gpt-oss-32k]
+provider = "ollama"
+id = "gpt-oss-32k"
+context = 32768
+
+[models.qwen3_6-32k]
+provider = "ollama"
+id = "qwen3.6-iq2-32k"
+context = 32768
+body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
+
+# ---- DeepSeek (paid, needs DEEPSEEK_API_KEY) ----
+# Prices: USD per 1M tokens, off-peak. Peak hours cost 2x.
+
+[models.flash]
+provider = "deepseek"
+id = "deepseek-flash"
+context = 1000000
+price = { hit = 0.003, miss = 0.15, out = 0.60 }
+
+[models.pro]
+provider = "deepseek"
+id = "deepseek-v4-pro"
+context = 1000000
+price = { hit = 0.022, miss = 0.66, out = 1.98 }
+
+# Commands the model may run without asking (only simple ones: no ; && | $() > in them).
+[permissions]
+allow_run = ["ls", "ls *", "pwd", "cat *", "head *", "tail *", "wc *", "rg *", "grep *", "tree*",
+             "git status*", "git diff*", "git log*", "git show*", "git branch"]
