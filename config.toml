@@ -2,6 +2,12 @@
 
 default_model = "qwen3-coder-32k"
 
+# /pr: the co-author on purr's commits is "purr-<model> <co_author_email>". GitHub shows that
+# account's avatar next to the commit, so make purr a GitHub account with a cute picture and put
+# its noreply email here (Settings > Emails), plus its name to show the picture in the PR text.
+co_author_email = "336710534+purr-harness@users.noreply.github.com"
+co_author_github = "purr-harness"
+
 # Max model calls in one turn before purr stops and asks you.
 max_steps = 40
 
@@ -55,6 +61,19 @@ provider = "ollama"
 id = "qwen3.6-iq2-32k"
 context = 32768
 body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
+
+[models.qwen3_6-64k]
+provider = "ollama"
+id = "qwen3.6-iq2-64k"
+context = 65536
+body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
+
+# Qwen3.6 35B-A3B at Q4: smarter than the IQ2 ones, but 22 GB, so part of it runs on the CPU (slower)
+[models.qwen3_6-q4]
+provider = "ollama"
+id = "qwen3.6-q4-32k"
+context = 32768
+body = { temperature = 0.6, top_p = 0.95, top_k = 20, presence_penalty = 1.5 }
 
 # ---- DeepSeek (paid, needs DEEPSEEK_API_KEY) ----
 # Prices: USD per 1M tokens, off-peak. Peak hours cost 2x.

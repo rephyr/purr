@@ -36,7 +36,8 @@ SCHEMAS = [
         "path": {"type": "string", "description": "Folder. Default '.'"},
         "glob": {"type": "string"},
     }, []),
-    _schema("grep", "Search file contents with a regex (ripgrep). Returns file:line: text.", {
+    _schema("grep", "Search file contents with a regex (ripgrep). Returns file:line: text. "
+            "All lower-case ignores case; use it to find code before reading whole files.", {
         "pattern": {"type": "string"},
         "path": {"type": "string", "description": "File or folder. Default '.'"},
         "glob": {"type": "string", "description": "Only files matching, e.g. '*.py'"},
@@ -59,8 +60,8 @@ SCHEMAS = [
         "command": {"type": "string"},
         "timeout": {"type": "integer", "description": "Seconds. Default 120."},
     }, ["command"]),
-    _schema("todo", "Keep a short task list for work with several steps. Send the WHOLE list every "
-            "time; the user sees it. Mark one item 'doing' while you work on it.", {
+    _schema("todo", "Keep a short task list for work with several steps (not for questions or chat). "
+            "Send the WHOLE list every time; the user sees it. Mark one item 'doing' while you work on it.", {
         "items": {"type": "array", "items": {"type": "object", "properties": {
             "text": {"type": "string"},
             "status": {"type": "string", "enum": ["pending", "doing", "done"]},
@@ -79,9 +80,11 @@ SHELL_CHAINING = set(";&|`$()<>\n")
 TWO_WORD = {"git", "npm", "pnpm", "yarn", "uv", "pip", "cargo", "go", "docker", "systemctl", "godot"}
 
 
-def schemas(read_only=False, read_lines=400):
-    """The tool list for the model. read_lines is this model's read_file default."""
-    out = [s for s in SCHEMAS if not read_only or s["function"]["name"] in READ_ONLY]
+def schemas(read_only=False, read_lines=400, hidden=()):
+    """The tool list for the model. read_lines is this model's read_file default; hidden
+    tools aren't offered at all."""
+    out = [s for s in SCHEMAS if (not read_only or s["function"]["name"] in READ_ONLY)
+           and s["function"]["name"] not in hidden]
     text = json.dumps(out).replace("{read_lines}", str(read_lines))
     return json.loads(text)
 
@@ -150,10 +153,12 @@ class Tools:
         self.root = Path(root).resolve()
         self.view = view
         self.read_only = read_only
+        self.no_tools = False  # chat and create mode
         self.limits = limits or Limits.for_model({})
         self.allow_run = list(allow_run)  # patterns from config.toml that never ask
         self.always = set()      # tools you said "always" to this session
         self.always_run = set()  # command heads you said "always" to ("git status", "python3")
+        self.todos_left = 0      # items on the todo list that aren't done
         self.trust_all = False
         self.halt = False        # a plain "no": stop and let the user say what to do next
         self.undo_stack = []     # one {path: text before, or None if it didn't exist} per turn
@@ -181,14 +186,20 @@ class Tools:
         fn = getattr(self, "t_" + name, None)
         if fn is None or (self.read_only and name not in READ_ONLY):
             return f"error: there is no tool called {name}"
+        if self.no_tools:
+            return f"error: no tools in this mode ({name} can't run)"
+        self.view.activity(name, self.summary(name, args)[len(name):].strip())
         if name != "todo":
             self.view.tool(self.summary(name, args))
         try:
-            return clip(fn(**args), self.limits.tool_output)
+            result = clip(fn(**args), self.limits.tool_output)
         except TypeError as e:
-            return f"error: wrong arguments for {name}: {e}"
+            result = f"error: wrong arguments for {name}: {e}"
         except Exception as e:
-            return f"error: {type(e).__name__}: {e}"
+            result = f"error: {type(e).__name__}: {e}"
+        if name != "todo":
+            self.view.tool_result(name, args, result)  # the exact call and what the model got back
+        return result
 
     def _allowed(self, name, question):
         if self.trust_all or name in self.always:
@@ -270,12 +281,15 @@ class Tools:
         return "\n".join(files) or "(no files)"
 
     def t_grep(self, pattern, path=".", glob=None):
-        cmd = ["rg", "-n", "--max-columns", "300", "--max-count", "50", pattern, str(self._path(path))]
+        # smart case: "discount" also finds HAPPY_HOUR_DISCOUNT; "Discount" only matches exactly.
+        # Without it a model's lower-case search comes back empty and it reads whole files instead.
+        cmd = ["rg", "-n", "--smart-case", "--max-columns", "300", "--max-count", "50", pattern,
+               str(self._path(path))]
         if glob:
             cmd[1:1] = ["--glob", glob]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=self.root)
         if res.returncode == 1:
-            return "no matches"
+            return f"no matches for {pattern!r}; try a shorter or different word"
         if res.returncode > 1:
             return "error: " + res.stderr.strip()
         lines = [line.replace(str(self.root) + "/", "", 1) for line in res.stdout.splitlines()]
@@ -316,10 +330,7 @@ class Tools:
     def t_write_file(self, path, content):
         p = self._path(path)
         before = p.read_text() if p.exists() else ""
-        if p.exists():
-            self.view.diff(path, before, content)
-        else:
-            self.view.note(f"new file, {len(content.splitlines())} lines")
+        self.view.diff(path, before, content)  # a new file shows as a preview of its start
         ok, reason = self._allowed("write_file", f"{'overwrite' if p.exists() else 'create'} {path}?")
         if not ok:
             return self._refused(reason)
@@ -329,7 +340,6 @@ class Tools:
         return f"wrote {path} ({len(content.splitlines())} lines)"
 
     def t_run(self, command, timeout=120):
-        self.view.note(f"$ {command}")
         ok, reason = self._run_allowed(command)
         if not ok:
             return self._refused(reason)
@@ -342,8 +352,11 @@ class Tools:
         clean = [{"text": str(i.get("text", "")), "status": i.get("status", "pending")}
                  for i in items if isinstance(i, dict)]
         self.view.todos(clean)
-        left = sum(i["status"] != "done" for i in clean)
-        return f"task list saved ({left} not done)"
+        self.todos_left = sum(i["status"] != "done" for i in clean)
+        if not self.todos_left:
+            return ("task list saved: everything is done. If the work is finished, give the user "
+                    "your final reply now, without calling any tool.")
+        return f"task list saved ({self.todos_left} not done)"
 
     def t_task(self, prompt):
         if not self.spawn:

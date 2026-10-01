@@ -29,6 +29,49 @@ def send(agent, view, text):
         ui.say(ui.ROSE, "\n  stopped")
 
 
+def plain_pr(agent):
+    """/pr in plain mode: draft, show, ask, then branch + commit + push + gh pr create."""
+    from harness import pr
+    files = pr.changed_files(agent.root)
+    if not files:
+        ui.say(ui.DIM, "  no changes to make a pull request from" if files is not None else "  not a git repo")
+        return
+    ui.say(ui.DIM, "  writing the pull request…")
+    title, body = pr.draft(agent)
+    ui.say(ui.LILAC, f"\n  {title}\n")
+    ui.say(ui.TEXT if hasattr(ui, "TEXT") else ui.RESET, "\n".join("  " + l for l in body.splitlines()))
+    ui.say(ui.DIM, "\n  files: " + ", ".join(f[3:] for f in files))
+    ui.say(ui.DIM, f"  co-author: purr-{agent.model_name}")
+    ans = input(f"{ui.YELLOW}  push and open the pull request?  [y]es  [t]itle  [n]o {ui.RESET}").strip().lower()
+    if ans.startswith("t"):
+        title = input("  title: ").strip() or title
+        ans = "y"
+    if ans not in ("y", "yes"):
+        ui.say(ui.DIM, "  okay, nothing was pushed")
+        return
+    try:
+        ui.say(ui.MINT, f"  ♡ {pr.create(agent, title, body)}")
+    except RuntimeError as e:
+        ui.say(ui.ROSE, f"  {e}")
+
+
+def refined(agent, text):
+    """/refine is on: show the rewritten task, then send it, your original, or your edit."""
+    ui.say(ui.DIM, "  refining your message…")
+    try:
+        better = agent.refine(text)
+    except Exception as e:  # noqa: BLE001 - fall back to what you wrote
+        ui.say(ui.ROSE, f"  couldn't refine it ({e}), sending yours")
+        return text
+    ui.say(ui.LILAC, "\n" + "\n".join("  " + line for line in better.splitlines()) + "\n")
+    ans = input(f"{ui.YELLOW}  send this?  [y]es  [o]riginal  [e]dit  [n]o {ui.RESET}").strip().lower()
+    if ans.startswith("o"):
+        return text
+    if ans.startswith("e"):
+        return input("  your version: ").strip() or better
+    return better if ans in ("", "y", "yes") else ""
+
+
 def read_message():
     lines = []
     while True:
@@ -68,6 +111,9 @@ def plain(agent, view):
                 result = commands.run(agent, text)
                 if result is None:
                     break
+                if isinstance(result, dict) and result.get("pr"):
+                    plain_pr(agent)
+                    continue
                 if isinstance(result, dict):
                     send(agent, view, result["send"])
                     continue
@@ -76,6 +122,10 @@ def plain(agent, view):
                 if commands.parse(text)[0] == "help":
                     ui.say(ui.LILAC, PLAIN_HELP)
                 continue
+            if agent.refine_on and agent.mode == "code":
+                text = refined(agent, text)
+                if not text:
+                    continue
             send(agent, view, text)
     except EOFError:
         ui.out()
@@ -84,6 +134,9 @@ def plain(agent, view):
 
 
 def main():
+    if sys.argv[1:2] == ["bench"]:  # purr bench: purr vs OpenCode on the same tasks (harness/bench.py)
+        from harness import bench
+        return bench.main(sys.argv[2:], tomllib.loads((HERE / "config.toml").read_text()))
     ap = argparse.ArgumentParser(prog="purr", description="tiny coding agent")
     ap.add_argument("folder", nargs="?", default=".", help="project folder (default: here)")
     ap.add_argument("-m", "--model", help="model name from config.toml")

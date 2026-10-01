@@ -1,0 +1,2 @@
+{"kind": "write from scratch",
+ "prompt": "Create duration.py with parse_duration(text) that turns things like \"1h 30m\", \"45s\", \"2h\", \"1h5m10s\" and \"90m\" into a number of seconds (an int). Spaces are optional, units are h, m and s, and each unit may appear once at most. Empty or wrong input (like \"\", \"abc\", \"5x\", \"1h 1h\") raises ValueError. Also add test_duration.py with tests, and run them."}

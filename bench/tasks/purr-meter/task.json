@@ -1,0 +1,5 @@
+{
+ "kind": "bug fix, 1 file",
+ "prompt": "The test fails. Find out why and fix it, then run the tests to check.",
+ "vague": "tests broken pls fix"
+}

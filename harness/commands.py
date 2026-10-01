@@ -22,6 +22,11 @@ COMMANDS = {
     "undo": ("", "put back the files the last answer changed"),
     "cost": ("", "money spent this session"),
     "trust": ("", "allow edits and commands without asking (toggle)"),
+    "theme": ("[name]", "change purr's colours"),
+    "cat": ("[name <new name>]", "your cat: her stats, or give her a new name"),
+    "mode": ("[code|ask|chat|create]", "what purr may do: code, ask (look only), chat, create"),
+    "refine": ("[on|off]", "rewrite each message into a clear task first (you approve it)"),
+    "pr": ("", "commit the changes and open a GitHub pull request (you check it first)"),
     "quit": ("", "leave"),
 }
 ALIASES = {"new": "clear", "exit": "quit", "q": "quit", "continue": "resume"}
@@ -117,4 +122,21 @@ def run(agent, text):
         agent.tools.trust_all = not agent.tools.trust_all
         return [("warn", "trusting everything (no questions)") if agent.tools.trust_all
                 else ("info", "asking before edits and commands again")]
+    if name == "mode":
+        from .agent import MODES
+        if arg:
+            try:
+                agent.set_mode(arg)
+            except KeyError as e:
+                return [("error", e.args[0])]
+            return [("info", f"mode: {arg}, {MODES[arg][1]}")]
+        return [("info", ("♡ " if m == agent.mode else "  ") + f"{m:<7} {what}") for m, (_, what) in MODES.items()]
+    if name == "refine":
+        agent.refine_on = {"on": True, "off": False}.get(arg, not agent.refine_on)
+        return [("info", "refining your messages first (you'll see it before it's sent)" if agent.refine_on
+                 else "sending your messages as they are")]
+    if name == "pr":
+        return {"pr": True}
+    if name in ("theme", "cat"):
+        return [("info", "that's for the full-screen mode")]
     return [("error", f"unknown command /{name}, try /help")]

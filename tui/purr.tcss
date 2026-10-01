@@ -1,24 +1,26 @@
-/* purr's look: dark plum, pink and lilac */
+/* purr's look */
+
+/* The background colours ($bg, $panel, $line, ...) come from the theme: tui/themes.py. */
 
 Screen {
     layers: base above;
-    background: #1b1722;
+    background: $bg;
     color: #e9dff2;
 }
 
 #chat {
     padding: 0 2 1 2;
     scrollbar-size-vertical: 1;
-    scrollbar-color: #4a3a5c;
-    scrollbar-color-hover: #6b4f8a;
-    scrollbar-background: #1b1722;
+    scrollbar-color: $line-hi;
+    scrollbar-color-hover: $scroll;
+    scrollbar-background: $bg;
 }
 
 .user {
     margin-top: 1;
     padding: 1 2;
-    border-left: outer #f5a9d0;
-    background: #262030;
+    border-left: outer $pink;
+    background: $panel;
     color: #f7d6ea;
 }
 
@@ -34,14 +36,20 @@ Screen {
 .line {
     padding: 0 1;
 }
-.tool { color: #c8a2f0; margin-top: 1; }
+.tool { margin-top: 1; }
 .dim { color: #82788f; padding-left: 3; }
-.info { color: #c8a2f0; margin-top: 1; }
-.warn { color: #f0d28c; margin-top: 1; }
+.stats { margin-top: 1; }
+.info { color: $lilac; margin-top: 1; }
+.warn { color: $peach; margin-top: 1; }
 .error { color: #f0829b; margin-top: 1; }
 
+/* a change: a rounded card, file name in the top border (tui/diffview.py draws the rows) */
 .diff {
-    padding: 0 1 0 3;
+    margin: 1 0 0 1;
+    padding: 0;
+    border: round $line;
+    border-title-align: left;
+    background: transparent;
 }
 
 .output {
@@ -51,7 +59,7 @@ Screen {
 .todos {
     margin-top: 1;
     padding: 0 2;
-    border-left: outer #6b4f8a;
+    border-left: outer $scroll;
 }
 
 .thinking {
@@ -67,14 +75,16 @@ Screen {
     text-style: none;
 }
 .thinking CollapsibleTitle:hover, .thinking CollapsibleTitle:focus {
-    color: #c8a2f0;
+    color: $lilac;
     background: transparent;
 }
 .thinking Contents {
-    padding: 0 0 0 3;
+    padding: 0 0 0 1;
+    margin-left: 1;
+    border-left: outer $line;
 }
 .thinking-text {
-    color: #82788f;
+    color: #6f6580;
 }
 
 /* ---- layout: start screen (.home) vs chat ---- */
@@ -122,25 +132,32 @@ Screen {
     position: absolute;
     border: none;
     padding: 0 1;
-    background: #2e2639;
+    background: $panel-hi;
     scrollbar-size-vertical: 1;
 }
 #menu.show {
     display: block;
 }
 #menu > .option-list--option-highlighted {
-    background: #3a2a4c;
+    background: $hover;
+}
+
+/* the cat on top of the message box: shows what purr is doing (tui/cat.py) */
+#cat {
+    height: 3;
+    padding: 0 1;
+    margin-bottom: 1;
 }
 
 /* the message box: a lighter panel with a bar on the left, like OpenCode */
 #box {
     height: auto;
     padding: 1 2;
-    background: #262030;
-    border-left: outer #c8a2f0;
+    background: $panel;
+    border-left: outer $lilac;
 }
 #box:focus-within {
-    border-left: outer #f5a9d0;
+    border-left: outer $pink;
 }
 #prompt, #prompt:focus {
     height: auto;
@@ -157,7 +174,7 @@ Screen {
     background: transparent;
 }
 #prompt > .text-area--selection {
-    background: #4a3a5c;
+    background: $line-hi;
 }
 #modelline {
     height: 1;
@@ -196,18 +213,18 @@ Screen {
 
 AskScreen {
     align: center middle;
-    background: #0c0810 70%;
+    background: $shade 70%;
 }
 #askbox {
     width: 72;
     max-width: 95%;
     height: auto;
     padding: 1 2;
-    border: round #f0d28c;
-    background: #1d1626;
+    border: round $peach;
+    background: $popup;
 }
 #question {
-    color: #f0d28c;
+    color: $peach;
     margin-bottom: 1;
 }
 #buttons {
@@ -218,36 +235,36 @@ AskScreen {
     margin-right: 2;
     min-width: 12;
     border: none;
-    background: #2b2038;
+    background: $button;
     color: #e9dff2;
 }
 #buttons Button:focus {
-    background: #f5a9d0;
-    color: #15101c;
+    background: $pink;
+    color: $deep;
     text-style: bold;
 }
 #reason {
-    border: round #4a3a5c;
-    background: #15101c;
+    border: round $line-hi;
+    background: $deep;
 }
 #reason:focus {
-    border: round #c8a2f0;
+    border: round $lilac;
 }
 
 Picker {
     align: center middle;
-    background: #0c0810 60%;
+    background: $shade 60%;
 }
 #pickbox {
     width: 84;
     max-width: 95%;
     height: auto;
     padding: 1 2;
-    background: #262030;
-    border-left: outer #c8a2f0;
+    background: $panel;
+    border-left: outer $lilac;
 }
 #picktitle {
-    color: #f5a9d0;
+    color: $pink;
     text-style: bold;
     margin-bottom: 1;
 }
@@ -266,5 +283,96 @@ Picker {
     background: transparent;
 }
 #picklist > .option-list--option-highlighted {
-    background: #3a2a4c;
+    background: $hover;
+}
+
+/* a tool line opens on click to show the exact call and its result */
+.toolline {
+    height: auto;
+}
+.tooldetails {
+    display: none;
+    margin: 0 0 0 3;
+    padding: 0 1;
+    border-left: outer $line;
+}
+.toolline.open .tooldetails {
+    display: block;
+}
+.toolline.open .tool {
+    color: $lilac;
+}
+
+/* your latest message, pinned above the chat once it scrolls out of sight */
+#pinned {
+    display: none;
+    height: 1;
+    margin: 0 2 1 2;
+    padding: 0 2;
+    background: $panel;
+    border-left: outer $pink;
+}
+#pinned.show {
+    display: block;
+}
+.home #pinned {
+    display: none;
+}
+
+/* the refine popup: your message rewritten into a clear task, editable */
+RefineScreen {
+    align: center middle;
+    background: $shade 70%;
+}
+#refinebox {
+    width: 90;
+    max-width: 95%;
+    height: auto;
+    padding: 1 2;
+    border: round $pink;
+    background: $popup;
+}
+#refineorig {
+    margin: 1 0;
+}
+#refined, #refined:focus {
+    height: auto;
+    max-height: 18;
+    padding: 1;
+    border: none;
+    background: $deep;
+}
+#refinehint {
+    margin-top: 1;
+}
+
+/* the pull request popup */
+PRScreen {
+    align: center middle;
+    background: $shade 70%;
+}
+#prbox {
+    width: 90;
+    max-width: 95%;
+    height: auto;
+    padding: 1 2;
+    border: round $pink;
+    background: $popup;
+}
+#prname, #prname:focus {
+    margin: 1 0 0 0;
+    border: none;
+    padding: 0 1;
+    background: $deep;
+}
+#prbody, #prbody:focus {
+    height: auto;
+    max-height: 14;
+    margin: 1 0;
+    padding: 1;
+    border: none;
+    background: $deep;
+}
+#prhint {
+    margin-top: 1;
 }
