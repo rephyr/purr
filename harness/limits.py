@@ -40,6 +40,7 @@ class Limits:
     prune_at: float         # elide old tool output when this fraction is used
     keep_recent_tools: int  # this many recent tool results stay complete
     repeat_limit: int       # identical tool calls before the turn is stopped
+    hidden_tools: tuple = ()  # tools this model doesn't get offered
 
     @classmethod
     def for_model(cls, model):
@@ -57,7 +58,13 @@ class Limits:
             prune_at=max(0.5, _compact_at(context) - 0.12),
             keep_recent_tools=_clamp(context / 12000, 3, 12),
             repeat_limit=3 if context <= 100_000 else 4,
+            # a small local model does better with fewer choices: web pages eat its context,
+            # and a helper is just the same small model with an empty memory
+            hidden_tools=("fetch_url", "task") if context <= 65_536 else (),
         )
         overrides = model.get("limits") or {}
         known = {f.name for f in dataclasses.fields(cls)}
-        return dataclasses.replace(base, **{k: v for k, v in overrides.items() if k in known})
+        overrides = {k: v for k, v in overrides.items() if k in known}
+        if "hidden_tools" in overrides:
+            overrides["hidden_tools"] = tuple(overrides["hidden_tools"])
+        return dataclasses.replace(base, **overrides)

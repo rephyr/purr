@@ -29,9 +29,8 @@ Environment
 - System: Linux
 
 Tools
-- read_file, list_files, grep, fetch_url to look around; edit_file, write_file, run to make changes.
-- todo: for work with several steps, keep a short task list and update it as you go.
-- task: send a helper to explore many files or the web and report back, so this chat stays small.
+- {look} to look around; edit_file, write_file, run to make changes.
+- todo: only for work with several steps (never for questions or chat): keep a short task list and update it as you go.{task}
 - The user approves every edit and command. If they say no, stop and wait for them.
 - edit_file needs old_text copied exactly from the file, without the line numbers read_file adds.
 
@@ -46,6 +45,54 @@ How to work
 Replies
 - Short and plain. Say what you changed and where (file and line).
 - Be honest: say when something failed or you're unsure, and never claim you ran or checked something you didn't."""
+
+ASK_TOOLS = """Tools
+- {look} to look around. This is ask mode: you can't change files or run commands.
+- Explain, answer and plan. If something should change, say exactly where and what (file, \
+line, the new code) instead of doing it."""
+
+CHAT = """You are {model}, an AI model, chatting with the user inside purr, a small terminal \
+program. purr is only the program around you; it is not you. If someone asks who or what you are, \
+say you are {model} (served by {provider}). Don't invent a name, persona or backstory.
+
+Be warm, natural and honest. Keep replies fairly short unless the user wants more, and say so \
+when you don't know something. In this mode you can't see or change any files. Today is {date}."""
+
+CREATE = """You are {model}, an AI model, and the user's creative partner inside purr, a small \
+terminal program. purr is only the program around you; it is not you. If someone asks who you \
+are, say you are {model} (served by {provider}).
+
+Brainstorm, imagine and write with the user: names, ideas, game designs, stories, plans. Offer a \
+few different directions rather than one, be specific and playful, build on what the user likes, \
+and ask a question back when it would help. In this mode you can't see or change any files. \
+Today is {date}."""
+
+# mode -> (which tools, what it's for). The TUI's chip and /mode use this.
+MODES = {
+    "code": ("all", "does the work: reads, edits, runs"),
+    "ask": ("read", "looks at the project and explains, never changes anything"),
+    "chat": ("none", "just talking, no tools"),
+    "create": ("none", "brainstorming and writing, no tools, a bit more random"),
+}
+
+REFINE = """You turn a user's short or vague request into a clear task for a coding agent that \
+works in this project. Use only what you can see below: don't invent files, functions or \
+requirements. Where the request is unclear, keep that part general instead of guessing. When tests \
+fail, don't decide whether the code or the test is wrong: say to find out why they fail.
+
+Write it like this, short:
+Task: one or two sentences
+Where: the files that most likely matter (from the list)
+Steps: 2 to 5 short steps
+Done when: how to check it worked (tests to run, or what should be true)
+
+Reply with only that.
+
+Project files:
+{files}
+{notes}
+The user's request:
+{request}"""
 
 HELPER = """
 
@@ -84,13 +131,43 @@ def _notes(path, label):
     return f"\n\n{label}:\n{notes}"
 
 
-def system_prompt(root, model_id, provider):
-    text = SYSTEM.format(model=model_id, provider=provider, root=root,
-                         date=datetime.date.today().isoformat())
+TASK_LINE = ("\n- task: send a helper to explore many files or the web and report back, "
+             "so this chat stays small.")
+
+
+def system_prompt(root, model_id, provider, hidden=(), mode="code"):
+    """hidden: tools this model isn't offered, so the prompt doesn't mention them either.
+    mode: code (all tools), ask (look only), chat or create (no tools, their own prompt)."""
+    date = datetime.date.today().isoformat()
+    if mode in ("chat", "create"):  # no project, no tools: a short prompt leaves room to talk
+        return (CHAT if mode == "chat" else CREATE).format(model=model_id, provider=provider, date=date)
+    look = ", ".join(t for t in ("read_file", "list_files", "grep", "fetch_url") if t not in hidden)
+    text = SYSTEM.format(model=model_id, provider=provider, root=root, look=look,
+                         task="" if "task" in hidden else TASK_LINE, date=date)
+    if mode == "ask":
+        start, end = text.index("Tools\n"), text.index("\n\nHow to work")
+        text = text[:start] + ASK_TOOLS.format(look=look) + text[end:]
     text += _notes(GLOBAL_NOTES, "The user's notes for every project")
     for name in NOTES_FILES:
         text += _notes(Path(root) / name, f"Project notes ({name})")
     return text
+
+
+def plain_history(messages):
+    """The chat without tool calls, for chat and create mode: APIs refuse tool messages when
+    no tools are offered, so earlier tool use becomes plain text."""
+    out, names = [], {}
+    for m in messages:
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            calls = "; ".join(f"{c['function']['name']}({c['function']['arguments'][:200]})" for c in m["tool_calls"])
+            names.update({c["id"]: c["function"]["name"] for c in m["tool_calls"]})
+            out.append({"role": "assistant", "content": f"{m.get('content') or ''}\n[used tools: {calls}]".strip()})
+        elif m.get("role") == "tool":
+            out.append({"role": "user", "content": f"(result of {names.get(m.get('tool_call_id'), 'a tool')}: "
+                                                   f"{clip(m.get('content') or '', 1500)})"})
+        else:
+            out.append({k: m[k] for k in ("role", "content") if k in m})
+    return out
 
 
 TEXT_CALL = re.compile(r"<function=([\w-]+)>(.*?)</function>", re.S)
@@ -201,6 +278,12 @@ class SubView:
     def ask(self, question, allow_always=True):
         return "n", ""
 
+    def activity(self, what, detail=""):
+        if what != "thinking":
+            self.view.activity(what, detail)
+
+    def tool_result(self, name, args, result): pass
+
     def thinking(self, s): pass
     def text(self, s): pass
     def end_reply(self): pass
@@ -220,6 +303,8 @@ class Agent:
         self.tools = Tools(self.root, view, read_only=helper, allow_run=perms.get("allow_run", []))
         self.tools.spawn = None if helper else self._helper
         self.stop_flag = False  # the TUI sets this to stop an answer (plain mode uses ctrl+c)
+        self.mode = "code"       # code, ask, chat or create (MODES)
+        self.refine_on = False   # rewrite each message into a clear task first (/refine)
         self.set_model(model_name)
         self.new()
 
@@ -249,8 +334,31 @@ class Agent:
             # the system prompt names the model, so it changes with it
             self.messages[0] = {"role": "system", "content": self._system()}
 
+    def set_mode(self, mode):
+        """code: every tool. ask: look but never change. chat / create: no tools at all."""
+        if mode not in MODES:
+            raise KeyError(f"no mode called {mode!r}. Have: {', '.join(MODES)}")
+        self.mode = mode
+        self.tools.read_only = self.helper or mode == "ask"  # enforced, not just asked for
+        self.tools.no_tools = MODES[mode][0] == "none"
+        if getattr(self, "messages", None):
+            self.messages[0] = {"role": "system", "content": self._system()}
+
+    def refine(self, text):
+        """Your request, rewritten by the same model into a clear task (Task / Where / Steps /
+        Done when) using the project's file list. The chat itself doesn't change."""
+        self.view.activity("refining", "making your message clearer")
+        files = self.tools.t_list_files(".").splitlines()
+        listing = "\n".join(files[:80]) + (f"\n… {len(files) - 80} more files" if len(files) > 80 else "")
+        notes = _notes(Path(self.root) / "AGENTS.md", "Project notes (AGENTS.md)")[:3000]
+        prompt = REFINE.format(files=listing, notes=notes + "\n" if notes else "", request=text)
+        reply = self._call([{"role": "user", "content": prompt}], tools=False, quiet=True)
+        self._count(reply["usage"])
+        return reply["text"].strip()
+
     def _system(self):
-        text = system_prompt(self.root, self.model["id"], self.model["provider"])
+        text = system_prompt(self.root, self.model["id"], self.model["provider"], self.limits.hidden_tools,
+                             self.mode)
         return text + HELPER if self.helper else text
 
     def new(self):
@@ -270,7 +378,7 @@ class Agent:
             return
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.log_path.write_text(json.dumps(
-            {"model": self.model_name, "folder": str(self.root), "title": self.title,
+            {"model": self.model_name, "mode": self.mode, "folder": str(self.root), "title": self.title,
              "cost": self.session_cost, "messages": self.messages},
             indent=1, ensure_ascii=False))
 
@@ -283,6 +391,8 @@ class Agent:
             except KeyError:
                 pass  # e.g. no API key right now: keep the current model
         self.messages = data["messages"]
+        if data.get("mode") in MODES:
+            self.set_mode(data["mode"])
         self.messages[0] = {"role": "system", "content": self._system()}
         self.title = data.get("title", "")
         self.session_cost = data.get("cost", 0.0)
@@ -292,15 +402,21 @@ class Agent:
     # ---- one model call ----
 
     def _call(self, messages=None, tools=True, quiet=False):
+        msgs = messages or self.messages
+        if tools and MODES[self.mode][0] == "none":
+            tools, msgs = False, plain_history(msgs)
         body = {
             "model": self.model["id"],
-            "messages": messages or self.messages,
+            "messages": msgs,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
         if tools:
-            body["tools"] = schemas(read_only=self.helper, read_lines=self.limits.read_lines)
+            body["tools"] = schemas(read_only=self.helper or self.mode == "ask",
+                                    read_lines=self.limits.read_lines, hidden=self.limits.hidden_tools)
         body.update(self.model.get("body", {}))
+        if self.mode == "create" and messages is None:  # a little more surprising
+            body["temperature"] = min(1.2, (body.get("temperature") or 0.8) + 0.3)
         on_text = (lambda s: None) if quiet else self.view.text
         on_think = (lambda s: None) if quiet else self.view.thinking
 
@@ -367,6 +483,8 @@ class Agent:
         steps = 0
         retries = 0
         self._repeats = {}  # (tool, args) -> how often it's been called, and the last result
+        self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+        todo_only = 0  # steps in a row that did nothing but update the task list
         try:
             while True:
                 steps += 1
@@ -384,11 +502,19 @@ class Agent:
                     if used > ctx * self.limits.compact_at:
                         self.compact(auto=True)
                 try:
+                    self.view.activity("thinking")
                     reply = self._call()
                 except ApiError as e:
                     self.view.note(f"api error: {e}", "error")
                     break
                 turn_cost += self._count(reply["usage"])
+                self.turn_stats["out"] += (reply["usage"] or {}).get("completion_tokens", 0)
+                self.turn_stats["calls"] += 1
+                self.turn_stats["model_s"] += reply.get("call_seconds", 0.0)
+                # Ollama sends a tool call as one piece at the very end, and a short answer is over
+                # in a blink: then there's no writing time to measure, so count the whole call
+                gen = reply.get("gen_seconds", 0.0)
+                self.turn_stats["gen"] += gen if gen >= 0.3 else reply.get("call_seconds", gen)
 
                 if not reply["tool_calls"] and "<function=" in reply["text"]:
                     reply["tool_calls"], reply["text"] = calls_from_text(reply["text"])
@@ -426,10 +552,43 @@ class Agent:
                     break
                 if nudge:
                     self.messages.append({"role": "user", "content": nudge})
+                # small models can get stuck ticking their task list forever instead of
+                # stopping (it never ends the turn, since a tool call always asks for more)
+                if all(c["name"] == "todo" for c in reply["tool_calls"]):
+                    todo_only += 1
+                    if reply["text"] and not self.tools.todos_left:
+                        break  # it answered and everything is done: that's the end
+                    if todo_only >= 3:
+                        self.view.note("it only kept updating its task list, so purr ended the turn")
+                        break
+                else:
+                    todo_only = 0
         except Stopped:
             self.view.note("stopped", "warn")
         self.save_log()
         self._status(turn_cost)
+        changed = len(self.tools.undo_stack[-1]) if self.tools.undo_stack else 0
+        if changed and not self.helper and (self.root / ".git").exists():
+            self.view.note(f"✎ {changed} file{'s' * (changed != 1)} changed · /pr makes a pull request")
+        self.turn_stats["summary"] = self._turn_summary()
+        self.view.note(self.turn_stats["summary"], "stats")
+
+    def tok_per_s(self):
+        """Output speed this turn: tokens written / seconds spent writing them."""
+        s = getattr(self, "turn_stats", None)
+        if not s or not s["out"] or s["gen"] < 0.2:
+            return None
+        return s["out"] / s["gen"]
+
+    def _turn_summary(self):
+        s = self.turn_stats
+        parts = [ui.duration(time.monotonic() - s["start"])]
+        rate = self.tok_per_s()
+        if rate:
+            parts.append(f"{rate:.1f} tok/s" if rate < 10 else f"{rate:.0f} tok/s")
+        if s["out"]:
+            parts.append(f"{ui.short(s['out'])} tokens")
+        return "✓ " + " · ".join(parts)
 
     def _run_tools(self, calls):
         """Runs the tool calls. Returns True when you said a plain no (the turn ends)."""
@@ -558,6 +717,7 @@ class Agent:
             return None
         before = self.context_used()
         self.view.note("compacting the chat (summarising it to make room)…", "info")
+        self.view.activity("compacting")
         prompt = COMPACT.format(transcript=self.transcript(self.messages[1:]))
         reply = self._call([{"role": "user", "content": prompt}], tools=False, quiet=True)
         self._count(reply["usage"])

@@ -107,6 +107,111 @@ class LoopGuardTest(unittest.TestCase):
             self.assertIsNone(guard(self.a, [("todo", '{"items": []}', "ok")]))
 
 
+def scripted(a, replies):
+    """Make the agent's model calls return these replies in order. Returns the call counter."""
+    calls = {"n": 0}
+
+    def fake_call(*args, **kwargs):
+        reply = replies[min(calls["n"], len(replies) - 1)]
+        calls["n"] += 1
+        return reply
+
+    a._call = fake_call
+    return calls
+
+
+def reply(text="", *todo_statuses, tool=None):
+    tool_calls = []
+    if todo_statuses:
+        items = [{"text": f"step {n}", "status": st} for n, st in enumerate(todo_statuses)]
+        tool_calls.append({"id": "t", "name": "todo", "args": json.dumps({"items": items})})
+    if tool:
+        tool_calls.append({"id": "r", "name": tool[0], "args": json.dumps(tool[1])})
+    return {"text": text, "reasoning": "", "tool_calls": tool_calls, "usage": None,
+            "finish": "tool_calls" if tool_calls else "stop", "gen_seconds": 0.0}
+
+
+class TodoLoopTest(unittest.TestCase):
+    def test_chatty_todo_loop_ends(self):
+        # what qwen3-coder did with "hello who are you": answer + todo, forever
+        a = agent()
+        calls = scripted(a, [reply("I am qwen.", "pending"), reply("I am qwen.", "done"),
+                             reply("Hello!", "pending"), reply("Hi again", "done")])
+        a.turn("hello who are you")
+        self.assertEqual(calls["n"], 2)  # stops once it has answered and everything is done
+
+    def test_todo_only_steps_stop_after_three(self):
+        a = agent()
+        calls = scripted(a, [reply("", "pending"), reply("", "doing"), reply("", "pending"),
+                             reply("", "doing")])
+        a.turn("do the thing")
+        self.assertEqual(calls["n"], 3)
+
+    def test_real_work_with_a_todo_list_carries_on(self):
+        a = agent()
+        Path(a.root, "x.py").write_text("print(1)\n")
+        calls = scripted(a, [reply("plan", "doing", "pending", tool=("read_file", {"path": "x.py"})),
+                             reply("", "done", "doing", tool=("grep", {"pattern": "print"})),
+                             reply("", "done", "done"),  # todo only, no text: not the end yet
+                             reply("All done: x.py prints 1.")])
+        a.turn("check x.py")
+        self.assertEqual(calls["n"], 4)
+
+
+class HiddenToolsTest(unittest.TestCase):
+    def test_small_models_are_not_offered_web_or_helpers(self):
+        from harness.tools import schemas
+        a = agent("small")
+        names = [s["function"]["name"] for s in schemas(hidden=a.limits.hidden_tools)]
+        self.assertNotIn("fetch_url", names)
+        self.assertNotIn("task", names)
+        prompt = a.messages[0]["content"]
+        self.assertNotIn("fetch_url", prompt)  # or it would try to call them anyway
+        self.assertNotIn("- task:", prompt)
+
+    def test_big_models_get_everything(self):
+        a = agent("big")
+        self.assertEqual(a.limits.hidden_tools, ())
+        self.assertIn("fetch_url", a.messages[0]["content"])
+
+
+class ModeTest(unittest.TestCase):
+    def test_ask_mode_can_look_but_not_change(self):
+        a = agent()
+        Path(a.root, "x.py").write_text("x = 1\n")
+        a.set_mode("ask")
+        self.assertIn("ask mode", a.messages[0]["content"])
+        self.assertIn("there is no tool", a.tools.call("edit_file", json.dumps(
+            {"path": "x.py", "old_text": "x = 1", "new_text": "x = 2"})))
+        self.assertIn("x = 1", a.tools.call("read_file", '{"path": "x.py"}'))
+        self.assertEqual(Path(a.root, "x.py").read_text(), "x = 1\n")
+
+    def test_chat_mode_has_no_tools_and_a_short_prompt(self):
+        a = agent()
+        a.set_mode("chat")
+        self.assertNotIn("edit_file", a.messages[0]["content"])
+        self.assertIn("error: no tools", a.tools.call("read_file", '{"path": "x.py"}'))
+
+    def test_old_tool_calls_become_plain_text_without_tools(self):
+        from harness.agent import plain_history
+        msgs = [{"role": "user", "content": "fix it"},
+                {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "1", "content": "x = 1"}]
+        out = plain_history(msgs)
+        self.assertFalse(any("tool_calls" in m or m["role"] == "tool" for m in out))
+        self.assertIn("read_file", out[1]["content"])
+        self.assertIn("x = 1", out[2]["content"])
+
+
+class GrepTest(unittest.TestCase):
+    def test_lower_case_search_ignores_case(self):
+        a = agent()
+        Path(a.root, "menu.py").write_text("HAPPY_HOUR_DISCOUNT = 0.20\n")
+        self.assertIn("menu.py:1:", a.tools.t_grep("discount"))
+        self.assertIn("no matches", a.tools.t_grep("Discount"))  # a capital means exact
+
+
 class PruneTest(unittest.TestCase):
     def chat(self, a, n):
         for i in range(n):

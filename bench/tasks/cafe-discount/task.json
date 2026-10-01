@@ -1,0 +1,5 @@
+{
+ "kind": "bug fix, several files",
+ "prompt": "Happy hour prices in this cat café app are wrong and a test fails. Find the cause and fix it. Run the tests at the end.",
+ "vague": "happy hour prices look weird, fix it"
+}

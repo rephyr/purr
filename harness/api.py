@@ -1,6 +1,7 @@
 """Talks to any OpenAI-compatible chat API (Ollama, DeepSeek, ...) with streaming."""
 
 import json
+import time
 import urllib.error
 import urllib.request
 
@@ -18,8 +19,12 @@ class Stopped(Exception):
 def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lambda: False):
     """POST /chat/completions with stream=True. Calls on_text / on_reasoning as pieces arrive.
 
-    Returns {"text", "reasoning", "tool_calls", "usage", "finish"} once the reply is complete.
+    Returns {"text", "reasoning", "tool_calls", "usage", "finish", "gen_seconds", "call_seconds"}
+    once the reply is complete. gen_seconds runs from the first piece to the last, so it leaves
+    out the time the model spent reading the prompt: output tokens / gen_seconds is the speed
+    you feel. call_seconds is the whole call.
     """
+    started = time.monotonic()
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -41,6 +46,7 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
     calls = {}  # index -> {"id", "name", "args"}; tool calls arrive in pieces
     usage = None
     finish = None
+    first = last = None
     with resp:
         for raw in resp:
             if should_stop():
@@ -58,6 +64,9 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
                 usage = chunk["usage"]
             for choice in chunk.get("choices") or []:
                 delta = choice.get("delta") or {}
+                if delta:
+                    last = time.monotonic()
+                    first = first or last
                 # DeepSeek calls it reasoning_content, Ollama calls it reasoning
                 r = delta.get("reasoning_content") or delta.get("reasoning")
                 if r:
@@ -85,4 +94,6 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
         "tool_calls": tool_calls,
         "usage": usage,
         "finish": finish,
+        "gen_seconds": (last - first) if first else 0.0,
+        "call_seconds": time.monotonic() - started,
     }
