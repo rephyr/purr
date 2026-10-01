@@ -1,7 +1,7 @@
 # purr ♡
 
 A tiny coding agent for the terminal, built to learn how harnesses work.
-Works with local Ollama models and the DeepSeek API. The agent itself is plain Python;
+Works with local Ollama models, the DeepSeek API and OpenRouter. The agent itself is plain Python;
 the full-screen mode uses [Textual](https://textual.textualize.io/) (`uv sync` installs it into `.venv`).
 
 ```
@@ -75,6 +75,13 @@ Local model quirks purr works around: edits with slightly wrong indentation stil
 Put the key in `~/.zshrc`: `export DEEPSEEK_API_KEY=sk-...`, open a new terminal, then `/model flash`.
 DeepSeek's cache makes repeated context almost free, as long as the start of the chat never
 changes. purr only ever adds to the end of the chat, so that works out of the box.
+
+## OpenRouter
+
+Uses the key you saved with `opencode auth login openrouter` (or `OPENROUTER_API_KEY` if set;
+DeepSeek works the same way). Models: `ds-pro-or`, `ds-flash-or`, `luna`, `sonnet`, `glm`,
+`qwen-flash`, `kimi`. For another one, copy an entry in `config.toml` and change `id` and `price`
+(both are on openrouter.ai). The cost purr shows is OpenRouter's real one.
 
 ## Ideas for next steps
 

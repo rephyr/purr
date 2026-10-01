@@ -8,6 +8,7 @@ import datetime
 import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -122,6 +123,25 @@ def calls_from_text(text):
     return calls, cleaned
 
 
+_OPENCODE_KEYS = {}
+
+
+def opencode_key(integration):
+    """A key you saved with `opencode auth login`, so it doesn't have to live in ~/.zshrc too."""
+    if integration in _OPENCODE_KEYS:
+        return _OPENCODE_KEYS[integration]
+    try:
+        out = subprocess.run(["opencode", "auth", "export"], capture_output=True, text=True, timeout=20).stdout
+        creds = json.loads(out)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    for c in creds:
+        if c.get("integrationID") == integration and c.get("active", True):
+            _OPENCODE_KEYS[integration] = (c.get("value") or {}).get("key")
+            return _OPENCODE_KEYS[integration]
+    return None
+
+
 def is_peak(provider):
     now = datetime.datetime.now(datetime.timezone.utc)
     if now.weekday() >= 5:
@@ -198,8 +218,12 @@ class Agent:
         key = None
         if provider.get("api_key_env"):
             key = os.environ.get(provider["api_key_env"])
+            if not key and provider.get("opencode_auth"):
+                key = opencode_key(provider["opencode_auth"])
             if not key:
-                raise KeyError(f"{name} needs the {provider['api_key_env']} environment variable")
+                raise KeyError(f"{name} needs the {provider['api_key_env']} environment variable"
+                               + (f" or `opencode auth login {provider['opencode_auth']}`"
+                                  if provider.get("opencode_auth") else ""))
         self.model_name, self.model, self.provider, self.key = name, model, provider, key
         if getattr(self, "messages", None):
             # the system prompt names the model, so it changes with it
@@ -280,6 +304,8 @@ class Agent:
         price = self.model.get("price")
         if not price or not usage:
             return 0.0
+        if isinstance(usage.get("cost"), (int, float)):
+            return usage["cost"]  # OpenRouter says what the call really cost
         prompt = usage.get("prompt_tokens", 0)
         hit = usage.get("prompt_cache_hit_tokens")
         if hit is None:

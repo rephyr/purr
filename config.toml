@@ -11,10 +11,18 @@ base_url = "http://127.0.0.1:11434/v1"
 [providers.deepseek]
 base_url = "https://api.deepseek.com"
 api_key_env = "DEEPSEEK_API_KEY"
+opencode_auth = "deepseek"  # no env variable? use the key from `opencode auth login deepseek`
 # DeepSeek wants its thinking text sent back on every turn when tools are used (400 error otherwise).
 echo_reasoning = "reasoning_content"
 # Weekdays, UTC hours where prices are doubled.
 peak_hours_utc = [[1, 4], [6, 10]]
+
+[providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+opencode_auth = "openrouter"  # same key OpenCode uses
+# Thinking models (DeepSeek, Kimi, GLM) want their thinking back when tools are used.
+echo_reasoning = "reasoning"
 
 # ---- local models (free) ----
 
@@ -55,6 +63,59 @@ provider = "deepseek"
 id = "deepseek-v4-pro"
 context = 1000000
 price = { hit = 0.022, miss = 0.66, out = 1.98 }
+
+# ---- OpenRouter (paid, key from OpenCode or OPENROUTER_API_KEY) ----
+# Prices: USD per 1M tokens (purr shows OpenRouter's real cost when it sends one).
+# max_tokens stays at 16k: with a small balance OpenRouter refuses calls that could cost more.
+
+[models.ds-pro-or]
+provider = "openrouter"
+id = "deepseek/deepseek-v4-pro"
+context = 1000000
+price = { hit = 0.0174, miss = 0.2088, out = 0.4176 }
+body = { max_tokens = 16384 }
+
+[models.ds-flash-or]
+provider = "openrouter"
+id = "deepseek/deepseek-v4.1-flash"
+context = 1000000
+price = { hit = 0.01, miss = 0.03, out = 0.50 }
+body = { max_tokens = 16384 }
+
+[models.luna]
+provider = "openrouter"
+id = "openai/gpt-6-luna"
+context = 1000000
+price = { hit = 0.01, miss = 0.10, out = 0.50 }
+body = { max_tokens = 16384 }
+
+[models.sonnet]
+provider = "openrouter"
+id = "anthropic/claude-sonnet-5.5"
+context = 200000  # really 1M, but at $2 per 1M it's cheaper to compact early
+price = { hit = 0.20, miss = 2.00, out = 10.00 }
+body = { max_tokens = 16384 }
+
+[models.glm]
+provider = "openrouter"
+id = "z-ai/glm-5.3"
+context = 1000000
+price = { hit = 0.1775, miss = 0.2219, out = 3.39 }
+body = { max_tokens = 16384 }
+
+[models.qwen-flash]
+provider = "openrouter"
+id = "qwen/qwen3.7-flash"
+context = 1000000
+price = { hit = 0.006, miss = 0.03, out = 0.13 }
+body = { max_tokens = 16384 }
+
+[models.kimi]
+provider = "openrouter"
+id = "moonshotai/kimi-k2.7-code"
+context = 262144
+price = { hit = 0.18, miss = 0.6712, out = 3.35 }
+body = { max_tokens = 16384 }
 
 # Commands the model may run without asking (only simple ones: no ; && | $() > in them).
 [permissions]
