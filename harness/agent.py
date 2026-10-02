@@ -18,7 +18,7 @@ from .api import ApiError, Stopped, stream_chat
 from .limits import LOCAL, Limits
 from .free import FreeRouter, rest_for
 from .mcp import Mcp
-from . import checks
+from . import checks, minimal
 from .prompts import (  # noqa: F401 - the words purr says; some only re-exported for others
     SYSTEM, ASK_TOOLS, LEARN, LEARN_NUDGE, LEARN_SHORTEN, PAIR,
     PAIR_HAND_BACK, CHAT, CREATE, PLAN, TICKET_WORK, TIME_INTRO,
@@ -495,6 +495,7 @@ class Agent:
         self.time_limit = None   # seconds for a turn (purr --time-limit): reminders at half and four fifths
         self.one_shot = False    # nobody answers questions (purr -p, benchmarks): set_one_shot
         self._echo_all = False   # True once a provider refused trimmed thinking (_for_provider)
+        self.shell = None        # minimal mode's bash session, opened by its first command
         # /refine: "auto" rewrites a short first message into a clear task (you approve it),
         # "on" every message, "off" none. purr bench measured +2 solved hard tasks from vague asks.
         # Unset, it follows the model (auto for local models, off for API ones); /refine or
@@ -506,6 +507,11 @@ class Agent:
 
     def stopping(self):
         return self.stop_flag or bool(self.parent and self.parent.stopping())
+
+    @property
+    def minimal(self):
+        """minimal = true (harness/minimal.py): one-line prompt, one bash tool, no checks."""
+        return bool(self.config.get("minimal")) and not self.helper
 
     # ---- /private: local models only, no web, nothing saved ----
 
@@ -880,6 +886,8 @@ class Agent:
         return TOOL_NAMES | ({"project_overview"} if self.project_overview() else set())
 
     def _system(self):
+        if self.minimal:
+            return minimal.SYSTEM
         tools = MODES[self.mode][0] != "none"
         names = [s["function"]["name"] for s in self.mcp.schemas(read_only=self.helper or self.mode == "ask",
                                                                  taken=self.mcp_taken)] if tools else []
@@ -945,7 +953,9 @@ class Agent:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
-        if tools:
+        if tools and self.minimal:
+            body["tools"] = [minimal.BASH]
+        elif tools:
             read_only = self.helper or self.mode == "ask"
             body["tools"] = schemas(read_only=read_only, read_lines=self.limits.read_lines,
                                     hidden=self.hidden_tools) + self.mcp.schemas(read_only, taken=self.mcp_taken)
@@ -953,10 +963,13 @@ class Agent:
         body.update(self.model.get("body", {}))
         if self.mode == "create" and messages is None:  # a little more surprising
             body["temperature"] = min(1.2, (body.get("temperature") or 0.8) + 0.3)
-        effort = self.config.get("routine_effort")
-        if effort and tools and messages is None and self._routine_step():
+        effort = self.config.get("effort") or ("high" if self.minimal else None)  # DSH's default: high
+        routine = self.config.get("routine_effort")
+        if routine and tools and messages is None and self._routine_step():
             # output (mostly thinking) is about half of an agent's cost; after only reading and
             # searching, the next step rarely needs deep thought (off unless routine_effort is set)
+            effort = routine
+        if effort:
             if self.model.get("provider") == "openrouter" or "openrouter.ai" in self.provider.get("base_url", ""):
                 body["reasoning"] = {**(body.get("reasoning") or {}), "effort": effort}
             else:
@@ -1036,7 +1049,9 @@ class Agent:
         # against 4k of replies), filling the context ~40x faster. A provider that refuses this
         # (see _call) gets all of it again.
         recent = None  # None: every reply keeps its thinking
-        if echo and not self._echo_all:
+        # keep_reasoning = "all" (and minimal mode, like DSH): every step's thinking goes back, so
+        # the model keeps its own earlier plans; with a 1M context and a cache that's cheap
+        if echo and not self._echo_all and not (self.minimal or self.config.get("keep_reasoning") == "all"):
             withs = [i for i, m in enumerate(msgs) if m.get(echo)]
             if len(withs) > REASONING_KEEP:
                 recent = set(withs[-REASONING_KEEP:])
@@ -1149,6 +1164,8 @@ class Agent:
         self.failed = None
         if self.mode == "plan" and not self.helper:
             return self.plan_turn(text)
+        if self.minimal:
+            return self.minimal_turn(text)
         if not self.title:
             self.title = " ".join(text.split())[:70]
         self._begin_turn(text)
@@ -1272,6 +1289,61 @@ class Agent:
             self.view.note("stopped", "warn")
             self.cut_off = e.partial  # the reply it was writing: only in the log, not the chat
         self._after_turn(turn_cost)
+
+    def minimal_turn(self, text):
+        """Minimal mode's loop, DSH's: ask the model, run its bash calls, and again, until it answers
+        without one (or the step limit). No reminders, nudges, time notes or final checks."""
+        if not self.title:
+            self.title = " ".join(text.split())[:70]
+        self._started = time.monotonic()
+        self.turn_stats = _new_stats()
+        self.messages.append({"role": "user", "content": text})
+        turn_cost = 0.0
+        cap = self._step_cap()
+        try:
+            for _ in range(cap):
+                self.view.activity("thinking")
+                try:
+                    reply = self._call()
+                except ApiError as e:
+                    self.view.note(f"api error: {e}", "error")
+                    self.failed = str(e)
+                    break
+                turn_cost += self._record(reply)
+                self.messages.append(self._assistant_message(reply))
+                self.save_log()
+                if not reply["tool_calls"]:
+                    break
+                calls, done = reply["tool_calls"], 0
+                try:
+                    for c in calls:
+                        if self.stopping():
+                            raise Stopped
+                        self.messages.append({"role": "tool", "tool_call_id": c["id"],
+                                              "content": self._minimal_bash(c["name"], c["args"])})
+                        done += 1
+                finally:  # every tool call needs an answer, or the next request is refused
+                    for c in calls[done:]:
+                        self.messages.append({"role": "tool", "tool_call_id": c["id"], "content": "cancelled"})
+            else:
+                self.view.note(f"stopped after {cap} steps (the step limit)", "warn")
+        except Stopped as e:
+            self.view.note("stopped", "warn")
+            self.cut_off = getattr(e, "partial", None)
+        self._after_turn(turn_cost)
+
+    def _minimal_bash(self, name, raw_args):
+        """One bash call in minimal mode: its output, ending in [exit code: N]."""
+        command = _args(raw_args).get("command")
+        if not isinstance(command, str) or not command.strip():
+            return f"error: {name} needs a command (the only tool is bash, with one argument: command)"
+        self.view.tool(f"run {command[:100]}")
+        if self.shell is None:
+            self.shell = minimal.BashSession(self.root)
+        result = self.shell.run(command)
+        for line in result.splitlines()[-4:]:
+            self.view.note(line[:160])
+        return result
 
     def _begin_turn(self, text):
         """Everything a turn starts from, in one place: the clock, the request, and every flag the

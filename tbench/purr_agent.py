@@ -20,6 +20,10 @@ Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the 
     time_limit=900        seconds purr is told it has (default: the task's own limit, less 10%)
     web=false             no fetch_url: leaderboard runs may not look at the benchmark's site or repo
     routine_effort=low    less reasoning for steps that only follow reads and searches (saves output)
+    keep_reasoning=all    send every step's thinking back, not only the last 2 replies' (DSH does)
+    minimal=true          purr the way DSH Minimal ran: one-line prompt, one bash tool in a shell that
+                          stays open, all thinking kept, effort high, no MCP and no checks
+                          (harness/minimal.py)
 """
 
 
@@ -124,7 +128,7 @@ class PurrAgent(BaseInstalledAgent):
 
     def __init__(self, *args, mcp: str | bool = True, hosts: str | None = None, temperature=None,
                  top_p=None, max_tokens=None, max_steps=200, edge_cases=None, time_limit=None, web=True,
-                 routine_effort=None, **kwargs):
+                 routine_effort=None, keep_reasoning=None, minimal=False, **kwargs):
         kwargs.setdefault("version", purr_version())
         super().__init__(*args, **kwargs)
         self.use_mcp = str(mcp).lower() not in ("false", "0", "no", "off")
@@ -136,6 +140,8 @@ class PurrAgent(BaseInstalledAgent):
         self.time_limit = float(time_limit) if time_limit else None
         self.web = str(web).lower() not in ("false", "0", "no", "off")
         self.routine_effort = routine_effort
+        self.keep_reasoning = keep_reasoning
+        self.minimal = str(minimal).lower() in ("true", "1", "yes", "on")
 
     @staticmethod
     def name() -> str:
@@ -182,9 +188,13 @@ class PurrAgent(BaseInstalledAgent):
             config["edge_cases"] = self.edge_cases
         if self.routine_effort:
             config["routine_effort"] = self.routine_effort
+        if self.keep_reasoning:
+            config["keep_reasoning"] = self.keep_reasoning
+        if self.minimal:
+            config["minimal"] = True
         config.update({"default_model": "bench", "max_steps": self.max_steps, "providers": {provider: prov},
                        "models": {"bench": spec}})
-        if self.use_mcp:
+        if self.use_mcp and not self.minimal:  # minimal: bash is the only tool
             config["mcp"] = {name: {"command": [PY, f"{{purr}}/servers/{name}.py"]}
                              for name in ("codebase", "stack")}
         return config
