@@ -3,7 +3,9 @@ name = "purr"
 version = "0.1.0"
 description = "tiny coding agent for the terminal"
 requires-python = ">=3.11"
-dependencies = ["textual"]
+dependencies = [
+    "textual[syntax]",
+]
 
 [tool.uv]
 package = false

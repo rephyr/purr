@@ -22,8 +22,9 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
-from harness import commands, ui
-from tui import cat, diffview, themes
+from harness import commands, stats, ui
+from tui import cat, diffview, statcard, themes
+from tui.workbench import Workbench
 from harness.agent import MODES as MODE_NAMES
 from harness.agent import STATE_DIR, Agent, list_sessions
 
@@ -47,6 +48,10 @@ TOOL_LOOK = {
     "grep": ("◈", "search", LILAC), "fetch_url": ("◈", "fetch", LILAC),
     "edit_file": ("✎", "edit", PINK), "write_file": ("✎", "write", PINK),
     "run": ("❯", "run", CYAN), "task": ("✦", "helper", PEACH),
+    # purr's MCP servers (servers/): finding your way around, and real API docs
+    "project_overview": ("⌂", "overview", MINT), "code_map": ("⌂", "map", MINT), "outline": ("⌂", "outline", MINT),
+    "find_symbol": ("⌂", "find", MINT), "related_files": ("⌂", "related", MINT),
+    "godot_class": ("✧", "godot", PEACH), "python_api": ("✧", "api", PEACH),
 }
 JUNK = (".pyc", ".o", ".so", ".class", ".import", ".uid")  # never worth attaching
 
@@ -77,7 +82,8 @@ def logo():
 
 def keys_text():
     t = Text(no_wrap=True)
-    for key, what in (("/", "commands"), ("@", "files"), ("!", "shell"), ("esc", "stop"), ("ctrl+q", "quit")):
+    for key, what in (("/", "commands"), ("@", "files"), ("!", "shell"), ("ctrl+t", "browse"), ("esc", "stop"),
+                      ("ctrl+q", "quit")):
         t.append(key, style=f"bold {TEXT}")
         t.append(f" {what}   ", style=DIM)
     t.rstrip()
@@ -99,6 +105,14 @@ class CatWidget(Static):
     def on_click(self, event):
         if not self.screen.get_selected_text():
             self.app.pet_cat()
+
+
+class DiffCardWidget(Static):
+    """A change in the chat. Click it to open that file in the workbench."""
+
+    def on_click(self, event):
+        if not self.screen.get_selected_text():
+            self.app.action_workbench(self.app.agent.root / self.path)
 
 
 class ToolLine(Vertical):
@@ -179,7 +193,10 @@ class TuiView:
             self._mood(mood, detail[:60])
 
     def _send(self, fn, *args):
-        self.app.call_from_thread(fn, *args)
+        try:
+            self.app.call_from_thread(fn, *args)
+        except RuntimeError:  # already on the app's own thread (a command, not a turn): just do it
+            fn(*args)
 
     def _stream(self, kind, s):
         self.live_chars += len(s)
@@ -239,6 +256,8 @@ class TuiView:
             self._send(self.app.add_stats, s)
             return
         self._send(self.app.add_line, s, kind)
+        if "switching to" in s:  # the free router moved on: show the new model below
+            self._send(self.app.refresh_info)
 
     def todos(self, items):
         self.flush()
@@ -539,6 +558,7 @@ class PurrApp(App):
         Binding("ctrl+c", "stop_or_clear", "stop", priority=True),
         Binding("escape", "stop", "stop"),
         Binding("shift+tab", "next_mode", "mode", priority=True),
+        Binding("ctrl+t", "workbench", "browse", priority=True),
         Binding("pageup", "scroll_chat(-1)", show=False),
         Binding("pagedown", "scroll_chat(1)", show=False),
     ]
@@ -567,6 +587,7 @@ class PurrApp(App):
         self.busy_since = None
         self.job = None         # what's running: "turn" (the model), "shell" or "compact"
         self.cat_mood, self.cat_detail = "sleeping", ""
+        self.idle = "sleeping"  # what she goes back to when nothing's happening: a mode's scene once you switch
         self.cat_tick = 0
         self.cat_shown = None   # (mood, frame, detail) on screen, so it's only redrawn when it changes
         self.cat_until = None   # "done!" and "oops" go back to napping after a moment
@@ -611,6 +632,10 @@ class PurrApp(App):
         self.agent.tools.trust_all = self.trust
         self.chat = self.query_one("#chat", VerticalScroll)
         self.chat.can_focus = False
+        self.following = True
+        self.watch(self.chat, "scroll_y", self._on_chat_scroll, init=False)
+        # the markdown stream adds its text a little later on its own, so follow every growth
+        self.watch(self.chat, "virtual_size", lambda: self._follow(), init=False)
         self.query_one("#menu", OptionList).can_focus = False
         where = str(self.agent.root).replace(str(Path.home()), "~", 1)
         branch = git_branch(self.agent.root)
@@ -633,15 +658,39 @@ class PurrApp(App):
         """The line inside the message box: model, where it runs, trust mode."""
         provider = self.agent.model["provider"]
         line = Text(no_wrap=True, overflow="ellipsis")
+        if self.agent.router:  # /model free: show who it picked
+            line.append(f"{self.agent.chosen_model} → ", style=MINT)
         line.append(self.agent.model_name, style=f"bold {LILAC}")
-        line.append(f"  {provider} ({'paid' if self.agent.model.get('price') else 'local'})", style=DIM)
+        line.append(f"  {provider} ({ui.cost_kind(self.agent.model)})", style=DIM)
         icon, colour = self.MODE_LOOK[self.agent.mode]
         line.append(f"   {icon} {self.agent.mode}", style=f"bold {colour}")
         if self.agent.refine_mode != "off" and self.agent.mode == "code":
             line.append("  ✧ refine" if self.agent.refine_mode == "on" else "  ✧ auto-refine", style=PEACH)
+        if self.agent.private:
+            line.append("   🔒 private", style=f"bold {MINT}")
         if self.agent.tools.trust_all:
             line.append("  trusting everything", style=PEACH)
         self.query_one("#model", Static).update(line)
+        self.show_mode()
+
+    def show_mode(self):
+        """The mode's colour on the message box's bar (purr.tcss: .mode-*), and its little cat
+        scene when the mode just changed."""
+        mode = self.agent.mode
+        shown = getattr(self, "shown_mode", None)
+        if mode == shown:
+            return
+        for m in MODE_NAMES:
+            self.screen.set_class(m == mode, f"mode-{m}")
+        self.shown_mode = mode
+        moved, self.mode_moved = getattr(self, "mode_moved", None), None
+        if shown is not None and f"mode_{mode}" in cat.MOODS:
+            self.idle = f"mode_{mode}"  # from now on she rests in this mode's scene instead of napping
+            if not self.busy:
+                what = cat.MODES_WHAT.get(mode, "")
+                if moved:
+                    what += " · " + (moved if moved.startswith("kept") else "now on " + moved.removeprefix("model: "))
+                self._show_cat(self.idle, what)
 
     def set_status(self, s):
         # the agent's status starts with the model name, which the box already shows
@@ -660,13 +709,13 @@ class PurrApp(App):
         now = time.monotonic()
         if self.cat_hold and now > self.cat_hold:
             self.cat_hold = 0.0
-            mood, detail = self.cat_pending or (("thinking" if self.busy else "sleeping"), "")
+            mood, detail = self.cat_pending or (("thinking", "") if self.busy else self._idle())
             self.cat_pending = None
             if not self.busy and mood in self.WORK:
-                mood, detail = "sleeping", ""
+                mood, detail = self._idle()
             self.set_cat(mood, detail)
         if self.cat_until and not self.busy and now > self.cat_until:
-            self.set_cat("sleeping")
+            self.set_cat(*self._idle())
         if now - self.night_checked > 60:  # follows your desktop's day/night switch
             self.night_checked, night = now, themes.is_night()
             if night != self.night:
@@ -679,6 +728,10 @@ class PurrApp(App):
     # short reactions play for this long, then she goes back to what she was doing
     HOLD = {"proud": 2.6, "sad": 2.6, "petted": 2.2, "waking": 1.4}
     WORK = {"thinking", "exploring", "building", "running", "talking", "tidying"}
+
+    def _idle(self):
+        """(mood, detail) for a quiet moment: asleep until you first switch mode, then that mode's scene."""
+        return self.idle, cat.MODES_WHAT.get(self.idle.removeprefix("mode_"), "") if self.idle != "sleeping" else ""
 
     def set_cat(self, mood, detail=""):
         now = time.monotonic()
@@ -777,7 +830,7 @@ class PurrApp(App):
             self.cat_shown = shown
             self.query_one("#cat", Static).update(cat.render(
                 self.cat_mood, self.cat_tick, self.cat_detail, stats,
-                sleepy_stats=not self.busy and self.cat_mood == "sleeping",
+                sleepy_stats=not self.busy and self.cat_mood in ("sleeping", self.idle),
                 label=self.cat_label, night=self.night))
 
     # ---- your prompt, pinned on top while you scroll ----
@@ -802,18 +855,29 @@ class PurrApp(App):
     # ---- chat blocks (all called on the app's thread) ----
 
     def _at_bottom(self):
-        return self.chat.scroll_y >= self.chat.max_scroll_y - 1
+        return self.chat.scroll_y >= self.chat.max_scroll_y - 0.5
 
-    def _follow(self, was_at_bottom):
+    def _on_chat_scroll(self, old, new):
+        """Scrolling up stops following the newest text; getting back to the bottom starts it again.
+        New text only grows max_scroll_y, so a smaller scroll_y away from the bottom is always you."""
+        if self._at_bottom():
+            self.following = True
+        elif new < old:
+            self.following = False
+
+    def _scroll_down(self):
+        if self.following:
+            self.chat.scroll_end(animate=False, immediate=True)
+
+    def _follow(self):
         """Keep the newest text in view, unless you scrolled up to read something."""
-        if was_at_bottom:
-            self.chat.call_after_refresh(self.chat.scroll_end, animate=False)
+        if self.following:
+            self.chat.call_after_refresh(self._scroll_down)  # checked again then: you may scroll up meanwhile
 
     def _mount(self, widget):
         self.leave_home()
-        follow = self._at_bottom()
         self.chat.mount(widget)
-        self._follow(follow)
+        self._follow()
 
     def add_line(self, s, kind="dim"):
         self._close_block()
@@ -841,6 +905,7 @@ class PurrApp(App):
         line = line or getattr(self, "last_tool", None)
         if line is not None:
             line.set_details(tool_details(name, args, result))
+            self._follow()
 
     def add_stats(self, s):
         """₊˚✧ 5s ⋆ 89 tok/s ⋆ 356 tokens ✧˚₊ under a finished answer."""
@@ -853,13 +918,24 @@ class PurrApp(App):
         t.append(" ✧˚₊", style="#ffd6f0")
         self.add_line_text(t, "stats")
 
+    def add_stats_card(self):
+        """/stats as one card (tui/statcard.py draws it)."""
+        found = stats.gather()
+        card = Static(statcard.render(found, stats.load_cat()), classes="statcard")
+        card.border_title = "₊˚✧ purr stats ✧˚₊"
+        if found["first"]:
+            card.border_subtitle = f"since {found['first']:%-d.%-m.%Y}"
+        self._close_block()
+        self._mount(card)
+
     def add_line_text(self, t, kind):
         self._close_block()
         self._mount(Static(t, classes=f"line {kind}"))
 
     def add_user(self, s):
         self._close_block()
-        self.last_prompt = Static(Text(s), classes="user")
+        self.following = True  # you sent something: back to the newest text
+        self.last_prompt = Static(Text(s), classes=f"user mode-{self.agent.mode}")  # keeps its mode's colour
         self._mount(self.last_prompt)
         self.query_one("#pinned", Static).update(self._pin_text(s))
 
@@ -867,7 +943,8 @@ class PurrApp(App):
         """A change as a card: file name in the border, syntax colours, changed bits glowing."""
         self._close_block()
         diff = ui.diff_rows(before, after, max_rows=24 if not before else 80)
-        card = Static(diffview.DiffCard(path, before, after, diff), classes="diff")
+        card = DiffCardWidget(diffview.DiffCard(path, before, after, diff), classes="diff")
+        card.path = path
         card.border_title = diffview.title(path, diff)
         self._mount(card)
 
@@ -893,11 +970,11 @@ class PurrApp(App):
         last = self.chat.children[-1] if self.chat.children else None
         if last is not None and last.has_class("todos"):
             last.update(t)  # same list, new ticks: update it where it is
+            self._follow()
         else:
             self._mount(Static(t, classes="todos"))
 
     async def stream_batch(self, batch):
-        follow = self._at_bottom()
         for kind, s in batch:
             if kind != self.cur_kind:
                 await self._close_block_async()
@@ -917,7 +994,7 @@ class PurrApp(App):
                 self.cur_widget.update(Text(self.cur_text.strip("\n"), style="italic"))
             else:
                 await self.md_stream.write(s)
-        self._follow(follow)
+        self._follow()
 
     async def end_reply(self):
         await self._close_block_async()
@@ -928,6 +1005,7 @@ class PurrApp(App):
             self.md_stream = None
             # the stream can drop its last piece when stopped, so set the full text once
             await self.cur_widget.update(self.cur_text)
+            self._follow()
         self.cur_kind = self.cur_widget = None
         self.cur_text = ""
 
@@ -965,7 +1043,8 @@ class PurrApp(App):
                     line = self.add_tool(self.agent.tools.summary(name, args))
                     if c.get("id") in results:
                         self.call_after_refresh(self.add_tool_result, name, args, results[c["id"]], line)
-        self.chat.call_after_refresh(self.chat.scroll_end, animate=False)
+        self.following = True
+        self._follow()
 
     # ---- sending messages ----
 
@@ -1027,7 +1106,7 @@ class PurrApp(App):
             self.prompt.focus()
             if not result:
                 self.add_line("okay, nothing was pushed", "info")
-                self.set_cat("sleeping")
+                self.set_cat(*self._idle())
                 return
             self.busy = True
             self.push_pr(*result)
@@ -1064,7 +1143,7 @@ class PurrApp(App):
             self.prompt.focus()
             if not text:
                 self.prompt.set_text(original)  # cancelled: your message is back in the box
-                self.set_cat("sleeping")
+                self.set_cat(*self._idle())
                 return
             self.add_user(text)
             self.busy = True
@@ -1100,6 +1179,17 @@ class PurrApp(App):
             self.view.activity("run", command)
             output, code = self.agent.shell(command)
             self.call_from_thread(self.add_output, output, code)
+        finally:
+            self.call_from_thread(self._turn_done)
+
+    @work(thread=True, exclusive=True)
+    def run_free_check(self):
+        from harness.free import FreeRouter, check
+        router = self.agent.router or FreeRouter(self.agent.config)
+        try:
+            self.call_from_thread(self.add_line, "testing every free model you have a key for…", "info")
+            check(self.agent.config, router,
+                  lambda kind, line: self.call_from_thread(self.add_line, line, "info" if kind == "dim" else kind))
         finally:
             self.call_from_thread(self._turn_done)
 
@@ -1144,6 +1234,28 @@ class PurrApp(App):
         if name == "cat":
             self.cat_command(arg)
             return
+        if name == "stats":
+            self.add_stats_card()
+            return
+        if name == "private":
+            result = commands.run(self.agent, text)
+            if result and result[0][0] != "error":
+                self.chat.remove_children()  # the chat on screen goes too
+                self.last_prompt = None
+                self.query_one("#pinned", Static).update("")
+                self.screen.set_class(self.agent.private, "private")
+                self.refresh_info()
+            for kind, line in result:
+                self.add_line(line, kind)
+            return
+        if name == "free" and arg == "check":  # many network calls: in the background, lines as they come
+            self.busy = True
+            self.set_cat("exploring", "testing the free models")
+            self.run_free_check()
+            return
+        if name == "files":
+            self.action_workbench()
+            return
         if name == "compact":
             self.busy = True
             self.run_compact()
@@ -1186,12 +1298,14 @@ class PurrApp(App):
     def open_model_picker(self):
         items = []
         for name, spec in self.config["models"].items():
+            if self.agent.private and name not in self.agent.local_models():
+                continue  # private: only what runs on this computer
             label = Text(no_wrap=True, overflow="ellipsis")
             current = name == self.agent.model_name
             label.append("♡ " if current else "  ", style=PINK)
             label.append(name.ljust(18), style=f"bold {LILAC}" if current else TEXT)
             label.append((spec["id"] if spec["id"] != name else "").ljust(22), style=DIM)
-            label.append("paid" if spec.get("price") else "local", style=PEACH if spec.get("price") else MINT)
+            label.append(ui.cost_kind(spec), style=PEACH if ui.cost_kind(spec) == "paid" else MINT)
             items.append((name, label))
         self.push_screen(Picker("pick a model", items, self.agent.model_name), self._picked_model)
 
@@ -1311,7 +1425,21 @@ class PurrApp(App):
         if text and text.strip():
             self.copy_text(text)
 
+    def action_workbench(self, path=None):
+        """ctrl+t: what changed this session, the project's files and a small editor (tui/workbench.py)."""
+        if isinstance(self.screen, Workbench):
+            self.screen.action_back()
+            return
+        if len(self.screen_stack) > 1:  # a question or picker is open: answer that first
+            return
+        self.push_screen(Workbench(self.agent.root, self.agent.tools.undo_stack, path))
+
     def action_stop_or_clear(self):
+        if isinstance(self.screen, Workbench):  # ctrl+c copies in its editor
+            editor = self.screen.query_one("#wb-editor")
+            if editor.selected_text:
+                self.copy_text(editor.selected_text)
+            return
         text = self.selected_text()
         if text:  # something is selected: ctrl+c copies, like everywhere else
             self.copy_text(text)
@@ -1322,22 +1450,25 @@ class PurrApp(App):
         else:
             self.prompt.clear()
 
-    # ---- modes: code, ask, chat, create ----
+    # ---- modes: code, ask, learn, pair, plan, chat, create ----
 
-    MODE_LOOK = {"code": ("✎", PINK), "ask": ("◈", LILAC), "plan": ("✦", CYAN),
+    MODE_LOOK = {"code": ("✎", PINK), "ask": ("◈", LILAC), "learn": ("✿", ROSE), "pair": ("⇄", "#a8b8ff"), "plan": ("✦", CYAN),
                  "chat": ("♡", PEACH), "create": ("✧", MINT)}
     MODE_HINT = {"code": 'ask anything…  "fix the failing test"', "ask": "ask about the code, nothing gets changed…",
+                 "learn": "what do you want to learn to build? purr leaves the key lines to you ✿",
+                 "pair": "let's build it together: one step each, edit the code yourself any time ⇄",
                  "plan": "describe the whole task; a big model makes tickets, a small one does them…",
                  "chat": "say hi ♡", "create": "let's dream something up ✧"}
 
     def action_next_mode(self):
-        if self.busy:
+        if self.busy or isinstance(self.screen, Workbench):
             return
         modes = list(MODE_NAMES)
         self.set_mode(modes[(modes.index(self.agent.mode) + 1) % len(modes)])
 
     def set_mode(self, mode):
-        self.agent.set_mode(mode)
+        # a model change shows quietly under the cat's mode scene, and in the model name below
+        self.mode_moved = self.agent.switch_mode(mode)
         self.prompt.placeholder = self.MODE_HINT[mode]
         self.refresh_info()
 
@@ -1404,9 +1535,11 @@ class PurrApp(App):
                                       "runs": not hint, "kind": "set"})
             elif commands.ALIASES.get(name, name) == "model":
                 for m, spec in self.config["models"].items():
+                    if self.agent.private and m not in self.agent.local_models():
+                        continue
                     if m.startswith(arg) and m != arg:
                         label = Text(m.ljust(18), style=PINK)
-                        label.append("paid" if spec.get("price") else "local", style=DIM)
+                        label.append(ui.cost_kind(spec), style=DIM)
                         items.append({"label": label, "value": f"/model {m}", "runs": True, "kind": "set"})
         menu = self.query_one("#menu", OptionList)
         menu.clear_options()
@@ -1506,7 +1639,7 @@ class PurrApp(App):
             return []
 
     def _remember(self, text):
-        if "\n" in text:
+        if "\n" in text or self.agent.private:  # private: your messages aren't written down either
             return
         if not self.history or self.history[-1] != text:
             self.history.append(text)

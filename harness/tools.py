@@ -92,6 +92,7 @@ ARG_ALIASES = {"file_path": "path", "filePath": "path", "filename": "path", "fil
 UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 READ_ONLY = {"read_file", "list_files", "grep", "fetch_url"}
+TOOL_NAMES = {s["function"]["name"] for s in SCHEMAS}  # an MCP tool with one of these names isn't offered
 SHELL_CHAINING = set(";&|`$()<>\n")
 # commands where the second word matters for "always allow" (git status vs git push)
 TWO_WORD = {"git", "npm", "pnpm", "yarn", "uv", "pip", "cargo", "go", "docker", "systemctl", "godot"}
@@ -218,7 +219,11 @@ class Tools:
     def summary(self, name, args):
         """One short line for the screen."""
         key = {"read_file": "path", "list_files": "path", "grep": "pattern", "edit_file": "path",
-               "write_file": "path", "run": "command", "fetch_url": "url", "task": "prompt"}.get(name)
+               "write_file": "path", "run": "command", "fetch_url": "url", "task": "prompt",
+               "code_map": "path", "outline": "path", "related_files": "path", "find_symbol": "name",
+               "godot_class": "name", "python_api": "name"}.get(name)
+        if name == "godot_class" and args.get("member"):
+            return f"{name} {args.get('name', '')}.{args['member']}"
         val = str(args.get(key, "")) if key else ""
         return f"{name} {val[:100]}".strip()
 
@@ -240,6 +245,9 @@ class Tools:
                 args[real] = args.pop(alias)
                 self.repairs.append(f"argument {alias} -> {real}")
         fn = getattr(self, "t_" + name, None)
+        mcp = getattr(self, "mcp", None)
+        if fn is None and mcp and mcp.has(wanted):  # a tool from an MCP server ([mcp.*] in config.toml)
+            return self._mcp_call(wanted, args)
         if fn is None or (self.read_only and name not in READ_ONLY):
             return self._failed(wanted, args, f"error: there is no tool called {wanted}")
         if self.no_tools:
@@ -257,6 +265,21 @@ class Tools:
             result = f"error: {type(e).__name__}: {e}"
         if name != "todo":
             self.view.tool_result(name, args, result)  # the exact call and what the model got back
+        return result
+
+    def _mcp_call(self, name, args):
+        if self.no_tools:
+            return f"error: no tools in this mode ({name} can't run)"
+        if not self.mcp.read_only(name):  # it may change things: ask first, like run
+            if self.read_only:
+                return self._failed(name, args, f"error: there is no tool called {name}")
+            ok, reason = self._allowed(name, f"let the MCP tool {name} run? {json.dumps(args)[:200]}")
+            if not ok:
+                return f"the user said no{': ' + reason if reason else ''}"
+        self.view.activity(name, self.summary(name, args)[len(name):].strip())
+        self.view.tool(self.summary(name, args))
+        result = clip(self.mcp.call(name, args), self.limits.tool_output)
+        self.view.tool_result(name, args, result)
         return result
 
     def _allowed(self, name, question):
@@ -297,6 +320,15 @@ class Tools:
         changes = self.undo_stack[-1]
         if p not in changes:
             changes[p] = p.read_text() if p.exists() else None
+
+    def session_changes(self):
+        """Every file changed this session: {path: its text before the first change, or None if
+        it was new}. Undone turns are gone from the stack, so they drop out too."""
+        changes = {}
+        for turn in self.undo_stack:
+            for p, before in turn.items():
+                changes.setdefault(p, before)
+        return changes
 
     def undo(self):
         """Put back the files the last turn changed. Returns the paths."""
@@ -365,6 +397,8 @@ class Tools:
         return "\n".join(lines)
 
     def t_fetch_url(self, url):
+        if getattr(self, "is_private", lambda: False)():
+            return "error: private mode: no web (nothing leaves this computer)"
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (purr coding agent)"})

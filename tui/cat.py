@@ -139,6 +139,48 @@ def _petted():
     ])
 
 
+# ---- a little scene for each mode, played when you switch to it (in the mode's colour) ----
+
+MODE_COLOUR = {"code": PINK, "ask": LILAC, "learn": "#f0829b", "pair": "#a8b8ff", "plan": "#8fd8e8",
+               "chat": "#ffb8c8", "create": "#96dcaf"}
+
+MODE_ART = {
+    "code": [  # at her laptop
+        [(EARS, " ┌─────┐"), ("( •ω• )", " │ </>_│"), (SIT, " ╘═════╛")],
+        [(EARS, " ┌─────┐"), ("( •ω• )", " │ </> │"), (SIT, " ╘═════╛")],
+    ],
+    "ask": [  # looking closely
+        [(EARS, "     ╭─╮"), ("( •ω• )", "━━━━━│?│"), (SIT, "     ╰─╯")],
+        [(EARS, "     ╭─╮"), ("( °ω° )", "━━━━━│·│"), (SIT, "     ╰─╯")],
+    ],
+    "learn": [  # reading a book with you
+        [(EARS, "  ╭──┬──╮"), ("( •ω• )", "  │≡≡│≡ │"), (SIT, "  ╰──┴──╯")],
+        [(EARS, "  ╭──┬──╮"), ("( -ω- )", "  │≡≡│≡≡│"), (SIT, "  ╰──┴──╯")],
+    ],
+    "pair": [  # two cats at one desk: the other one is you
+        [(EARS, "    /\\_/\\"), ("( •ω• )", " ⇄ ( •ω• )"), (SIT, "    > ^ <")],
+        [(EARS, "    /\\_/\\"), ("( ^ω^ )", " ⇄ ( ^ω^ )"), (SIT, "    > ^ <")],
+    ],
+    "plan": [  # making a list
+        [(EARS, "  ┌─┴─┴─┐"), ("( •ω• )", "  │☑ ── │"), (SIT, "  │☐ ── │")],
+        [(EARS, "  ┌─┴─┴─┐"), ("( •ω• )", "  │☑ ── │"), (SIT, "  │☑ ── │")],
+    ],
+    "chat": [  # wants to talk
+        [(EARS, "  ╭───────╮"), ("( •o• )", " < meow! │"), (SIT, "  ╰───────╯")],
+        [(EARS, "  ╭───────╮"), ("( •ω• )", " < hi! ♡ │"), (SIT, "  ╰───────╯")],
+    ],
+    "create": [  # painting sparkles
+        [(EARS, "   ✧   ⋆"), ("( ^ω^ )", "/  ✦"), (SIT, "  ⋆   ✧")],
+        [(EARS, "    ⋆  ✧"), ("( ^ω^ )", " \\ ✧  ✦"), (SIT, "   ✧  ⋆")],
+    ],
+}
+
+# shown under the label while a mode's scene plays
+MODES_WHAT = {"code": "reads, edits and runs things", "ask": "looks around, never changes anything",
+              "learn": "she sets it up, you write the key lines", "pair": "you take turns, one step each",
+              "plan": "a big model makes tickets, a small one does them", "chat": "just talking, no tools",
+              "create": "ideas, names and stories"}
+
 # mood -> (label, ticks per frame, frames). A tick is 0.12 s.
 MOODS = {
     "sleeping": ("napping", 5, _sleeping()),
@@ -155,6 +197,7 @@ MOODS = {
     "sad": ("tests failed", 4, _sad()),
     "waking": ("waking up", 3, _waking()),
     "petted": ("prrr~", 3, _petted()),
+    **{f"mode_{m}": (f"{m} mode", 5, _frames(art)) for m, art in MODE_ART.items()},
 }
 
 # what she says she's doing; one is picked at random each time the mood changes
@@ -177,6 +220,13 @@ VERBS = {
     "sad": ["tests failed…", "oh no, red tests", "a little sad"],
     "waking": ["{name} is waking up", "{name} is stretching"],
     "petted": ["prrr~ {name} loves you", "{name} is purring", "prrr~"],
+    "mode_code": ["code mode: {name} is at her laptop", "code mode: paws on the keyboard"],
+    "mode_ask": ["ask mode: {name} is curious", "ask mode: looking, not touching"],
+    "mode_learn": ["learn mode: {name} is studying with you", "learn mode: you write, she helps"],
+    "mode_pair": ["pair mode: you and {name}, side by side", "pair mode: one step each"],
+    "mode_plan": ["plan mode: {name} is making a list", "plan mode: tickets first"],
+    "mode_chat": ["chat mode: {name} wants to talk", "chat mode: just meowing"],
+    "mode_create": ["create mode: {name} is dreaming up ideas", "create mode: sparkles everywhere"],
 }
 
 
@@ -190,6 +240,9 @@ ACTIVITY = {
     "fetch_url": "exploring", "task": "exploring",
     "edit_file": "building", "write_file": "building",
     "run": "running", "todo": None, "refining": "thinking",
+    # tools from purr's MCP servers (servers/)
+    "project_overview": "exploring", "code_map": "exploring", "outline": "exploring", "find_symbol": "exploring",
+    "related_files": "exploring", "godot_class": "exploring", "python_api": "exploring",
 }
 
 
@@ -250,7 +303,8 @@ def render(mood, tick, detail="", stats=(), sleepy_stats=False, label=None, nigh
             extra = STARS[(tick // 6) % len(STARS)] if night else "   ☀"
         for ch in cat:
             t.append(ch, style=(MOON if ch == "☾" else HOT) if ch in "♡☾" else PINK)
-        t.append(extra, style=HOT if "♡" in extra else SUN if "☀" in extra else LILAC)
+        extra_colour = MODE_COLOUR.get(mood[5:], LILAC) if mood.startswith("mode_") else LILAC
+        t.append(extra, style=HOT if "♡" in extra else SUN if "☀" in extra else extra_colour)
         t.append(" " * max(1, WIDTH - len(cat) - len(extra)))
         t.append_text(right[row])
         if row < 2:

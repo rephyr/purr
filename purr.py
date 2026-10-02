@@ -141,6 +141,35 @@ def plain(agent, view):
         readline.write_history_file(HISTORY)
 
 
+def save_key(name, config):
+    """purr --key groq: asks for the key without showing it and keeps it in ~/.config/purr/keys.toml,
+    readable only by you. Typed into the chat, it would end up in the saved chat logs."""
+    import getpass
+    from harness.agent import KEYS_FILE
+    provider = config["providers"].get(name)
+    if not provider or not provider.get("api_key_env"):
+        have = ", ".join(n for n, p in config["providers"].items() if p.get("api_key_env"))
+        ui.say(ui.ROSE, f"no provider called {name!r} that takes a key. Have: {have}")
+        return 1
+    if provider.get("key_page"):
+        ui.say(ui.LILAC, f"get one at {provider['key_page']}")
+    key = getpass.getpass(f"{name} key (hidden): ").strip()
+    if not key:
+        ui.say(ui.ROSE, "nothing saved")
+        return 1
+    try:
+        keys = tomllib.loads(KEYS_FILE.read_text())
+    except (OSError, ValueError):
+        keys = {}
+    keys[provider["api_key_env"]] = key
+    KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    KEYS_FILE.touch(mode=0o600)
+    KEYS_FILE.chmod(0o600)
+    KEYS_FILE.write_text("".join(f'{k} = "{v}"\n' for k, v in keys.items()))
+    ui.say(ui.MINT, f"saved ♡ {name} models work now (/free check tests them)")
+    return 0
+
+
 def main():
     if sys.argv[1:2] == ["bench"]:  # purr bench: purr vs OpenCode on the same tasks (harness/bench.py)
         from harness import bench
@@ -161,7 +190,10 @@ def main():
     ap.add_argument("-c", "--continue", dest="resume", action="store_true",
                     help="carry on the last chat in this folder")
     ap.add_argument("--yes", action="store_true", help="allow edits and commands without asking")
+    ap.add_argument("--key", metavar="PROVIDER", help="save an API key for a provider (asks for it, hidden)")
     args = ap.parse_args()
+    if args.key:
+        return save_key(args.key, tomllib.loads((HERE / "config.toml").read_text()))
 
     try:
         args.folder = str(Path(args.folder).resolve(strict=True))

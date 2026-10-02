@@ -102,6 +102,14 @@ def show_diff(path, before, after):
         say(DIM, f"    … {d['more']} more lines")
 
 
+def cost_kind(spec):
+    """"paid", "free" (an API model at no cost) or "local", for a model's spec in config.toml."""
+    price = spec.get("price")
+    if price and any(price.values()):
+        return "paid"
+    return "free" if price is not None else "local"
+
+
 def short(n):
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"

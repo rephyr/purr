@@ -45,6 +45,8 @@ done together. By day she wears a bow and naps in the sun; at night (following
 | `/theme`, `/theme <name>` | colours: auto (day/night), plum, strawberry-milk, lilac-dream, bubblegum-night, cotton-candy (remembered) |
 | `/cat`, `/cat name <name>` | your cat's card, or rename her |
 | `/mode`, `/refine`, `/plan`, `/pr` | see below |
+| `/files` or **ctrl+t** | the workbench: what changed this session, the project tree, a small editor (see below) |
+| `/stats` | fun numbers: chats, streak, lines written, favourite model and project, night owl or early bird |
 | `/cost`, `/trust`, `/help`, `/quit` | |
 
 **Your own commands:** a markdown file per command in `~/.config/purr/commands/` (every project)
@@ -112,6 +114,49 @@ edge-case step in the final check; API models (which `purr bench` showed don't n
 DeepSeek V4.1 Flash they only made purr slower) get a short final check instead. Setting
 `refine`, `reminders` or `edge_cases` in config.toml (or `/refine ...`) overrides that.
 
+## Free models: `/model free`
+
+`/model free` lets purr pick the best free OpenRouter model for what you're doing, from the ranked
+lists in `[free]` in `config.toml` (code: code/learn/pair/plan, ask, talk: chat/create), skipping
+models too small for the chat. When a model is rate-limited, out of free requests for the day, or
+has no host, purr says so in the chat, rests it (until midnight UTC for the daily cap, a few minutes
+when it's busy; remembered in `~/.local/state/purr/free.json`) and sends the same request to the
+next one. The model line shows `free → laguna`. `/free` lists the models and which are resting,
+`/free reset` forgets the resting; picking a model by hand turns it off.
+
+Besides OpenRouter, `config.toml` has the free tiers of **Groq, Cerebras, Google AI Studio (Gemini),
+Mistral, NVIDIA and Cohere**, and the `[free]` rankings mix them all. A provider without a key is
+simply skipped, so add keys as you get them: `purr --key groq` asks for the key without showing it
+and keeps it in `~/.config/purr/keys.toml` (only you can read it; `key_page` in config.toml says
+where to get one). OpenRouter's daily free cap is per account, so when it's hit every OpenRouter
+model rests at once and another provider takes over. `/free check` sends each model one tiny
+request and rests the ones that don't work (a renamed model, a key that's wrong), so a real turn
+never lands on them. Free hosts may keep your
+prompts, so check a model's page before using it on private code.
+
+## MCP servers: helping small models understand the project
+
+purr speaks MCP: every `[mcp.*]` table in `config.toml` is a server whose tools are offered next to
+purr's own (`harness/mcp.py`; a server is started in the project folder the first time it's
+needed, and one that fails is skipped). `tools = [...]` offers only some of a server's tools, and
+tools that can change things ask you first, like `run`.
+
+purr ships two of its own in `servers/` (plain Python, no packages, any MCP client can use them):
+
+| server | tool | what it gives the model |
+|---|---|---|
+| codebase | `project_overview` | tech stack and versions, how to run and test (CI commands included), folders, entry points. Also put in the system prompt, so the model knows the project from the first message (`overview_in_prompt = false` turns that off) |
+| | `code_map` | every file's classes and functions with signatures and line numbers, shrunk to fit |
+| | `outline` | one file's symbols with line ranges, so it reads just the part it needs |
+| | `find_symbol` | where something is defined and every place it's used (Godot autoloads too) |
+| | `related_files` | what a file imports and who imports it (for Godot: res:// loads, scenes using a script) |
+| stack | `godot_class` | a class from the Godot you have installed: exact signatures (`godot --doctool`) plus that version's docs from GitHub, cached in `~/.cache/purr/godot/`; up the inheritance chain for one member; Godot 3 names get their Godot 4 name |
+| | `python_api` | a package's function, class or module from the project's own `.venv`: signature, docs, version |
+
+The stack tools only show up where they fit (`godot_class` in Godot projects, `python_api` in Python
+ones), since every tool costs a small model some context. To add your own, see `servers/mcpserver.py`:
+a decorated function is a tool.
+
 ## Different models, different limits
 
 purr adapts to the model it is running. The `context` in `config.toml` sets how big a
@@ -155,15 +200,41 @@ slow and went off the rails). OpenCode's config asks for the same, so `purr benc
 |---|---|---|
 | ✎ code | all | doing the work (the default) |
 | ◈ ask | read, list, search: edits and commands are blocked | explaining, planning |
+| ✿ learn | all | learning: purr writes the boring parts and leaves the key lines to you as `TODO(you)` |
+| ⇄ pair | all | pair programming: you take turns, one small step each |
 | ✦ plan | two models | a big model makes tickets, a small one does them |
 | ♡ chat | none, short prompt | just talking |
 | ✧ create | none, a bit more random | ideas, names, game design, writing |
 
-Switch with **shift+tab** or `/mode chat`. Refine has the model rewrite your message into a clear
+Switch with **shift+tab** or `/mode chat`. Each mode can bring its own model (`[mode_models]` in `config.toml`: here code → Qwen3.6 IQ3, ask → DeepSeek Flash, chat and create → Kimi); a model you pick with `/model` in a mode sticks to it for the session, and a model with no key keeps the current one. Refine has the model rewrite your message into a clear
 task (Task / Where / Steps / Done when, from the project's file list) and shows it to you first:
 ctrl+s sends it, ctrl+o sends yours. `/refine auto` (the default) does that only for a short first
 message, a new task said in a few words, where it helped most in `purr bench` (Qwen3.6 IQ3 went
 from 3/5 to 5/5 hard tasks from vague asks); `/refine on` refines every message, `/refine off` none.
+
+**The workbench** (ctrl+t, `/files`, or click a change card in the chat). Left: the files changed
+this session with their +/− counts, above the project tree where changed files glow. Right: a
+summary of everything that changed (per file and turn by turn), or the file you pick, as a diff
+against how it was before the session (**d** switches to the whole file, with changed lines
+marked). **e** edits it right there (ctrl+s saves, with syntax colours from `textual[syntax]`);
+**n** hands the terminal to your `$EDITOR` (nvim by default) at the first changed line and comes
+back to purr when you quit it. Your edits count as yours in pair mode.
+
+**Learn mode.** For learning by doing: purr sets things up (files, imports, wiring, tests) and
+leaves the interesting 3-10 lines to you as a `TODO(you)` comment with a hint, plus a `✦ why:` line
+about the idea. Say **done** and it reads your code, runs it, says what's good and asks about one or
+two things to improve instead of fixing them; say **hint** for a nudge (each one a bit more
+specific) or **show me** for the answer. purr keeps the model honest: it tells it where the open
+`TODO(you)`s are with every message, shows `✿ your turn: file:line` after each turn, and if the model
+wrote everything itself it asks it once to hand the interesting part back.
+
+**Pair mode.** You take turns at the keyboard. The model makes one small change, then purr
+hands it back to you (enforced, so a small model can't run off with the whole task): it says
+what it did and what it would do next, and you say **go**, steer it, or take over. Anything it
+tried to do after its step is held back and shown as a suggestion. You can edit the code
+yourself any time, in any editor: with your next message purr shows the model a diff of what you
+changed since its turn, so it builds on your code instead of overwriting it. Reading and
+searching don't count as a step.
 
 **Plan mode.** This is purr's whole idea in one mode: a long, vague task is better handled by a
 big model that breaks it down and a small one that does each piece without losing the thread.

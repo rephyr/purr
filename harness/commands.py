@@ -21,16 +21,20 @@ COMMANDS = {
     "resume": ("", "carry on an earlier chat"),
     "undo": ("", "put back the files the last answer changed"),
     "cost": ("", "money spent this session"),
+    "private": ("", "fresh chat, local models only, no web, nothing saved (again to leave)"),
+    "free": ("[check|reset]", "the free models /model free picks from; check tests them, reset forgets resting"),
+    "stats": ("", "fun numbers about you and purr"),
+    "files": ("", "browse the project and what changed this session, edit files (ctrl+t)"),
     "trust": ("", "allow edits and commands without asking (toggle)"),
     "theme": ("[name]", "change purr's colours"),
     "cat": ("[name <new name>]", "your cat: her stats, or give her a new name"),
-    "mode": ("[code|ask|plan|chat|create]", "what purr may do: code, ask (look only), plan, chat, create"),
+    "mode": ("[code|ask|learn|pair|plan|chat|create]", "what purr may do: code, ask (look only), learn, pair, plan, chat, create"),
     "plan": ("[task | run [N]]", "a big model writes tickets, a small one does them one at a time"),
     "refine": ("[auto|on|off]", "rewrite your message into a clear task first (you approve it)"),
     "pr": ("", "commit the changes and open a GitHub pull request (you check it first)"),
     "quit": ("", "leave"),
 }
-ALIASES = {"new": "clear", "exit": "quit", "q": "quit", "continue": "resume"}
+ALIASES = {"changes": "files", "browse": "files", "new": "clear", "exit": "quit", "q": "quit", "continue": "resume"}
 
 INIT = """Look through this project and write (or update) an AGENTS.md file in its root folder. \
 It is read by coding agents at the start of every chat, so it should help them work here well.
@@ -83,11 +87,22 @@ def run(agent, text):
         lines += [("info", f"/{n}".ljust(16) + d) for n, (d, _) in templates.items()]
         lines.append(("dim", "@file attaches a file   !command runs it yourself"))
         return lines
+    if name == "private":
+        try:
+            pick = agent.set_private(not agent.private)
+        except KeyError as e:
+            return [("error", e.args[0])]
+        if pick:
+            return [("info", f"🔒 private: {pick} on your own GPU, no web, and this chat won't be saved. "
+                             "Nothing leaves this computer (commands the model asks to run still need your yes). "
+                             "/private again to leave")]
+        return [("info", "left private mode: the private chat is gone, fresh start")]
     if name in ("model", "models"):
         if not arg:
             return [("info", f"{'♡' if m == agent.model_name else ' '} {m:<18} {spec['id']:<22} "
-                     f"{'paid' if spec.get('price') else 'local'}")
-                    for m, spec in agent.config["models"].items()]
+                     f"{ui.cost_kind(spec)}")
+                    for m, spec in agent.config["models"].items()
+                    if not agent.private or m in agent.local_models()]
         try:
             agent.set_model(arg)
             return [("info", f"now using {arg}")]
@@ -120,6 +135,30 @@ def run(agent, text):
     if name == "cost":
         return [("info", f"session: ${agent.session_cost:.4f}, "
                  f"{ui.short(agent.session_out)} tokens written")]
+    if name == "free" and agent.private:
+        return [("error", "private mode: the free models are API models, so they're off (/private to leave)")]
+    if name == "pr" and agent.private:
+        return [("error", "private mode: /pr would push your code to GitHub (/private to leave first)")]
+    if name == "free":
+        from .free import FreeRouter
+        router = agent.router or FreeRouter(agent.config)
+        if arg == "reset":
+            router.reset()
+            return [("info", "every free model is ready again")]
+        if arg == "check":
+            from .free import check
+            lines = []
+            check(agent.config, router, lambda kind, line: lines.append((kind, line)))
+            return lines
+        lines = [("info", f"free models for {agent.mode} mode, best first"
+                  + ("" if agent.router else "   (not on: /model free turns it on)"))]
+        for n, state in router.status(agent.mode, agent.model_name if agent.router else None):
+            lines.append(("warn" if state.startswith("resting") else "info",
+                          f"{'♡' if state == 'in use' else ' '} {n:<20} {state}"))
+        return lines
+    if name == "stats":
+        from . import stats
+        return stats.run()
     if name == "trust":
         agent.tools.trust_all = not agent.tools.trust_all
         return [("warn", "trusting everything (no questions)") if agent.tools.trust_all
@@ -128,14 +167,14 @@ def run(agent, text):
         from .agent import MODES
         if arg:
             try:
-                agent.set_mode(arg)
+                moved = agent.switch_mode(arg)
             except KeyError as e:
                 return [("error", e.args[0])]
-            return [("info", f"mode: {arg}, {MODES[arg][1]}")]
+            return [("info", f"mode: {arg}, {MODES[arg][1]}")] + ([("info", moved)] if moved else [])
         return [("info", ("♡ " if m == agent.mode else "  ") + f"{m:<7} {what}") for m, (_, what) in MODES.items()]
     if name == "plan":
         from .agent import MODES
-        agent.set_mode("plan")
+        moved = agent.switch_mode("plan") if agent.mode != "plan" else None
         if arg.startswith("run"):
             rest = arg[3:].strip()
             try:
@@ -148,7 +187,7 @@ def run(agent, text):
         if arg:
             return {"send": arg}
         return [("info", "plan mode: " + MODES["plan"][1]
-                 + "   (/plan run [N] runs the tickets already written)")]
+                 + "   (/plan run [N] runs the tickets already written)")] + ([("info", moved)] if moved else [])
     if name == "refine":
         from .agent import REFINE_MODES
         if arg in REFINE_MODES:
@@ -159,6 +198,6 @@ def run(agent, text):
         return [("info", f"refine {agent.refine_mode}: {what}" + ("" if arg else "   (/refine auto|on|off)"))]
     if name == "pr":
         return {"pr": True}
-    if name in ("theme", "cat"):
+    if name in ("theme", "cat", "files"):
         return [("info", "that's for the full-screen mode")]
     return [("error", f"unknown command /{name}, try /help")]
