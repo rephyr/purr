@@ -1,7 +1,9 @@
 # purr ♡
 
-A tiny coding agent for the terminal, built to learn how harnesses work.
-Works with local Ollama models, the DeepSeek API and OpenRouter. The agent itself is plain Python;
+A tiny coding agent for the terminal, made to get more out of **small local models** on **longer,
+vaguely worded tasks**: it keeps their prompt lean, repairs their slips, checks their work and
+pushes them to finish the whole job. It also works with the DeepSeek API and OpenRouter, where
+it steps back (big models don't need the training wheels). The agent itself is plain Python;
 the full-screen mode uses [Textual](https://textual.textualize.io/) (`uv sync` installs it into `.venv`).
 
 ```
@@ -86,7 +88,27 @@ Textual. A new front end only needs those methods.
 
 Local model quirks purr works around: edits with slightly wrong indentation still apply
 (`_loose_match` in tools.py), and tool calls that Qwen writes as text
-(`<function=...>`) get turned into real calls (`calls_from_text` in agent.py).
+(`<function=...>`) get turned into real calls (`calls_from_text` in agent.py). Tool and argument
+names from other harnesses work too (`search` is grep, `old_string` is old_text, ...), an
+`edit_file` with only `content` rewrites the file, `\u003c` written out instead of `<` is undone,
+and when an edit's text isn't found purr says which file it is in, or shows the closest lines.
+`purr bench` counts these as "repaired".
+
+purr also checks the model's work by itself (each can be switched off in config.toml):
+after every edit a syntax check and ruff's bug checks (undefined names, functions defined twice, ...)
+go straight into the tool result (`code_checks`); a rewrite with a `# ... rest unchanged`
+placeholder, or one that shrinks a big file to a fraction, is refused once; when the model wants
+to stop after changing files, purr runs the project's tests itself and asks it to check the
+request point by point (`final_check`, `final_check_tests`; `.purr/test_command` sets the
+command); every 8 steps it repeats the request (`reminders`); edits and overwrites need the
+file read first (`read_before_edit`); and an edit that removes or changes what a test checks
+gets a warning to fix the code instead (part of `code_checks`). `purr bench` counts the
+problems the checks caught, and `purr-bare` runs purr without any of them.
+
+The training wheels scale with the model: local models get auto-refine, reminders and the
+edge-case step in the final check; API models (which `purr bench` showed don't need them; with
+DeepSeek V4.1 Flash they only made purr slower) get a short final check instead. Setting
+`refine`, `reminders` or `edge_cases` in config.toml (or `/refine ...`) overrides that.
 
 ## Different models, different limits
 
@@ -121,6 +143,9 @@ Uses the key you saved with `opencode auth login openrouter` (or `OPENROUTER_API
 DeepSeek works the same way). Models: `ds-pro-or`, `ds-flash-or`, `luna`, `sonnet`, `glm`,
 `qwen-flash`, `kimi`. For another one, copy an entry in `config.toml` and change `id` and `price`
 (both are on openrouter.ai). The cost purr shows is OpenRouter's real one.
+Which hosts may answer is set once under `[providers.openrouter.body.provider]`: only well-known
+hosts, no fp4 copies, the cheapest of those that do 100+ tok/s (the cheapest no-name hosts were
+slow and went off the rails). OpenCode's config asks for the same, so `purr bench` stays fair.
 
 ## Modes, refining and pull requests
 
@@ -131,9 +156,11 @@ DeepSeek works the same way). Models: `ds-pro-or`, `ds-flash-or`, `luna`, `sonne
 | ♡ chat | none, short prompt | just talking |
 | ✧ create | none, a bit more random | ideas, names, game design, writing |
 
-Switch with **shift+tab** or `/mode chat`. `/refine on` makes the model rewrite each message into
-a clear task (Task / Where / Steps / Done when, from the project's file list) and shows it to
-you first: ctrl+s sends it, ctrl+o sends yours.
+Switch with **shift+tab** or `/mode chat`. Refine has the model rewrite your message into a clear
+task (Task / Where / Steps / Done when, from the project's file list) and shows it to you first:
+ctrl+s sends it, ctrl+o sends yours. `/refine auto` (the default) does that only for a short first
+message, a new task said in a few words, where it helped most in `purr bench` (Qwen3.6 IQ3 went
+from 3/5 to 5/5 hard tasks from vague asks); `/refine on` refines every message, `/refine off` none.
 
 `/pr` turns the changes into a GitHub pull request: the model drafts the title and description,
 you edit them in a popup, and only then purr makes a branch, commits with
@@ -144,7 +171,13 @@ commits, give purr its own GitHub account and set `co_author_email` in `config.t
 
 ## Benchmark: purr vs OpenCode
 
-`purr bench` asks which models to test, then gives purr and OpenCode the same small coding
+`purr bench` opens a window: tick the models (and tasks, contestants, runs), press start, and
+watch a live table, a scoreboard with hearts and the cat do the work (`--plain` prints lines
+instead). At the end a results page ranks everyone (♛), lists every number (tokens, calls,
+each kind of mistake, repairs, cost) and shows a task-by-task grid; `s` and `l` switch between
+it and the live log. Contestants: purr, opencode, purr+refine and purr-nocheck (purr without
+its final check: when a model wants to stop after changing files, purr asks it once to go
+through the request point by point; `final_check` in config.toml). It gives purr and OpenCode the same small coding
 tasks with the same model (both with everything allowed, both with the same time limit).
 Every run starts from a fresh copy of the task; afterwards hidden tests decide whether it's
 solved. `purr bench -m qwen3-coder-32k -t rename --runs 3` picks things up front.
@@ -153,7 +186,11 @@ It measures: solved, tests passed, time, tok/s, tokens, model calls, tool errors
 hallucinations (a tool or file that doesn't exist, a tool call written as text, saying it's
 done when the tests say no) and syntax errors left behind. A run that wanders out of its task
 folder isn't counted. Results: `~/.local/state/purr/bench/<date>/report.md`. The tasks live
-in `bench/tasks/` (a `task.json`, the starting `files/`, and the hidden tests in `check/`).
+in `bench/tasks/` (a `task.json`, the starting `files/`, the hidden tests in `check/`, and for
+the hard ones a reference `solution/` that a test checks really passes). Five are easy and six
+are hard (★): subtle bugs behind passing tests, a bug hidden in a 15-file project, messy CSV
+data, a dependency-order algorithm, a speed-up that mustn't change the output, and a game
+inventory feature across four files. `--level hard` runs only those.
 
 ## Tests
 

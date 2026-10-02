@@ -1,2 +1,5 @@
-{"kind": "new feature + tests",
- "prompt": "Add cat_of_the_day(day=None) to cafe/cats.py. It returns one of the awake cats (a dict from CATS, never a sleepy one), always the same cat for the same date; day is a datetime.date and defaults to today. Add a last line to the receipt: \"cat of the day: <name> ♡\" (use today's cat). Write tests for it in tests/test_cat_of_the_day.py and run all the tests."}
+{
+ "kind": "new feature + tests",
+ "level": "easy",
+ "prompt": "Add cat_of_the_day(day=None) to cafe/cats.py. It returns one of the awake cats (a dict from CATS, never a sleepy one), always the same cat for the same date; day is a datetime.date and defaults to today. Add a last line to the receipt: \"cat of the day: <name> ♡\" (use today's cat). Write tests for it in tests/test_cat_of_the_day.py and run all the tests."
+}

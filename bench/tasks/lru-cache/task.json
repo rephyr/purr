@@ -1,0 +1,3 @@
+{"kind": "subtle bugs, tests pass", "level": "hard",
+ "prompt": "Users report three problems with the LRUCache in cache.py: it holds more items than its capacity, an item that was just used (with get or put) can still be the next one thrown out, and expired items are counted by len(). An item should expire exactly ttl seconds after it was last stored (at ttl seconds it is already gone). The existing tests pass, so they don't catch any of this. Fix the cache and add tests for these cases.",
+ "vague": "the cache is buggy, users complain it forgets the wrong stuff. fix"}

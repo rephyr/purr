@@ -1,0 +1,15 @@
+date,product,qty,price
+2026-01-04,Latte,2,"4,20 €"
+04.01.2026,"Cookie, oat",3,2.50
+
+1/9/2026,Matcha,1,€4.80
+2026-01-15,"Tuna toastie, large",2,"6,90"
+15.01.2026,Latte,,4.20
+2026-01-31,Latte,-1,4.20
+2026-02-01,Matcha,4,"4,80 €"
+02.02.2026,"Cookie, oat",10,2.5
+2/14/2026,"Cake, ""strawberry"" slice",2,"5,00"
+2026-02-28,Tuna toastie,1,€6.90
+01.03.2026,Latte,6,4.20
+3/2/2026,Matcha,-2,4.80
+2026-03-15,"Cookie, oat",5,"2,50 €"

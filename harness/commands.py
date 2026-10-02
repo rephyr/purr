@@ -25,7 +25,7 @@ COMMANDS = {
     "theme": ("[name]", "change purr's colours"),
     "cat": ("[name <new name>]", "your cat: her stats, or give her a new name"),
     "mode": ("[code|ask|chat|create]", "what purr may do: code, ask (look only), chat, create"),
-    "refine": ("[on|off]", "rewrite each message into a clear task first (you approve it)"),
+    "refine": ("[auto|on|off]", "rewrite your message into a clear task first (you approve it)"),
     "pr": ("", "commit the changes and open a GitHub pull request (you check it first)"),
     "quit": ("", "leave"),
 }
@@ -132,9 +132,13 @@ def run(agent, text):
             return [("info", f"mode: {arg}, {MODES[arg][1]}")]
         return [("info", ("♡ " if m == agent.mode else "  ") + f"{m:<7} {what}") for m, (_, what) in MODES.items()]
     if name == "refine":
-        agent.refine_on = {"on": True, "off": False}.get(arg, not agent.refine_on)
-        return [("info", "refining your messages first (you'll see it before it's sent)" if agent.refine_on
-                 else "sending your messages as they are")]
+        from .agent import REFINE_MODES
+        if arg in REFINE_MODES:
+            agent.refine_mode, agent.refine_pinned = arg, True
+        what = {"auto": "refining short first messages (a new task said briefly); you see it before it's sent",
+                "on": "refining every message first; you see it before it's sent",
+                "off": "sending your messages as they are"}[agent.refine_mode]
+        return [("info", f"refine {agent.refine_mode}: {what}" + ("" if arg else "   (/refine auto|on|off)"))]
     if name == "pr":
         return {"pr": True}
     if name in ("theme", "cat"):
