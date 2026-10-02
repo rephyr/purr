@@ -504,6 +504,20 @@ LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file 
 ROUTINE_TOOLS = (*LOOKS, "outline", "find_symbol", "todo")  # steps routine_effort may think less after
 
 
+def _new_stats():
+    """A turn's numbers, every key there from the start (purr bench and the window read them)."""
+    return {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0, "in": 0,
+            "cached": 0, "providers": {}}
+
+
+def _cached(usage):
+    """Prompt tokens a provider served from its cache (DeepSeek's and OpenAI's ways of saying it)."""
+    hit = (usage or {}).get("prompt_cache_hit_tokens")
+    if hit is None:
+        hit = ((usage or {}).get("prompt_tokens_details") or {}).get("cached_tokens")
+    return hit or 0
+
+
 def _ends(text, head, tail):
     """A long text as its start and end (where a request keeps its paths and its limits)."""
     if len(text) <= head + tail:
@@ -926,7 +940,7 @@ class Agent:
         edit them, then hand each ticket to the executor (a small local model) one at a time. Each
         ticket runs in a fresh agent, so the small model's context holds only the ticket in front
         of it, not the whole task."""
-        self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+        self.turn_stats = _new_stats()
         self.title = self.title or " ".join(text.split())[:70]
         plan = self.config.get("plan", {})
         planner_name = plan.get("planner") or self.model_name
@@ -991,7 +1005,7 @@ class Agent:
         """`/plan run [N]`: run the tickets already in .purr/tickets/ from ticket N, without
         planning again. The files are read fresh, so any edits the user made count."""
         self.stop_flag = False  # an Esc on an earlier answer mustn't stop this before it starts
-        self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+        self.turn_stats = _new_stats()
         self.title = self.title or "plan"
         self.messages.append({"role": "user", "content": f"(purr: run the plan tickets from {start})"})
         self.run_tickets(start, self._saved_request())
@@ -1003,7 +1017,7 @@ class Agent:
         record in the parent chat and saves it."""
         executor_name = executor_name or self.config.get("plan", {}).get("executor") or "qwen3_6-iq3"
         if not getattr(self, "turn_stats", None):
-            self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+            self.turn_stats = _new_stats()
         tickets = read_tickets(self.root)
         total = len(tickets)
         if not tickets:
@@ -1372,9 +1386,7 @@ class Agent:
         if isinstance(usage.get("cost"), (int, float)):
             return usage["cost"]  # OpenRouter says what the call really cost
         prompt = usage.get("prompt_tokens", 0)
-        hit = usage.get("prompt_cache_hit_tokens")
-        if hit is None:
-            hit = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+        hit = _cached(usage)
         miss = usage.get("prompt_cache_miss_tokens", prompt - hit)
         out = usage.get("completion_tokens", 0)
         times = 2 if is_peak(self.provider) else 1
@@ -1389,8 +1401,7 @@ class Agent:
         self.session_cost += cost
         self.session_out += usage.get("completion_tokens", 0)
         self.session_in += usage.get("prompt_tokens", 0)
-        self.session_cached += (usage.get("prompt_cache_hit_tokens")
-                                or (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
+        self.session_cached += _cached(usage)
         if self.parent:
             self.parent.session_cost += cost
         return cost
@@ -1422,44 +1433,13 @@ class Agent:
             return self.plan_turn(text)
         if not self.title:
             self.title = " ".join(text.split())[:70]
-        content = self.expand(text)
-        if self.mode == "pair" and not self.helper:
-            yours = self.pair_changes()
-            if yours:
-                content += f"\n\n(purr: the user changed these files since your last turn:)\n{yours}"
-        open_todos = self.learn_todos() if self.mode == "learn" and not self.helper else []
-        if open_todos:  # small models lose track of what they left for the user: say it every time
-            content += f"\n\n(purr: {TODO_YOU} still in the code: {', '.join(open_todos)})"
-        self._started = time.monotonic()
-        self._time_said = set()
-        if self.time_limit and not self.helper:
-            content += "\n\n" + TIME_INTRO.format(minutes=max(1, round(self.time_limit / 60)))
-            if len(self.messages) == 1:
-                content += self._probe()
-        self.tools.deadline = self._started + self.time_limit if self.time_limit and not self.helper else None
-        self._request = text  # kept word for word through a compaction
-        if self.one_shot and not self.helper:
-            self._one_shot_setup(text)
-        self.messages.append({"role": "user", "content": content})
-        self.tools.begin_turn()
-        self._learn_nudged = bool(open_todos)  # pieces already out there: no need to leave new ones
-        self._pair_handing_back = False
-        self._learn_shortened = False
+        self._begin_turn(text)
+        self.messages.append({"role": "user", "content": self._turn_content(text)})
         turn_cost = 0.0
-        steps = 0
-        retries = 0
-        self._repeats = {}  # (tool, args) -> how often it's been called, and the last result
-        self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+        steps = retries = 0
         todo_only = 0  # steps in a row that did nothing but update the task list
         empty = 0      # empty answers nudged this turn
         cut = 0        # replies cut off at the output limit, nudged this turn
-        self._checked = False  # the final check (below) runs at most once a turn
-        self._acted = False    # ran a command, a terminal or an MCP tool that changes things
-        self._background = False  # started something that should keep running (a terminal, cmd &)
-        self._hedged = False   # one-shot: told once that nobody will answer its question
-        self._evidence = False  # one-shot: the second look (EVIDENCE_PASS) at most once
-        self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
-        self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
         cap = self._step_cap()
         try:
             while True:
@@ -1475,25 +1455,7 @@ class Agent:
                         if ans != "y":
                             break
                         steps = 1
-                ctx = self.model.get("context", 0)
-                if ctx and len(self.messages) > 4:
-                    used = self.context_used()
-                    if used > ctx * self.limits.prune_at:
-                        self._prune_old_tools()
-                        used = self.context_used()
-                    if used > ctx * self.limits.compact_at and len(self.messages) >= self._compact_again_at:
-                        try:
-                            done = self.compact(auto=True)
-                        except ApiError as e:
-                            # the summary call failed (a full context, a server hiccup): free what
-                            # can be freed without a model and carry on, rather than end the run
-                            self.view.note(f"compacting failed ({e}), trimming old output instead", "warn")
-                            done = None
-                        if not done:
-                            # nothing was freed: trim old output, and don't try again until the chat
-                            # has grown (every try is a long call that would fail the same way)
-                            self._prune_old_tools(keep=1)
-                            self._compact_again_at = len(self.messages) + 10
+                self._make_room()
                 try:
                     if (self._helper_on("reminders") and self.mode == "code" and not self.helper
                             and steps > 1 and (steps - 1) % REMIND_EVERY == 0):
@@ -1507,22 +1469,8 @@ class Agent:
                     self.view.note(f"api error: {e}", "error")
                     self.failed = str(e)  # the turn ended on the model server, not on the task
                     break
-                turn_cost += self._count(reply["usage"])
+                turn_cost += self._record(reply)
                 self.save_log()  # after every step: a run that's killed (a time limit, a crash) keeps its chat and cost
-                self.turn_stats["out"] += (reply["usage"] or {}).get("completion_tokens", 0)
-                self.turn_stats["calls"] += 1
-                usage = reply["usage"] or {}
-                cached = usage.get("prompt_cache_hit_tokens") or (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
-                self.turn_stats["in"] = self.turn_stats.get("in", 0) + (usage.get("prompt_tokens") or 0)
-                self.turn_stats["cached"] = self.turn_stats.get("cached", 0) + cached
-                if reply.get("provider"):
-                    self.turn_stats.setdefault("providers", {})
-                    self.turn_stats["providers"][reply["provider"]] = self.turn_stats["providers"].get(reply["provider"], 0) + 1
-                self.turn_stats["model_s"] += reply.get("call_seconds", 0.0)
-                # Ollama sends a tool call as one piece at the very end, and a short answer is over
-                # in a blink: then there's no writing time to measure, so count the whole call
-                gen = reply.get("gen_seconds", 0.0)
-                self.turn_stats["gen"] += gen if gen >= 0.3 else reply.get("call_seconds", gen)
 
                 if not reply["tool_calls"] and "<function=" in reply["text"]:
                     reply["tool_calls"], reply["text"] = calls_from_text(reply["text"])
@@ -1535,17 +1483,7 @@ class Agent:
                     reply["tool_calls"] = []
                     self.view.note(f"⇄ held back for your go: {held}")
 
-                # content may only be null next to tool calls: Ollama refuses an empty reply's null
-                msg = {"role": "assistant", "content": reply["text"] or (None if reply["tool_calls"] else "")}
-                if reply["tool_calls"]:
-                    msg["tool_calls"] = [
-                        {"id": c["id"], "type": "function",
-                         "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
-                        for c in reply["tool_calls"]]
-                echo = self.provider.get("echo_reasoning")
-                if echo:
-                    msg[echo] = reply["reasoning"]
-                self.messages.append(msg)
+                self.messages.append(self._assistant_message(reply))
 
                 if reply["finish"] == "length":
                     self.view.note("(the reply hit the output limit and was cut off)", "error")
@@ -1573,8 +1511,7 @@ class Agent:
                             "(purr: your tool call came out as plain text, so it did not run. "
                             "Call the tool again.)"})
                         continue
-                    if (self._final_check(reply["text"]) or self._evidence_pass() or self._review() or self._learn_check()
-                            or self._hedge(reply["text"])):
+                    if self._one_more_look(reply["text"]):
                         continue
                     break
                 stopped = self._run_tools(reply["tool_calls"])
@@ -1605,8 +1542,7 @@ class Agent:
                 if all(c["name"] == "todo" for c in reply["tool_calls"]):
                     todo_only += 1
                     if reply["text"] and not self.tools.todos_left:
-                        if (self._final_check(reply["text"]) or self._evidence_pass() or self._review() or self._learn_check()
-                                or self._hedge(reply["text"])):
+                        if self._one_more_look(reply["text"]):
                             continue
                         break  # it answered and everything is done: that's the end
                     if todo_only >= 3:
@@ -1617,6 +1553,113 @@ class Agent:
         except Stopped as e:
             self.view.note("stopped", "warn")
             self.cut_off = e.partial  # the reply it was writing: only in the log, not the chat
+        self._after_turn(turn_cost)
+
+    def _begin_turn(self, text):
+        """Everything a turn starts from, in one place: the clock, the request, and every flag the
+        checks and nudges below use (each runs at most once a turn)."""
+        self._started = time.monotonic()
+        self._time_said = set()
+        self.tools.deadline = self._started + self.time_limit if self.time_limit and not self.helper else None
+        self._request = text  # kept word for word through a compaction
+        if self.one_shot and not self.helper:
+            self._one_shot_setup(text)
+        self.tools.begin_turn()
+        self.turn_stats = _new_stats()
+        self._repeats = {}  # (tool, args) -> how often it's been called, and the last result
+        self._learn_nudged = False  # learn mode: asked to leave a TODO(you) (_turn_content sets it)
+        self._pair_handing_back = False
+        self._learn_shortened = False
+        self._checked = False  # the final check runs at most once a turn
+        self._acted = False    # ran a command, a terminal or an MCP tool that changes things
+        self._background = False  # started something that should keep running (a terminal, cmd &)
+        self._hedged = False   # one-shot: told once that nobody will answer its question
+        self._evidence = False  # one-shot: the second look (EVIDENCE_PASS) at most once
+        self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
+        self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
+
+    def _turn_content(self, text):
+        """Your message as the model gets it: @files attached, your own edits (pair mode), the
+        TODO(you)s still open (learn mode), the time it has (with a time limit)."""
+        content = self.expand(text)
+        if self.mode == "pair" and not self.helper:
+            yours = self.pair_changes()
+            if yours:
+                content += f"\n\n(purr: the user changed these files since your last turn:)\n{yours}"
+        open_todos = self.learn_todos() if self.mode == "learn" and not self.helper else []
+        if open_todos:  # small models lose track of what they left for the user: say it every time
+            content += f"\n\n(purr: {TODO_YOU} still in the code: {', '.join(open_todos)})"
+        self._learn_nudged = bool(open_todos)  # pieces already out there: no need to leave new ones
+        if self.time_limit and not self.helper:
+            content += "\n\n" + TIME_INTRO.format(minutes=max(1, round(self.time_limit / 60)))
+            if len(self.messages) == 1:
+                content += self._probe()
+        return content
+
+    def _make_room(self):
+        """Before a call: trim old tool output when the context fills up, and compact when that's
+        not enough."""
+        ctx = self.model.get("context", 0)
+        if not ctx or len(self.messages) <= 4:
+            return
+        used = self.context_used()
+        if used > ctx * self.limits.prune_at:
+            self._prune_old_tools()
+            used = self.context_used()
+        if used > ctx * self.limits.compact_at and len(self.messages) >= self._compact_again_at:
+            try:
+                done = self.compact(auto=True)
+            except ApiError as e:
+                # the summary call failed (a full context, a server hiccup): free what
+                # can be freed without a model and carry on, rather than end the run
+                self.view.note(f"compacting failed ({e}), trimming old output instead", "warn")
+                done = None
+            if not done:
+                # nothing was freed: trim old output, and don't try again until the chat
+                # has grown (every try is a long call that would fail the same way)
+                self._prune_old_tools(keep=1)
+                self._compact_again_at = len(self.messages) + 10
+
+    def _record(self, reply):
+        """One model call into the session's and the turn's numbers. Returns its price."""
+        cost = self._count(reply["usage"])
+        usage = reply["usage"] or {}
+        s = self.turn_stats
+        s["out"] += usage.get("completion_tokens", 0)
+        s["calls"] += 1
+        s["in"] += usage.get("prompt_tokens") or 0
+        s["cached"] += _cached(usage)
+        if reply.get("provider"):
+            s["providers"][reply["provider"]] = s["providers"].get(reply["provider"], 0) + 1
+        s["model_s"] += reply.get("call_seconds", 0.0)
+        # Ollama sends a tool call as one piece at the very end, and a short answer is over
+        # in a blink: then there's no writing time to measure, so count the whole call
+        gen = reply.get("gen_seconds", 0.0)
+        s["gen"] += gen if gen >= 0.3 else reply.get("call_seconds", gen)
+        return cost
+
+    def _assistant_message(self, reply):
+        """The model's reply as a chat message (with its thinking, for providers that want it back)."""
+        # content may only be null next to tool calls: Ollama refuses an empty reply's null
+        msg = {"role": "assistant", "content": reply["text"] or (None if reply["tool_calls"] else "")}
+        if reply["tool_calls"]:
+            msg["tool_calls"] = [
+                {"id": c["id"], "type": "function",
+                 "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
+                for c in reply["tool_calls"]]
+        echo = self.provider.get("echo_reasoning")
+        if echo:
+            msg[echo] = reply["reasoning"]
+        return msg
+
+    def _one_more_look(self, reply_text):
+        """The model wants to stop: every check that may send it back once, in order. True when one
+        did (the turn goes on). One place, so a new check can't end up in only one of the stops."""
+        return (self._final_check(reply_text) or self._evidence_pass() or self._review()
+                or self._learn_check() or self._hedge(reply_text))
+
+    def _after_turn(self, turn_cost):
+        """The turn is over: save, show the numbers, and what's next in pair and learn mode."""
         self.save_log()
         self._status(turn_cost)
         changed = len(self.tools.undo_stack[-1]) if self.tools.undo_stack else 0
