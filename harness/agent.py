@@ -19,7 +19,7 @@ from .limits import LOCAL, Limits
 from .free import FreeRouter, rest_for
 from .mcp import Mcp
 from . import checks
-from .tools import TOOL_NAMES, Tools, clip, run_shell, schemas
+from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, run_shell, schemas
 
 SYSTEM = """You are {model}, an AI model, working as a coding agent. You are running inside purr, \
 a small terminal program that gives you tools and shows your replies to the user. purr is only \
@@ -1923,6 +1923,7 @@ class Agent:
         done = 0
         self.tools.halt = False
         self._executed = []  # (name, args, result) for the repeat check
+        early = self._look_in_parallel(calls)  # several reads/searches at once: all at the same time
         try:
             for c in calls:
                 if self.stopping():
@@ -1930,7 +1931,7 @@ class Agent:
                 if self.tools.halt:
                     result = "skipped: the user stopped to give new instructions"
                 else:
-                    result = self.tools.call(c["name"], c["args"])
+                    result = early[c["id"]] if c["id"] in early else self.tools.call(c["name"], c["args"])
                     self._executed.append((c["name"], c["args"], result))
                     self._note_action(c["name"], c["args"])
                 self.messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
@@ -1942,6 +1943,19 @@ class Agent:
                 self.messages.append({"role": "tool", "tool_call_id": c["id"],
                                       "content": "cancelled: the user stopped it"})
             raise
+
+    def _look_in_parallel(self, calls):
+        """When a reply asks for several read-only tools (read_file, grep, list_files, fetch_url),
+        run them together: they change nothing, and fetches or big greps add up one by one.
+        Returns {call id: result}; {} when it doesn't apply (the loop then runs them in order)."""
+        def plain(name):
+            return TOOL_ALIASES.get(re.sub(r"[^\w]", "", name), name)
+        if len(calls) < 2 or self.stopping() or not all(plain(c["name"]) in READ_ONLY for c in calls):
+            return {}
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(calls))) as pool:
+            results = list(pool.map(lambda c: self.tools.call(c["name"], c["args"]), calls))
+        return {c["id"]: r for c, r in zip(calls, results)}
 
     def _note_action(self, name, args):
         """Remember a turn that did things other than edit files, for the final check."""

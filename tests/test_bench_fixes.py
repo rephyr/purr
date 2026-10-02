@@ -527,5 +527,33 @@ class RoutineEffortTest(unittest.TestCase):
         self.assertNotIn("reasoning", a._body(None, True))
 
 
+class ParallelLookTest(unittest.TestCase):
+    def calls(self, *names):
+        return [{"id": f"c{i}", "name": n, "args": json.dumps({"path": "."} if n != "grep" else {"pattern": "x"})}
+                for i, n in enumerate(names)]
+
+    def test_several_reads_run_together_and_come_back_in_order(self):
+        a = agent()
+        a.messages = [a.messages[0]]
+        started = []
+
+        def slow_call(name, args):
+            started.append(name)
+            agent_module.time.sleep(0.2)
+            return f"result of {name}"
+        with mock.patch.object(a.tools, "call", side_effect=slow_call):
+            t0 = agent_module.time.monotonic()
+            a._run_tools(self.calls("list_files", "grep", "list_files", "grep"))
+            took = agent_module.time.monotonic() - t0
+        self.assertLess(took, 0.6)  # one by one would be 0.8 s
+        self.assertEqual([m["tool_call_id"] for m in a.messages[1:]], ["c0", "c1", "c2", "c3"])
+        self.assertEqual([m["content"] for m in a.messages[1:]][:2], ["result of list_files", "result of grep"])
+
+    def test_anything_that_changes_things_runs_in_order(self):
+        a = agent()
+        self.assertEqual(a._look_in_parallel(self.calls("read_file", "edit_file")), {})
+        self.assertEqual(a._look_in_parallel(self.calls("read_file")), {})
+
+
 if __name__ == "__main__":
     unittest.main()
