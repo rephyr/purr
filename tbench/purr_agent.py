@@ -20,11 +20,11 @@ Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the 
     time_limit=900        seconds purr is told it has (default: the task's own limit, less 10%)
 """
 
-import subprocess
 
 import json
 import shlex
 import shutil
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -34,25 +34,8 @@ from harbor.agents.model_connection import ModelConnectionSpec
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-try:  # purr's version, for the results (agent_info.version)
-    import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from harness import VERSION as PURR_VERSION
-except ImportError:
-    PURR_VERSION = "?"
-
-
-def purr_version():
-    """"0.3.0+abc1234" (the commit), with "-dirty" if purr has uncommitted changes."""
-    root = Path(__file__).resolve().parent.parent
-    try:
-        commit = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-                                capture_output=True, text=True, timeout=10).stdout.strip()
-        dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
-                               capture_output=True, text=True, timeout=10).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return PURR_VERSION
-    return f"{PURR_VERSION}+{commit}{'-dirty' if dirty else ''}" if commit else PURR_VERSION
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # purr's own code, for its version
+from harness import full_version as purr_version  # noqa: E402
 
 PURR = Path(__file__).resolve().parent.parent
 REMOTE = "/opt/purr"

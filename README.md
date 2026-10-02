@@ -301,6 +301,14 @@ you missed, and your row ("you / human") is added at the end of the latest bench
 task, **idle-catchup** (from desk-pets' idle core), is aimed at top models: exact catch-up where
 one big step must equal any split, ties at a buff's line, and float crumbs that add up to coins.
 
+## Published results
+
+- [`benchmarks/terminal-bench/`](benchmarks/terminal-bench/): Terminal-Bench, the official numbers
+  (full runs next to other harnesses on the same model, and cheap quick runs between versions).
+- [`benchmarks/purr-bench/`](benchmarks/purr-bench/): `purr bench` on purr's own small tasks.
+  **Not official**: just for debugging, iterating on and improving the harness. File a run with
+  `purr bench --publish` (the latest, or a folder).
+
 ## Real benchmarks: Terminal-Bench
 
 `tbench/` plugs purr into [Harbor](https://www.harborframework.com), the runner behind

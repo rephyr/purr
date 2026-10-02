@@ -141,6 +141,24 @@ class PlayTest(unittest.TestCase):
             bench.run_purr(CONFIG, "small", task, work, Path(tempfile.mkdtemp()), 600)
         self.assertEqual(heard, [540.0])  # the run's limit, less 10%
 
+    def test_publish_files_a_run_with_the_note(self):
+        from unittest import mock
+        run = Path(tempfile.mkdtemp()) / "2026-10-02_120000"
+        run.mkdir()
+        row = {**bench.blank("purr", "qwen", {"name": "rename", "expected": 2}), "passed": 2, "solved": True,
+               "calls": 5, "hallucinations": 0, "out_tokens": 900, "seconds": 30.0}
+        (run / "results.json").write_text(json.dumps([row]))
+        (run / "meta.json").write_text(json.dumps({"purr": "0.3.1+abc1234", "date": "2026-10-02", "tasks": ["rename"],
+                                                   "vague": False, "runs": 1}))
+        out = Path(tempfile.mkdtemp())
+        with mock.patch.object(bench, "PUBLISHED", out), mock.patch("sys.stdout"):
+            self.assertEqual(bench.publish(str(run)), 0)
+        readme = (out / "README.md").read_text()
+        self.assertIn("Not an official benchmark", readme)
+        self.assertIn("purr 0.3.1+abc1234 · 1 tasks, full prompts", readme)
+        self.assertIn("| qwen | purr | 1/1 | 100% |", readme)
+        self.assertTrue((out / "results" / "2026-10-02_120000.json").exists())
+
     def test_you_get_graded_and_join_the_table(self):
         import io
         from unittest import mock
