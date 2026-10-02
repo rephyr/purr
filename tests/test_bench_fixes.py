@@ -382,6 +382,19 @@ class PublishTest(unittest.TestCase):
         self.assertIn("| 0.3.1 |", old)
         self.assertNotIn("2.0: full runs", page)  # no full 2.0 run: no empty table for it
         self.assertIn("2.1: one-try runs", page)
+        self.assertNotIn("DeepSWE 1.1 (113", page)  # the other benchmark's references go on its own page
+
+    def test_deepswe_has_its_own_page(self):
+        quick = [{"task": t} for t in self.publish.BENCHES["DeepSWE 1.1"]["quick"]]
+        self.assertEqual(len(quick), 20)
+        self.assertEqual(self.publish.profile("datacurve/deep-swe-1-1", quick), "quick")
+        self.assertEqual(self.publish.profile("datacurve/deep-swe-1-1", [{"task": f"t{i}"} for i in range(113)]), "one")
+        self.assertIsNone(self.publish.profile("datacurve/deep-swe-1-1", [{"task": f"t{i}"} for i in range(89)]))
+        page = self.publish.readme([], "deepswe")
+        self.assertIn("# purr on DeepSWE", page)
+        self.assertIn("all 113 tasks", page)
+        self.assertIn("| mini-SWE-agent | DeepSeek V4.1 Flash | DeepSWE 1.1 (113 tasks) | 74.2%", page)
+        self.assertNotIn("Terminal-Bench 2.1 (89", page)
 
 
 if __name__ == "__main__":

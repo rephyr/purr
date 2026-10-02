@@ -2,16 +2,16 @@
 
     tbench/publish.py ~/.local/state/purr/tbench/<job folder>
 
-Three kinds of run get published, each in its own table: the full run (all 89 Terminal-Bench
-tasks x 3 attempts, compared with other harnesses' published scores), the one-try run (all 89 x 1:
-the same score with a wider margin, in a third of the time) and the quick run (the 20 tasks in
-tbench/quick-tasks.txt x 1, compared only with other quick runs). Terminal-Bench 2.1 and
-the older 2.0 runs get separate tables. Anything else is refused, so a partial run can't sneak
-into the tables.
+Two benchmarks, each with its own page: Terminal-Bench (benchmarks/terminal-bench/) and DeepSWE
+(benchmarks/deepswe/). Three kinds of run get published, each in its own table: the full run (every
+task x 3 attempts, compared with other harnesses' published scores), the one-try run (every task x 1:
+the same score with a wider margin, in a third of the time) and the quick run (a frozen set of 20
+tasks x 1, compared only with other quick runs). Terminal-Bench 2.1 and the older 2.0 runs get
+separate tables. Anything else is refused, so a partial run can't sneak into the tables.
 
-Writes benchmarks/terminal-bench/results/<purr version>.json (every trial, plus the totals) and
-rebuilds benchmarks/terminal-bench/README.md: how the run was done, a row per purr version, and
-the other harnesses' published scores with the same model to compare against.
+Writes benchmarks/<page>/results/<purr version>.json (every trial, plus the totals) and rebuilds
+benchmarks/<page>/README.md: how the run was done, a row per purr version, and the other harnesses'
+published scores with the same model to compare against.
 Plain Python (no packages), so it runs with any python3.
 """
 
@@ -24,18 +24,25 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "benchmarks" / "terminal-bench"
+HERE = Path(__file__).parent
+CARD = "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash"
 
 # Published scores to compare against: the same model through other harnesses. Each row says where
 # it's from; only rows with the same model and benchmark are compared in the table.
 REFERENCE = [
-    # DeepSeek's model card: N=3 per task, temperature 1.0, top_p 0.95, 1M context, max_steps 500
+    # DeepSeek's model card: N=3 per task, temperature 1.0, top_p 0.95, 1M context, max_steps 500,
+    # no network in the task container
     *[{"harness": h, "model": "DeepSeek V4.1 Flash", "benchmark": "Terminal-Bench 2.1 (89 tasks)", "pass@1": s,
-       "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash"}
-      for h, s in (("DSH Minimal (DeepSeek's own)", 90.6), ("mini-SWE-agent", 90.3), ("Claude Code", 88.0),
-                   ("Pi", 86.1), ("DSH Standard", 85.8), ("DSH PTC", 85.8), ("OpenCode", 85.0), ("Codex", 84.1))],
+       "source": CARD} for h, s in (
+          ("DSH Minimal (DeepSeek's own)", 90.6), ("mini-SWE-agent", 90.3), ("Claude Code", 88.0), ("Pi", 86.1),
+          ("DSH Standard", 85.8), ("DSH PTC", 85.8), ("OpenCode", 85.0), ("Codex", 84.1))],
     {"harness": "Ante", "model": "DeepSeek V4.1 Flash", "benchmark": "Terminal-Bench 2.1 (89 tasks)", "pass@1": 83.9,
      "source": "https://antigma.ai/eval", "note": "5 trials per task"},
+    # the same model card, same settings, N=8 per task
+    *[{"harness": h, "model": "DeepSeek V4.1 Flash", "benchmark": "DeepSWE 1.1 (113 tasks)", "pass@1": s,
+       "source": CARD, "note": "8 trials per task"} for h, s in (
+          ("mini-SWE-agent", 74.2), ("DSH Minimal (DeepSeek's own)", 72.6), ("DSH Standard", 70.5),
+          ("Claude Code", 69.8), ("DSH PTC", 67.6), ("Pi", 66.2), ("Codex", 65.6), ("OpenCode", 65.5))],
 ]
 
 
@@ -68,34 +75,46 @@ def load_job(job):
     return job, config, trials
 
 
-# Harbor's dataset name -> the tables it goes in. 2.1 is what the reference scores used; the first
-# runs were on 2.0 (the same 89 tasks before 2.1's fixes) and keep their own tables.
-DATASETS = {"terminal-bench/terminal-bench-2-1": "Terminal-Bench 2.1", "terminal-bench": "Terminal-Bench 2.0"}
+def _quick(name):
+    return [line.split()[0] for line in (HERE / name).read_text().splitlines()
+            if line.strip() and not line.startswith("#")]
+
+
+QUICK = _quick("quick-tasks.txt")
+
+# Harbor's dataset name -> the benchmark it is. 2.1 is what the reference scores used; the first
+# Terminal-Bench runs were on 2.0 (the same 89 tasks before 2.1's fixes) and keep their own tables.
+# page: the folder under benchmarks/ its results go in.
+BENCHES = {
+    "Terminal-Bench 2.1": {"dataset": "terminal-bench/terminal-bench-2-1", "tasks": 89, "quick": QUICK,
+                           "page": "terminal-bench", "flag": ""},
+    "Terminal-Bench 2.0": {"dataset": "terminal-bench", "tasks": 89, "quick": QUICK, "page": "terminal-bench",
+                           "old": True, "flag": ""},
+    "DeepSWE 1.1": {"dataset": "datacurve/deep-swe-1-1", "tasks": 113, "quick": _quick("quick-tasks-deepswe.txt"),
+                    "quick_file": "quick-tasks-deepswe.txt", "page": "deepswe", "flag": "--deepswe "},
+}
 
 
 def bench_name(dataset):
-    """ "Terminal-Bench 2.1", "Terminal-Bench 2.0", or None (a dataset we don't publish)."""
+    """ "Terminal-Bench 2.1", "Terminal-Bench 2.0", "DeepSWE 1.1", or None (a dataset we don't publish)."""
     name, _, version = str(dataset).partition("@")
     if name == "terminal-bench" and not version.startswith("2.0"):
-        return None
-    return DATASETS.get(name)
-
-
-QUICK = [line.split()[0] for line in (Path(__file__).parent / "quick-tasks.txt").read_text().splitlines()
-         if line.strip() and not line.startswith("#")]
+        return None  # 4.0 and later have the same name
+    return next((b for b, c in BENCHES.items() if c["dataset"] == name), None)
 
 
 def profile(dataset, trials):
     """ "full", "one", "quick", or None (not a run we publish)."""
     tasks = {t["task"] for t in trials}
     per_task = len(trials) / max(len(tasks), 1)
-    if not bench_name(dataset):
+    bench = BENCHES.get(bench_name(dataset))
+    if not bench:
         return None
-    if tasks == set(QUICK) and per_task == 1:
+    if tasks == set(bench["quick"]) and per_task == 1:
         return "quick"
-    if len(tasks) == 89 and per_task == 3:
+    if len(tasks) == bench["tasks"] and per_task == 3:
         return "full"
-    if len(tasks) == 89 and per_task == 1:
+    if len(tasks) == bench["tasks"] and per_task == 1:
         return "one"
     return None
 
@@ -137,28 +156,59 @@ def short(n):
     return f"{n / 1e6:.1f}M" if n >= 1e6 else f"{n / 1e3:.0f}k" if n >= 1e3 else str(n)
 
 
-def readme(results):
-    lines = [
+INTRO = {
+    "terminal-bench": [
         "# purr on Terminal-Bench",
         "",
         "purr runs [Terminal-Bench](https://www.tbench.ai) through [Harbor](https://www.harborframework.com),",
         "the same runner the public leaderboards use (`tbench/purr_agent.py`). Every purr version that changes",
-        "how it works gets a run, so you can see whether it got better.",
+        "how it works gets a run, so you can see whether it got better. Also: [DeepSWE](../deepswe/).",
+    ],
+    "deepswe": [
+        "# purr on DeepSWE",
+        "",
+        "[DeepSWE 1.1](https://huggingface.co/datasets/datacurve/deep-swe): 113 features and fixes in real",
+        "open-source projects (TypeScript, Go, Python, Rust, JavaScript), checked by the projects' own tests.",
+        "purr runs it through [Harbor](https://www.harborframework.com) (`tbench/purr_agent.py`), like",
+        "[Terminal-Bench](../terminal-bench/). It's the other benchmark in DeepSeek's harness comparison, so",
+        "the same eight harnesses have published scores with the same model.",
+    ],
+}
+DATASET_NOTE = {
+    "terminal-bench": [
+        "- **dataset:** Terminal-Bench 2.1 (`terminal-bench/terminal-bench-2-1` in Harbor's registry), the",
+        "  version the reference scores below used. The first runs were on 2.0 (the same 89 tasks before",
+        "  2.1's fixes), so they have their own tables: don't compare across the two.",
+        "- **network:** open in the task container, where DeepSeek's runs had none: tasks that need to",
+        "  download something are easier here than in theirs.",
+    ],
+    "deepswe": [
+        "- **dataset:** DeepSWE 1.1 (`datacurve/deep-swe-1-1` in Harbor's registry), each task's own time",
+        "  limit (90 minutes). The reference scores used 8 attempts per task: a closer estimate of the same",
+        "  pass@1, not an easier test.",
+        "- **network:** none in the task container, like theirs; purr only reaches the model",
+        "  (`--allow-agent-host openrouter.ai`).",
+    ],
+}
+
+
+def readme(results, page="terminal-bench"):
+    lines = INTRO[page] + [
         "",
         "## How it's run (`tbench/fair.sh`)",
         "",
         "As close as we can get to the settings DeepSeek used to run its model through other harnesses:",
         "",
-        "- **model:** DeepSeek V4.1 Flash, served by DeepSeek itself (OpenRouter pinned to the `deepseek` host,\n  which uses prompts for training, so the account allows that;",
-        "  no fallback to other hosts, some of which serve it at fp4/fp8)",
+        "- **model:** DeepSeek V4.1 Flash, served by DeepSeek itself (OpenRouter pinned to the `deepseek` host,",
+        "  which uses prompts for training, so the account allows that; no fallback to other hosts, some of",
+        "  which serve it at fp4/fp8)",
         "- **sampling:** temperature 1.0, top_p 0.95; up to 64k tokens per reply",
         "- **limits:** 1M context, 500 model calls per task, each task's own time limit",
-        "- **attempts:** 3 per task; pass@1 = the average share of attempts that passed (timeouts and",
-        "  errors count as fails, like on the leaderboards), ± the standard error over tasks",
+        "- **attempts:** 3 per task (1 in one-try and quick runs); pass@1 = the average share of attempts",
+        "  that passed (timeouts and errors count as fails, like on the leaderboards), ± the standard error",
+        "  over tasks",
         "- **purr:** as shipped (its MCP servers on), the exact commit recorded with every trial",
-        "- **dataset:** Terminal-Bench 2.1 (`terminal-bench/terminal-bench-2-1` in Harbor's registry), the",
-        "  version the reference scores below used. The first runs were on 2.0 (the same 89 tasks before",
-        "  2.1's fixes), so they have their own tables: don't compare across the two.",
+    ] + DATASET_NOTE[page] + [
         "",
         "## purr, version by version",
         "",
@@ -167,33 +217,42 @@ def readme(results):
             "|---|---|---|---|---|---|---|---|---|"]
     quick_head = [h.replace(" pass@3 |", "").replace("---|---|---|---|---|---|---|---|---|", "---|---|---|---|---|---|---|---|")
                   for h in head]
-    for bench in DATASETS.values():
+    for bench, conf in BENCHES.items():
+        if conf["page"] != page:
+            continue
         mine = [r for r in sorted(results, key=key) if bench_name(r.get("dataset")) == bench]
-        if not mine and bench != "Terminal-Bench 2.1":
+        main = not conf.get("old")
+        if not mine and not main:
             continue  # an old dataset only shows when it has runs
+        n, flag = conf["tasks"], conf["flag"]
         full = [row(r, full=True) for r in mine if r.get("profile") == "full"]
         one = [row(r, full=False) for r in mine if r.get("profile") == "one"]
         quick = [row(r, full=False) for r in mine if r.get("profile") == "quick"]
-        if bench == "Terminal-Bench 2.1" or full:
-            lines += [f"### {bench}: full runs, all 89 tasks, 3 attempts each", ""] + head
+        if main or full:
+            lines += [f"### {bench}: full runs, all {n} tasks, 3 attempts each (`tbench/fair.sh {flag}`)".replace(" `)", "`)"),
+                      ""] + head
             lines += full or ["| (none yet) |"]
             lines += [""]
-        if bench == "Terminal-Bench 2.1" or one:
-            lines += [f"### {bench}: one-try runs, all 89 tasks, 1 attempt each", ""]
-            if bench == "Terminal-Bench 2.1":
-                lines += ["The same score as a full run (pass@1) in about 2 hours instead of 5, with a wider margin",
-                          "(see ±). Fine to set next to the reference scores below, keeping the ± in mind.", ""]
+        if main or one:
+            lines += [f"### {bench}: one-try runs, all {n} tasks, 1 attempt each (`tbench/fair.sh {flag}--one`)", ""]
+            if main:
+                lines += ["The same score as a full run (pass@1) in a third of the time, with a wider margin (see ±).",
+                          "Fine to set next to the reference scores below, keeping the ± in mind.", ""]
             lines += quick_head + (one or ["| (none yet) |"]) + [""]
-        lines += [f"### {bench}: quick runs, the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each", ""]
-        if bench == "Terminal-Bench 2.1":
-            lines += ["Cheap (well under $1 with DeepSeek V4.1 Flash) and quick, for seeing whether a purr version got",
-                      "better or worse. With 20 tasks and one try each the margin is wide (see ±): compare quick runs",
-                      "with each other, not with the full runs or the leaderboards.", ""]
+        lines += [f"### {bench}: quick runs, the same 20 tasks (`tbench/{conf.get('quick_file', 'quick-tasks.txt')}`), "
+                  f"1 attempt each (`tbench/fair.sh {flag}--quick`)", ""]
+        if main:
+            lines += ["Cheap and quick, for seeing whether a purr version got better or worse. With 20 tasks and one",
+                      "try each the margin is wide (see ±): compare quick runs with each other, not with the full",
+                      "runs or the leaderboards.", ""]
         lines += quick_head + (quick or ["| (none yet) |"]) + [""]
     lines.pop()
     lines += ["", "## Other harnesses, same model (published, full runs)", "",
               "| harness | model | benchmark | pass@1 | source |", "|---|---|---|---|---|"]
+    names = {b for b, c in BENCHES.items() if c["page"] == page}
     for ref in REFERENCE:
+        if not any(ref["benchmark"].startswith(b) for b in names):
+            continue
         note = f" ({ref['note']})" if ref.get("note") else ""
         lines.append(f"| {ref['harness']} | {ref['model']} | {ref['benchmark']} | {ref['pass@1']}%{note} | "
                      f"[link]({ref['source']}) |")
@@ -224,20 +283,22 @@ def main(argv):
     summary["profile"] = profile(summary["dataset"], trials)
     if not summary["profile"]:
         print(f"not published: {summary['tasks']} tasks x {summary['settings']['attempts']} on {summary['dataset']} "
-              "is not the full run (89 x 3, tbench/fair.sh), the one-try run (89 x 1, tbench/fair.sh --one) "
-              "or the quick one (the 20 in quick-tasks.txt x 1, tbench/fair.sh --quick)")
+              "is not a full run (every task x 3, tbench/fair.sh), a one-try run (every task x 1, --one) or a "
+              "quick one (the 20 in its quick-tasks file x 1, --quick)")
         return 1
+    page = BENCHES[bench_name(summary["dataset"])]["page"]
+    out = ROOT / "benchmarks" / page
     version = summary["purr"] if isinstance(summary["purr"], str) else "mixed"
     if "dirty" in version:
         print(f"warning: {version} had uncommitted changes, so this result can't be tied to a commit")
-    (OUT / "results").mkdir(parents=True, exist_ok=True)
+    (out / "results").mkdir(parents=True, exist_ok=True)
     name = f"{version}__{summary['profile']}__{job.name}.json"
-    (OUT / "results" / name).write_text(json.dumps({"summary": summary, "trials": trials}, indent=1) + "\n")
-    results = [json.loads(f.read_text())["summary"] for f in sorted((OUT / "results").glob("*.json"))]
-    (OUT / "README.md").write_text(readme(results))
+    (out / "results" / name).write_text(json.dumps({"summary": summary, "trials": trials}, indent=1) + "\n")
+    results = [json.loads(f.read_text())["summary"] for f in sorted((out / "results").glob("*.json"))]
+    (out / "README.md").write_text(readme(results, page))
     print(f"purr {version} ({summary['profile']} run): pass@1 {summary['pass@1']}% ± {summary['stderr']} over {summary['tasks']} tasks "
           f"({summary['trials']} trials, {summary['errors']} errors), ${summary['cost_usd']}")
-    print(f"wrote {OUT / 'results' / name} and {OUT / 'README.md'}")
+    print(f"wrote {out / 'results' / name} and {out / 'README.md'}")
     return 0
 
 

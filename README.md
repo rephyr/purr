@@ -323,6 +323,8 @@ one big step must equal any split, ties at a buff's line, and float crumbs that 
 
 - [`benchmarks/terminal-bench/`](benchmarks/terminal-bench/): Terminal-Bench, the official numbers
   (full runs next to other harnesses on the same model, and cheap quick runs between versions).
+- [`benchmarks/deepswe/`](benchmarks/deepswe/): DeepSWE, 113 features and fixes in real projects, next
+  to the same eight harnesses on the same model (`tbench/fair.sh --deepswe`).
 - [`benchmarks/purr-bench/`](benchmarks/purr-bench/): `purr bench` on purr's own small tasks.
   **Not official**: just for debugging, iterating on and improving the harness. File a run with
   `purr bench --publish` (the latest, or a folder).
