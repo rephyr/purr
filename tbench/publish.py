@@ -45,9 +45,13 @@ def load_job(job):
         if ex.get("started_at") and ex.get("finished_at"):
             seconds = (datetime.datetime.fromisoformat(ex["finished_at"].replace("Z", "+00:00"))
                        - datetime.datetime.fromisoformat(ex["started_at"].replace("Z", "+00:00"))).total_seconds()
+        exception = (t.get("exception_info") or {}).get("exception_type")
         trials.append({
             "task": t["task_name"].split("/")[-1], "trial": t["trial_name"],
-            "reward": reward, "error": (t.get("exception_info") or {}).get("exception_type"),
+            "reward": reward, "timeout": exception == "AgentTimeoutError",
+            # a time limit is the task's own rule (a fail, like on the leaderboards); anything else
+            # (a crash, the model server) is an error worth re-running
+            "error": exception if exception != "AgentTimeoutError" else None,
             "agent_seconds": round(seconds, 1) if seconds is not None else None,
             "cost_usd": agent.get("cost_usd"), "tokens_in": agent.get("n_input_tokens"),
             "tokens_cached": agent.get("n_cache_tokens"), "tokens_out": agent.get("n_output_tokens"),
@@ -74,11 +78,13 @@ def summarise(config, trials):
         "purr": versions[0] if len(versions) == 1 else versions,
         "date": datetime.date.today().isoformat(),
         "model": agent.get("model_name"),
-        "dataset": (config.get("datasets") or [{}])[0].get("name"),
+        "dataset": "@".join(str(x) for x in ((config.get("datasets") or [{}])[0].get("name"),
+                                              (config.get("datasets") or [{}])[0].get("version")) if x),
         "dataset_ref": (config.get("datasets") or [{}])[0].get("ref"),
         "settings": {**(agent.get("kwargs") or {}), "attempts": config.get("n_attempts"),
                      "agent_timeout_multiplier": config.get("agent_timeout_multiplier", 1.0)},
         "tasks": n, "trials": len(trials), "errors": sum(1 for t in trials if t["error"]),
+        "timeouts": sum(1 for t in trials if t.get("timeout")),
         "pass@1": round(100 * sum(shares) / n, 1) if n else 0.0,
         "stderr": round(100 * se, 1),
         "pass@k": round(100 * sum(1 for s in shares if s > 0) / n, 1) if n else 0.0,
@@ -108,8 +114,8 @@ def readme(results):
         "  no fallback to other hosts, some of which serve it at fp4/fp8)",
         "- **sampling:** temperature 1.0, top_p 0.95; up to 64k tokens per reply",
         "- **limits:** 1M context, 500 model calls per task, each task's own time limit",
-        "- **attempts:** 3 per task; pass@1 = the average share of attempts that passed (errors count as",
-        "  fails), ± the standard error over tasks",
+        "- **attempts:** 3 per task; pass@1 = the average share of attempts that passed (timeouts and",
+        "  errors count as fails, like on the leaderboards), ± the standard error over tasks",
         "- **purr:** as shipped (its MCP servers on), the exact commit recorded with every trial",
         "- **dataset:** `terminal-bench@2.0` from Harbor's registry. The reference scores below are on",
         "  Terminal-Bench 2.1, which has the same 89 tasks with fixes and isn't in the registry, so the",
@@ -117,12 +123,13 @@ def readme(results):
         "",
         "## purr, version by version",
         "",
-        "| purr | date | dataset | pass@1 | pass@3 | errors | cost | tokens in / cached / out | median time |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| purr | date | dataset | pass@1 | pass@3 | timeouts | errors | cost | tokens in / cached / out | median time |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in sorted(results, key=lambda r: (r["date"], str(r["purr"]))):
         lines.append(f"| {r['purr']} | {r['date']} | {r['dataset']} ({r['tasks']} tasks) | "
-                     f"**{r['pass@1']}%** ± {r['stderr']} | {r['pass@k']}% | {r['errors']}/{r['trials']} | "
+                     f"**{r['pass@1']}%** ± {r['stderr']} | {r['pass@k']}% | {r.get('timeouts', 0)} | "
+                     f"{r['errors']}/{r['trials']} | "
                      f"${r['cost_usd']} | {short(r['tokens_in'])} / {short(r['tokens_cached'])} / "
                      f"{short(r['tokens_out'])} | {r['median_agent_minutes']} min |")
     lines += ["", "## Other harnesses, same model (published)", "",

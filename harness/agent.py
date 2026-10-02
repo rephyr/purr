@@ -1231,6 +1231,7 @@ class Agent:
                     self.failed = str(e)  # the turn ended on the model server, not on the task
                     break
                 turn_cost += self._count(reply["usage"])
+                self.save_log()  # after every step: a run that's killed (a time limit, a crash) keeps its chat and cost
                 self.turn_stats["out"] += (reply["usage"] or {}).get("completion_tokens", 0)
                 self.turn_stats["calls"] += 1
                 usage = reply["usage"] or {}
