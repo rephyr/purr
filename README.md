@@ -145,13 +145,14 @@ purr ships two of its own in `servers/` (plain Python, no packages, any MCP clie
 
 | server | tool | what it gives the model |
 |---|---|---|
-| codebase | `project_overview` | tech stack and versions, how to run and test (CI commands included), folders, entry points. Also put in the system prompt, so the model knows the project from the first message (`overview_in_prompt = false` turns that off) |
-| | `code_map` | every file's classes and functions with signatures and line numbers, shrunk to fit |
-| | `outline` | one file's symbols with line ranges, so it reads just the part it needs |
-| | `find_symbol` | where something is defined and every place it's used (Godot autoloads too) |
-| | `related_files` | what a file imports and who imports it (for Godot: res:// loads, scenes using a script) |
+| codebase | `project_overview` | tech stack and versions, how to run and test (CI commands included), folders, entry points. Put in the system prompt instead of offered as a tool (~300 tokens for small models; `overview_in_prompt = false` turns it off) |
+| | `outline` | a file's classes and functions with line ranges plus who uses the file (Godot scenes and autoloads too), so the model reads just the lines it needs; a folder gives the code map |
+| | `find_symbol` | where something is defined and every place it's used |
 | stack | `godot_class` | a class from the Godot you have installed: exact signatures (`godot --doctool`) plus that version's docs from GitHub, cached in `~/.cache/purr/godot/`; up the inheritance chain for one member; Godot 3 names get their Godot 4 name |
 | | `python_api` | a package's function, class or module from the project's own `.venv`: signature, docs, version |
+
+Few tools with short descriptions on purpose: every tool is sent with every request, so together
+they add about 300 tokens a request on top of the overview.
 
 The stack tools only show up where they fit (`godot_class` in Godot projects, `python_api` in Python
 ones), since every tool costs a small model some context. To add your own, see `servers/mcpserver.py`:
@@ -291,6 +292,35 @@ the hard ones a reference `solution/` that a test checks really passes). Five ar
 are hard (★): subtle bugs behind passing tests, a bug hidden in a 15-file project, messy CSV
 data, a dependency-order algorithm, a speed-up that mustn't change the output, and a game
 inventory feature across four files. `--level hard` runs only those.
+
+**Play it yourself:** `purr bench --you` hands you the tasks one by one: a fresh copy of the
+files and the prompt (**enter** opens VS Code, **n** nvim; **r** runs the task's program so you can see what it does, **t** runs the visible tests, **enter**
+again when you're done). The same hidden tests grade you, failures are named so you learn what
+you missed, and your row ("you / human") is added at the end of the latest bench's results
+(`--new` for a folder of your own). `--level hard`, `--vague` and `-t` work as usual. The hardest
+task, **idle-catchup** (from desk-pets' idle core), is aimed at top models: exact catch-up where
+one big step must equal any split, ties at a buff's line, and float crumbs that add up to coins.
+
+## Real benchmarks: Terminal-Bench
+
+`tbench/` plugs purr into [Harbor](https://www.harborframework.com), the runner behind
+**Terminal-Bench** (and other benchmarks in its registry), so purr is graded on the same tasks as
+OpenCode, Claude Code, Codex and Aider on the public leaderboards. Each task runs in its own Docker
+container: the adapter (`tbench/purr_agent.py`) installs uv + Python 3.12 there, copies purr in
+(plain mode only), writes a config for the model Harbor picks (using purr's own provider settings
+and model details) and runs `purr -p <task> --yes` once.
+
+    uv tool install harbor                          # once
+    tbench/run.sh -i terminal-bench/html-js-filter  # one task
+    tbench/run.sh -l 10 -n 4                        # 10 tasks, 4 at a time (API models)
+    tbench/run.sh -l 10 --ak mcp=false              # without purr's MCP servers
+    PURR_MODEL=openrouter/<model id> tbench/run.sh  # default: DeepSeek V4.1 Flash on OpenRouter
+
+`run.sh` hands purr's saved OpenRouter key to Harbor and passes everything else to `harbor run`.
+Results land in `~/.local/state/purr/tbench/`, with purr's own log (`agent/purr.txt`) and saved
+chat (`agent/purr-state/`) per task. Terminal-Bench 4.0 is hard: 66 tasks, a median of 4 hours
+for a human expert, and 8 hours per task for agents (`--agent-timeout-multiplier 0.125` caps it
+at one).
 
 ## Tests
 

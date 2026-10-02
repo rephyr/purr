@@ -522,7 +522,7 @@ talk = ["kimi-k3-nv", "gemini-flash", "glm53-nv", "gemini-pro", "mistral-large",
 # ---- MCP servers: their tools are offered next to purr's own ----
 # Each runs in the project folder; {purr} is purr's own folder. tools = [...] offers only some.
 # purr's own two (servers/, plain Python, no packages) help small models find their way:
-#   codebase: project_overview (also put in the system prompt), code_map, outline, find_symbol, related_files
+#   codebase: outline (a file, or a folder's code map), find_symbol; its project_overview goes in the system prompt
 #   stack:    godot_class (your installed Godot's real API), python_api (the project's installed packages)
 [mcp.codebase]
 command = ["python3", "{purr}/servers/codebase.py"]

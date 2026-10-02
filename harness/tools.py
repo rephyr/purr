@@ -220,7 +220,7 @@ class Tools:
         """One short line for the screen."""
         key = {"read_file": "path", "list_files": "path", "grep": "pattern", "edit_file": "path",
                "write_file": "path", "run": "command", "fetch_url": "url", "task": "prompt",
-               "code_map": "path", "outline": "path", "related_files": "path", "find_symbol": "name",
+               "outline": "path", "find_symbol": "name",
                "godot_class": "name", "python_api": "name"}.get(name)
         if name == "godot_class" and args.get("member"):
             return f"{name} {args.get('name', '')}.{args['member']}"

@@ -123,14 +123,14 @@ class CodebaseServerTest(unittest.TestCase):
         self.assertIn("textual", text)
         self.assertIn("unittest", text)
 
-    def test_code_map_and_find_symbol(self):
-        self.assertIn("class Inventory  :4", self.m.call("code_map", {}))
+    def test_folder_outline_and_find_symbol(self):
+        self.assertIn("class Inventory  :4", self.m.call("outline", {"path": "."}))
         found = self.m.call("find_symbol", {"name": "MAX_STACK"})
         self.assertIn("defined:\n  cafe/inventory.py:1", found)
         self.assertIn("cafe/shop.py:1", found)
 
-    def test_related_files(self):
-        text = self.m.call("related_files", {"path": "cafe/inventory.py"})
+    def test_outline_says_who_uses_the_file(self):
+        text = self.m.call("outline", {"path": "cafe/inventory.py"})
         self.assertIn("used by: cafe/shop.py", text)
 
 
@@ -155,8 +155,8 @@ class GodotTest(unittest.TestCase):
 
     def test_autoload_and_scenes(self):
         self.assertIn("Game is a Godot autoload", self.m.call("find_symbol", {"name": "Game"}))
-        self.assertIn("used by: main.tscn", self.m.call("related_files", {"path": "player.gd"}))
-        self.assertIn("autoload Game", self.m.call("related_files", {"path": "game.gd"}))
+        self.assertIn("used by: main.tscn", self.m.call("outline", {"path": "player.gd"}))
+        self.assertIn("autoload Game", self.m.call("outline", {"path": "game.gd"}))
 
     def test_only_godot_tools(self):
         names = [s["function"]["name"] for s in self.m.schemas()]
@@ -169,7 +169,9 @@ class AgentTest(unittest.TestCase):
         a = Agent({**CONFIG, **SERVERS}, project(CAFE), "small", FakeView())
         prompt = a.messages[0]["content"]
         self.assertIn("Project overview", prompt)
-        self.assertIn("outline, code_map", prompt.replace("code_map, outline", "outline, code_map"))
+        self.assertIn("outline, find_symbol", prompt)
+        offered = [t["function"]["name"] for t in a.mcp.schemas(taken=a.mcp_taken)]
+        self.assertNotIn("project_overview", offered)  # its answer is already in the prompt
         a.tools.trust_all = True
         self.assertIn("class Inventory", a.tools.call("outline", json.dumps({"path": "cafe/inventory.py"})))
         a.mcp.stop()

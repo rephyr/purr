@@ -186,6 +186,10 @@ MODES = {
     "create": ("none", "brainstorming and writing, no tools, a bit more random"),
 }
 
+CUT_NUDGE = """(purr: your reply hit the output limit and was cut off, so nothing in it happened. \
+Carry on from where you were, but don't write code or long plans in your reply: put code straight \
+into the files with write_file or edit_file (a long file in a few parts), and keep your reply short.)"""
+
 EMPTY_NUDGE = """(purr: your reply was empty. Look at the last results you got: if anything looks \
 wrong, fix it now; if everything is done, give a short summary of what you changed.)"""
 
@@ -265,15 +269,12 @@ TASK_LINE = ("\n- task: send a helper to explore many files or the web and repor
              "so this chat stays small.")
 
 
-MCP_HINTS = [  # what to say about the tools purr's own MCP servers add (servers/)
-    ({"outline", "code_map", "find_symbol", "related_files"},
-     "- {names}: find your way around the code. Prefer outline, then read_file with offset/limit, over "
-     "reading whole files, and use find_symbol before changing something other code uses."),
-    ({"godot_class", "python_api"},
-     "- {names}: the real API for this project's versions. Check a method there before using it if "
-     "you aren't sure it exists."),
+MCP_HINTS = [  # one short line each: the prompt goes with every request
+    ({"outline", "find_symbol"}, "- {names}: outline a file, then read just the lines you need."),
+    ({"godot_class", "python_api"}, "- {names}: the real API here; check before using one you aren't sure of."),
 ]
-OVERVIEW_CHARS = 2000
+OVERVIEW_CHARS = 2000      # the overview in the system prompt, for big-context models
+OVERVIEW_CHARS_SMALL = 1200  # and for 64k-or-less ones (about 300 tokens)
 
 
 def _mcp_lines(names):
@@ -312,7 +313,7 @@ def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=()
         text = text[:cut] + "\n" + extra + text[cut:]
     if overview:
         text += ("\n\nProject overview (purr made it from the files; when they disagree, the files win):\n"
-                 + overview[:OVERVIEW_CHARS])
+                 + overview)
     text += _notes(GLOBAL_NOTES, "The user's notes for every project")
     for name in NOTES_FILES:
         text += _notes(Path(root) / name, f"Project notes ({name})")
@@ -986,12 +987,22 @@ class Agent:
         if self._overview is None:
             on = self.config.get("overview_in_prompt", True) and not self.helper
             self._overview = self.mcp.run_once("project_overview") if on else ""
-        return self._overview
+        cap = OVERVIEW_CHARS_SMALL if self.model.get("context", 0) <= 65_536 else OVERVIEW_CHARS
+        if len(self._overview) <= cap:
+            return self._overview
+        cut = self._overview.rfind("\n", 0, cap)
+        return self._overview[:cut if cut > 0 else cap] + "\n…"  # whole lines where it can
+
+    @property
+    def mcp_taken(self):
+        """Names an MCP tool may not use: purr's own tools, and project_overview once its answer is
+        in the system prompt (no need to send it twice)."""
+        return TOOL_NAMES | ({"project_overview"} if self.project_overview() else set())
 
     def _system(self):
         tools = MODES[self.mode][0] != "none"
         names = [s["function"]["name"] for s in self.mcp.schemas(read_only=self.helper or self.mode == "ask",
-                                                                 taken=TOOL_NAMES)] if tools else []
+                                                                 taken=self.mcp_taken)] if tools else []
         text = system_prompt(self.root, self.model["id"], self.model["provider"], self.hidden_tools,
                              self.mode, mcp_tools=names, overview=self.project_overview() if tools else "")
         return text + HELPER if self.helper else text
@@ -1000,6 +1011,8 @@ class Agent:
         self.messages = [{"role": "system", "content": self._system()}]
         self.session_cost = 0.0
         self.session_out = 0
+        self.session_in = 0      # prompt tokens sent, and how many of them were cached
+        self.session_cached = 0
         self.last_usage = None
         self.title = ""
         stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
@@ -1014,7 +1027,8 @@ class Agent:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.log_path.write_text(json.dumps(
             {"model": self.chosen_model, "mode": self.mode, "folder": str(self.root), "title": self.title,
-             "cost": self.session_cost, "out": self.session_out, "messages": self.messages,
+             "cost": self.session_cost, "out": self.session_out, "in": self.session_in,
+             "cached": self.session_cached, "messages": self.messages,
              **({"cut_off_reply": self.cut_off} if getattr(self, "cut_off", None) else {})},
             indent=1, ensure_ascii=False))
 
@@ -1033,6 +1047,7 @@ class Agent:
         self.title = data.get("title", "")
         self.session_cost = data.get("cost", 0.0)
         self.session_out = data.get("out", 0)
+        self.session_in, self.session_cached = data.get("in", 0), data.get("cached", 0)
         self.last_usage = None
         self.log_path = Path(path)
 
@@ -1052,7 +1067,7 @@ class Agent:
         if tools:
             read_only = self.helper or self.mode == "ask"
             body["tools"] = schemas(read_only=read_only, read_lines=self.limits.read_lines,
-                                    hidden=self.hidden_tools) + self.mcp.schemas(read_only, taken=TOOL_NAMES)
+                                    hidden=self.hidden_tools) + self.mcp.schemas(read_only, taken=self.mcp_taken)
         body.update(self.provider.get("body", {}))  # e.g. which OpenRouter hosts may answer
         body.update(self.model.get("body", {}))
         if self.mode == "create" and messages is None:  # a little more surprising
@@ -1140,6 +1155,9 @@ class Agent:
         cost = self._price(usage)
         self.session_cost += cost
         self.session_out += usage.get("completion_tokens", 0)
+        self.session_in += usage.get("prompt_tokens", 0)
+        self.session_cached += (usage.get("prompt_cache_hit_tokens")
+                                or (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
         if self.parent:
             self.parent.session_cost += cost
         return cost
@@ -1157,6 +1175,7 @@ class Agent:
     def turn(self, text):
         self.stop_flag = False
         self.cut_off = None
+        self.failed = None
         if self.mode == "plan" and not self.helper:
             return self.plan_turn(text)
         if not self.title:
@@ -1181,6 +1200,7 @@ class Agent:
         self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
         todo_only = 0  # steps in a row that did nothing but update the task list
         empty = 0      # empty answers nudged this turn
+        cut = 0        # replies cut off at the output limit, nudged this turn
         self._checked = False  # the final check (below) runs at most once a turn
         try:
             while True:
@@ -1208,6 +1228,7 @@ class Agent:
                     reply = self._call()
                 except ApiError as e:
                     self.view.note(f"api error: {e}", "error")
+                    self.failed = str(e)  # the turn ended on the model server, not on the task
                     break
                 turn_cost += self._count(reply["usage"])
                 self.turn_stats["out"] += (reply["usage"] or {}).get("completion_tokens", 0)
@@ -1250,6 +1271,13 @@ class Agent:
 
                 if reply["finish"] == "length":
                     self.view.note("(the reply hit the output limit and was cut off)", "error")
+                    if not reply["tool_calls"] and cut < 2:
+                        # a cut-off reply isn't "done": it ran out of room mid-thought (seen writing
+                        # a whole file into its answer on Terminal-Bench). Have it carry on, in files.
+                        cut += 1
+                        self.tools.repairs.append("reply cut off at the output limit -> told to carry on in files")
+                        self.messages.append({"role": "user", "content": CUT_NUDGE})
+                        continue
                 if not reply["tool_calls"]:
                     # a completely empty answer isn't "done": the model stalled (seen right after
                     # it ran checks that showed bugs). Nudge it on, at most twice a turn.

@@ -1,10 +1,12 @@
 """MCP server "codebase": helps a (small) model understand a project without reading every file.
 
     project_overview   tech stack, how to run and test it, folder layout, entry points
-    code_map           every file's classes and functions with their signatures and lines
-    outline            one file's symbols with line ranges, so you can read just the part you need
+                       (purr puts this in the system prompt instead of offering the tool)
+    outline            a file: its symbols with line ranges, and who uses the file;
+                       a folder: the code map (every file's classes and functions)
     find_symbol        where a function, class or variable is defined, and where it's used
-    related_files      what a file imports, and which files use it (scenes too, for Godot)
+
+Few tools with short descriptions on purpose: every tool is sent with every request.
 
 Start it in the project folder: python3 servers/codebase.py   (only the standard library)
 """
@@ -38,8 +40,8 @@ LANG_NAME = {"python": "Python", "gdscript": "GDScript", "js": "JavaScript/TypeS
              "go": "Go", "java": "Java/Kotlin", "csharp": "C#", "c": "C/C++", "shader": "Godot shaders",
              "lua": "Lua", "ruby": "Ruby", "php": "PHP"}
 
-server = Server("codebase", "Tools to understand this project: start with project_overview, then code_map "
-                            "or outline before reading whole files, and find_symbol to see where things are used.")
+server = Server("codebase", "Understand the project: outline before reading whole files, find_symbol "
+                            "before changing what others use.")
 
 
 # ---- files ----
@@ -215,8 +217,7 @@ def symbols(rel):
 
 # ---- the tools ----
 
-@server.tool("A short overview of the project: tech stack and versions, how to run and test it, the "
-             "folder layout and the entry points. Use it first when you start on a project.")
+@server.tool("The project's stack, how to run/test it, folders and entry points.")
 def project_overview():
     return overview()
 
@@ -374,10 +375,6 @@ def godot_summary():
     return "; ".join(parts)
 
 
-@server.tool("Map of the code: each file's classes and functions with their signatures and line numbers. "
-             "Use it to find where things live before reading files. Narrow it with path (a folder or file).",
-             {"path": {"type": "string", "description": "folder or file to map (default: the whole project)"},
-              "max_chars": {"type": "integer", "description": "how long the answer may be (default 6000)"}})
 def code_map(path=".", max_chars=6000):
     files = source_files(path)
     if not files:
@@ -399,16 +396,18 @@ def code_map(path=".", max_chars=6000):
         text = "\n".join(out)
         if len(text) <= max_chars:
             note = {"full": "", "top": "\n(top-level only: map a folder or file to see methods)",
-                    "names": "\n(file names only: map a folder or file to see what's inside)"}[level]
+                    "names": "\n(file names only: outline a folder or file to see what's inside)"}[level]
             return text + note
     return text[:max_chars] + f"\n[cut short: {len(files)} files, map a smaller folder]"
 
 
-@server.tool("Outline of one file: every class, function and method with its signature and line range "
-             "(start-end), so you can read_file just the lines you need.",
-             {"path": {"type": "string", "description": "the file"}}, required=["path"])
-def outline(path):
+@server.tool("A file's classes and functions with line ranges (then read only those lines), and who uses "
+             "it. A folder: every file's functions.",
+             {"path": {"type": "string", "description": "file or folder (. = whole project)"}}, required=["path"])
+def outline(path="."):
     rel = os.path.relpath((ROOT / path).resolve(), ROOT)
+    if (ROOT / rel).is_dir():
+        return code_map(rel)
     text = read(rel)
     if text is None:
         return f"can't read {path} (missing, not text, or too big)"
@@ -419,6 +418,7 @@ def outline(path):
     lines = [f"{rel}  ({total} lines)"]
     for s in syms:
         lines.append(f"{'  ' * (s.depth + 1)}{s.sig}  lines {s.line}-{s.end}")
+    lines.append(_used_by(rel))
     return "\n".join(lines)
 
 
@@ -453,10 +453,8 @@ def _usages(name, skip):
     return out
 
 
-@server.tool("Where a function, class, method or variable is defined (with its signature) and every place "
-             "it's used. Use it before changing something, to see what else depends on it.",
-             {"name": {"type": "string", "description": "the exact name, like add_item or Inventory"}},
-             required=["name"])
+@server.tool("Where a function, class or variable is defined and every place it's used.",
+             {"name": {"type": "string", "description": "exact name, like add_item"}}, required=["name"])
 def find_symbol(name):
     name = name.strip().split("(")[0].split(".")[-1]
     defs = _definitions(name)
@@ -542,25 +540,18 @@ def _imports(rel, files):
     return set()
 
 
-@server.tool("What a file depends on (its imports; for Godot: scripts, scenes and resources it loads) and "
-             "which files use it (importers; for a Godot script: the scenes it's attached to).",
-             {"path": {"type": "string", "description": "the file"}}, required=["path"])
-def related_files(path):
-    rel = os.path.relpath((ROOT / path).resolve(), ROOT)
+def _used_by(rel):
+    """One line for outline: the autoload name if it is one, and the files that import or load it."""
     files = set(project_files())
-    if rel not in files:
-        return f"no file {path} in the project"
-    uses = sorted(_imports(rel, files) - {rel})
+    autoload = next((n for n, script in godot_autoloads().items() if script == rel), None)
+    if autoload:
+        return f"autoload {autoload}: any script can use it"
     candidates = [f for f in files if Path(f).suffix.lower() in (".py", ".gd", ".tscn", ".tres", ".godot")
                   or LANG.get(Path(f).suffix.lower()) == "js"]
-    used_by = sorted(f for f in candidates if f != rel and rel in _imports(f, files))
-    out = [f"{rel}"]
-    for name, script in godot_autoloads().items():
-        if script == rel:
-            out.append(f"it's the autoload {name}: every script can use it as {name}")
-    out.append("uses: " + (", ".join(uses) if uses else "nothing else in the project"))
-    out.append("used by: " + (", ".join(used_by) if used_by else "nothing (an entry point, or unused)"))
-    return "\n".join(out)
+    users = sorted(f for f in candidates if f != rel and rel in _imports(f, files))
+    if not users:
+        return "used by: nothing (an entry point, or unused)"
+    return "used by: " + ", ".join(users[:8]) + (f" +{len(users) - 8} more" if len(users) > 8 else "")
 
 
 if __name__ == "__main__":
