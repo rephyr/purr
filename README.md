@@ -44,7 +44,7 @@ done together. By day she wears a bow and naps in the sun; at night (following
 | `/init` | have the model write an AGENTS.md for the project |
 | `/theme`, `/theme <name>` | colours: auto (day/night), plum, strawberry-milk, lilac-dream, bubblegum-night, cotton-candy (remembered) |
 | `/cat`, `/cat name <name>` | your cat's card, or rename her |
-| `/mode`, `/refine`, `/pr` | see below |
+| `/mode`, `/refine`, `/plan`, `/pr` | see below |
 | `/cost`, `/trust`, `/help`, `/quit` | |
 
 **Your own commands:** a markdown file per command in `~/.config/purr/commands/` (every project)
@@ -155,6 +155,7 @@ slow and went off the rails). OpenCode's config asks for the same, so `purr benc
 |---|---|---|
 | ✎ code | all | doing the work (the default) |
 | ◈ ask | read, list, search: edits and commands are blocked | explaining, planning |
+| ✦ plan | two models | a big model makes tickets, a small one does them |
 | ♡ chat | none, short prompt | just talking |
 | ✧ create | none, a bit more random | ideas, names, game design, writing |
 
@@ -163,6 +164,32 @@ task (Task / Where / Steps / Done when, from the project's file list) and shows 
 ctrl+s sends it, ctrl+o sends yours. `/refine auto` (the default) does that only for a short first
 message, a new task said in a few words, where it helped most in `purr bench` (Qwen3.6 IQ3 went
 from 3/5 to 5/5 hard tasks from vague asks); `/refine on` refines every message, `/refine off` none.
+
+**Plan mode.** This is purr's whole idea in one mode: a long, vague task is better handled by a
+big model that breaks it down and a small one that does each piece without losing the thread.
+`/plan add wishlists to the shop` (or `/mode plan` then send your task) starts it — the planner
+(`planner` in `config.toml`, default `ds-pro-or`: a big, long-context model) reads the project and
+writes a handful of tickets to `<project>/.purr/tickets/NN-title.md`. Each ticket names the one to
+three files it touches, what to change and how to check it. Then purr shows you the plan and waits:
+**ctrl+s** runs the tickets, **ctrl+r** reads the files again after you edit them, **esc** cancels
+(and keeps the files; `/plan run` starts them later). The executor (`executor` in `config.toml`,
+default `qwen3_6-iq3`) takes each ticket in a **fresh chat**, so its small context holds only the
+ticket in front of it, while the whole request and the list of ticket titles (✓ for the ones done)
+travel with it. You approve edits and commands as usual; each ticket is a normal turn, so purr's
+checks and the final check still run.
+
+purr runs the project's tests once before the first ticket and again after every ticket. A ticket
+fails only if it adds failures: tests that already failed before the plan aren't blamed on it (when
+purr can't tell which tests fail, the ticket is marked "not checked"). The first failing ticket
+stops the plan, and purr says which one and why. Esc stops the plan too; a ticket stopped half
+way isn't checked or counted. The summary is honest: `✓ plan · 3 done`, `✗ plan · 1 done, 1
+failed, 1 not run` or `■ plan · 1 done, 2 stopped/not run`.
+Everything a plan changes is one `/undo`, and "always" on an edit or command carries from ticket to
+ticket. `/plan run 3` runs the tickets already on disk from the third onwards. Writing a new plan
+doesn't delete the old one: it moves it to `.purr/tickets/old/<timestamp>/`. purr makes
+`.purr/.gitignore` (`*`) the first time, so tickets never end up in a commit. The plan's own chat
+and each ticket's chat are saved as sessions (`~/.local/state/purr/sessions/`). If the planner's key
+or model isn't there, purr plans with the current model instead of failing.
 
 `/pr` turns the changes into a GitHub pull request: the model drafts the title and description,
 you edit them in a popup, and only then purr makes a branch, commits with
@@ -202,4 +229,4 @@ inventory feature across four files. `--level hard` runs only those.
 
 - images: a `look_at_image` tool for vision models (Qwen 3.6)
 - per-project settings (allowed commands that never ask)
-- a ticket mode that reads `docs/tickets/*.md`
+- plan mode: let a ticket be retried automatically when its turn ends with the tests failing

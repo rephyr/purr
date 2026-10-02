@@ -376,3 +376,35 @@ PRScreen {
 #prhint {
     margin-top: 1;
 }
+
+/* the plan popup: the tickets, before any of them run */
+PlanScreen {
+    align: center middle;
+    background: $shade 70%;
+}
+#planbox {
+    width: 90;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: round $pink;
+    background: $popup;
+}
+#plantitle {
+    color: $pink;
+    text-style: bold;
+    margin-bottom: 1;
+}
+#planlist {
+    height: auto;
+    max-height: 18;
+    background: transparent;
+    scrollbar-size-vertical: 1;
+}
+.planticket {
+    margin-bottom: 1;
+}
+#planwhere, #planhint {
+    margin-top: 1;
+}

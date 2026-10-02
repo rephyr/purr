@@ -114,6 +114,14 @@ def plain(agent, view):
                 if isinstance(result, dict) and result.get("pr"):
                     plain_pr(agent)
                     continue
+                if isinstance(result, dict) and result.get("plan_run"):
+                    try:
+                        agent.run_plan(result["plan_run"])
+                    except KeyboardInterrupt:
+                        view.end_reply()
+                        agent.save_log()
+                        ui.say(ui.ROSE, "\n  stopped")
+                    continue
                 if isinstance(result, dict):
                     send(agent, view, result["send"])
                     continue

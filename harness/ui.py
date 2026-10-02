@@ -157,6 +157,25 @@ class PlainView:
     def ask(self, question, allow_always=True):
         return ask(question, allow_always)
 
+    def plan_review(self, tickets, folder):
+        """The tickets, before any of them run: run them, edit the files first, or cancel."""
+        say(LILAC, f"  ✦ the plan: {len(tickets)} ticket{'s' if len(tickets) != 1 else ''} in {folder}")
+        for n, t in enumerate(tickets, 1):
+            say(PINK, f"  {n}. {t['title']}")
+            for line in (t["body"] or "").splitlines():
+                say(DIM, "     " + line[:200])
+        try:
+            ans = input(f"{YELLOW}  run them?  [y]es  [e]dit the files first  [n]o {RESET}").strip().lower()
+        except EOFError:
+            return "cancel"
+        if ans.startswith("e"):
+            try:
+                input("  edit them in another window, then press enter to read them again…")
+            except EOFError:
+                return "cancel"
+            return "edit"
+        return "cancel" if ans.startswith("n") else "run"
+
     def status(self, s):
         say(DIM, "  " + s)
 

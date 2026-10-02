@@ -27,6 +27,13 @@ read_before_edit = true
 # Max model calls in one turn before purr stops and asks you.
 max_steps = 40
 
+# /plan (or /mode plan): `planner` reads your request and splits it into tickets under
+# <project>/.purr/tickets/, then `executor` does them one at a time, each in a fresh chat.
+# Use a big, long-context model to plan and a small local model to do the work.
+[plan]
+planner = "ds-pro-or"
+executor = "qwen3_6-iq3"
+
 # purr adapts its limits to each model's `context` below: a 32k local model gets
 # smaller tool results and compacts sooner than a 1M API model. A model that needs
 # different numbers can override any of them, e.g.:

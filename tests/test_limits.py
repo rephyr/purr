@@ -26,6 +26,9 @@ class FakeView:
     def note(self, s, kind="dim"):
         self.notes.append(s)
 
+    def plan_review(self, tickets, folder):
+        return "run"
+
     def __getattr__(self, name):  # tool, text, status, ... do nothing
         return lambda *a, **k: None
 
