@@ -194,6 +194,9 @@ fix it now. If everything is really done, reply with a short summary of what you
 # same answer (1-character cells, an override set on one side only), expectations copied from the
 # code's own output, the request's notation overruled by the code's habits (x() where it wrote x),
 # and a scratch test file left behind that broke the real ones
+# Terminal-Bench 2.1 (hard tasks) added two: purr's own end-to-end test left an SSH key and a "v2"
+# push behind, so the grader's ssh-keygen stopped at "Overwrite?"; and purr "fixed" the emulator the
+# task said it would run (vm.js), which the grader ran from its own unchanged copy
 ONE_SHOT_CHECK = """(purr: before you finish{time}: hidden tests will check your work on other inputs and \
 against the request's exact wording. Go through your requirements list and the request again, \
 sentence by sentence: 1. Every file, name and \
@@ -204,7 +207,11 @@ both sides of each condition and override (set both, conflicting). Never copy an
 your own output. 3. Measure every limit it states, with a margin on scores. 4. The request's wording \
 and notation beat the code's habits; only choices it leaves open follow the given code. If two \
 requirements seem to conflict, take the reading that satisfies both. Don't undo an earlier choice \
-without a reason from the request.{scratch}{services}{nobody} Fix what fails, then reply in at most \
+without a reason from the request. 5. Undo what your own testing changed outside the deliverable \
+(keys, users, test commits or pushes, test content served or stored): the hidden tests start from \
+the state the request describes. If you edited a file the task runs or checks your work with (an \
+emulator, a test script, a given tool), the tests use their own copy: make your work pass with the \
+original and restore it.{scratch}{services}{nobody} Fix what fails, then reply in at most \
 3 lines.)"""
 
 # one-shot runs that check, find nothing and stop with most of the time left (DeepSWE: 13 of 90
@@ -299,7 +306,9 @@ ONE_SHOT_LINE = (
     # a requirement misread at the start stays misread ("all winning moves" became "a move")
     "- First put the request's requirements in your todo list, one each, quoting the words that set "
     "them (all, only, exactly, every, at least, unless); check them off with evidence as you go.\n"
-    "- Hidden tests will check your files on other inputs; they aren't on this machine. Scratch files go in /tmp.")
+    "- Hidden tests will check your files on other inputs; they aren't on this machine. Scratch files go in /tmp.\n"
+    "- Never edit what the task runs your work with (emulator, test script): tests bring their own copy. "
+    "Undo test leftovers (keys, users, pushes).")
 
 # one-shot runs drop what only matters with a person watching: who purr is, the approvals
 IDENTITY_TAIL = SYSTEM[SYSTEM.index(" You are running inside purr"):SYSTEM.index("\n\nEnvironment")]

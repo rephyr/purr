@@ -165,6 +165,14 @@ class PromptTest(unittest.TestCase):
         self.assertTrue(short.startswith("You are m, an AI model"))
         self.assertLess(len(short), len(normal) + 400)
 
+    def test_one_shot_runs_leave_the_graders_tools_and_no_test_leftovers(self):
+        # Terminal-Bench 2.1: an SSH key and a test push left behind, an edited emulator (vm.js)
+        short = agent_module.system_prompt("/app", "m", "x", one_shot=True)
+        self.assertIn("Never edit what the task runs your work with", short)
+        check = agent_module.ONE_SHOT_CHECK.format(time="", services="", nobody="", scratch="")
+        self.assertIn("5. Undo what your own testing changed outside the deliverable", check)
+        self.assertIn("make your work pass with the original and restore it", check)
+
     def test_one_shot_runs_list_the_requirements_first(self):
         short = agent_module.system_prompt("/app", "m", "x", one_shot=True)
         self.assertIn("requirements in your todo list", short)
