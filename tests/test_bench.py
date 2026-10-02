@@ -135,14 +135,18 @@ class PlayTest(unittest.TestCase):
         from harness import bench, play
         state = Path(tempfile.mkdtemp())
         args = bench.parse(["--you", "-t", "idle-catchup", "--new"])
-        answers = iter(["n", ""])  # open it (in a stand-in editor), then done right away
+        answers = iter([""])  # done right away
+        opened = []
         with mock.patch.object(play, "BENCH_DIR", state), mock.patch.object(bench, "BENCH_DIR", state), \
                 mock.patch("builtins.input", lambda prompt="": next(answers)), \
+                mock.patch.object(play, "open_folder", lambda work, how: opened.append((work.name, how))), \
+                mock.patch("shutil.which", lambda cmd: "/usr/bin/code" if cmd == "code" else None), \
                 mock.patch.dict(os.environ, {"EDITOR": "true"}), mock.patch("sys.stdout", io.StringIO()) as out:
             self.assertEqual(play.play(args), 0)
         results = json.loads(next(state.glob("*/results.json")).read_text())
         self.assertEqual([(r["model"], r["harness"], r["solved"]) for r in results], [("you", "human", False)])
         self.assertIn("crumbs add up to whole coins", out.getvalue())  # the failed hidden tests, by name
+        self.assertEqual(opened, [("idle-catchup", "code")])  # VS Code opened the folder by itself
 
 
 if __name__ == "__main__":

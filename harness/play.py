@@ -5,8 +5,8 @@
     purr bench --you --level hard --vague
     purr bench --you --new              your own results folder instead
 
-Each task gets a fresh copy of its files. You read the prompt, open the folder (enter: VS Code,
-n: nvim right here), fix it (r runs the task's program, "run" in its task.json, so you can see
+Each task gets a fresh copy of its files, opened in VS Code right away (n: nvim right here
+instead). You read the prompt, fix it (r runs the task's program, "run" in its task.json, so you can see
 what it does; t runs its tests), and press enter when you're done: the same hidden tests the models
 get decide, and your time is the clock from opening to done. You show up as "you" / "human".
 """
@@ -105,30 +105,23 @@ def play(args):
         ui.out(f"  {ui.PINK}♡{ui.RESET} {task['prompt']}")
         ui.out(f"  {ui.DIM}folder: {work}{ui.RESET}")
         runs = " · r: run the program" if program(task, work) else ""
-        while True:
-            how = ask(f"  {ui.DIM}enter: open in VS Code · n: nvim here{runs} · s: skip · q: quit ›{ui.RESET} ")
-            if how != "r":
-                break
-            run_program(task, work)  # have a look at what it does before starting
-        if how == "q":
-            break
-        if how == "s":
-            continue
-        start = time.monotonic()
-        open_folder(work, how)
+        start = time.monotonic()  # the clock starts as the folder opens
+        open_folder(work, "code" if shutil.which("code") else "n")
         while True:
             act = ask(f"  {ui.DIM}enter: done, grade it · t: run the visible tests{runs} · n: nvim · "
-                      f"q: quit (this one isn't counted) ›{ui.RESET} ")
+                      f"s: skip · q: quit (skipped and quit ones aren't counted) ›{ui.RESET} ")
             if act == "t":
                 visible_tests(work)
             elif act == "r":
                 run_program(task, work)
             elif act == "n":
                 open_folder(work, "n")
-            elif act in ("", "q"):
+            elif act in ("", "q", "s"):
                 break
         if act == "q":
             break
+        if act == "s":
+            continue
         r = blank("human", "you", task)
         r["seconds"] = round(time.monotonic() - start, 1)
         r["passed"], r["total"], r["syntax_errors"] = grade(task, work)
