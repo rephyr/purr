@@ -25,17 +25,19 @@ class TimeLimitTest(unittest.TestCase):
     def test_told_up_front_and_reminded_at_half_and_four_fifths(self):
         a = agent()
         a.time_limit = 600
-        clock = iter([0, 0, 100, 320, 400, 500, 590, 595, 599])  # monotonic() as the turn goes on
-        steps = [reply("", tool=("list_files", {"path": "."}))] * 6 + [reply("done")]
+        clock = iter([0, 0, 100, 320, 400, 500, 560, 590, 595, 599])  # monotonic() as the turn goes on
+        steps = [reply("", tool=("list_files", {"path": "."}))] * 7 + [reply("done")]
         scripted(a, steps)
         with mock.patch.object(agent_module.time, "monotonic", lambda: next(clock, 599)):
             a.turn("make the thing")
         notes = [m["content"] for m in a.messages if m["role"] == "user"]
         self.assertIn("about 10 minutes for this", notes[0])
         halves = [n for n in notes if "minutes left" in n]
-        self.assertEqual(len(halves), 2)  # once at half time, once at four fifths
+        self.assertEqual(len(halves), 3)  # once at half time, at four fifths, and near the end
         self.assertIn("make a working version now", halves[0])
         self.assertIn("Stop exploring", halves[1])
+        self.assertIn("no new experiments", halves[2])
+        self.assertNotIn("every file the request names", halves[2])  # not one-shot: no spec check
 
     def test_no_limit_no_reminders(self):
         a = agent()
@@ -99,7 +101,7 @@ class OneShotTest(unittest.TestCase):
         self.assertIn("ask one short question", a.messages[0]["content"])
         a.set_one_shot()
         prompt = a.messages[0]["content"]
-        self.assertIn("Nobody will answer questions", prompt)
+        self.assertIn("Nobody answers during this run", prompt)
         self.assertNotIn("ask one short question", prompt)
 
     def test_purr_bench_runs_are_one_shot(self):

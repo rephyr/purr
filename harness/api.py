@@ -1,6 +1,8 @@
 """Talks to any OpenAI-compatible chat API (Ollama, DeepSeek, ...) with streaming."""
 
+import http.client
 import json
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -47,52 +49,63 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
     except urllib.error.URLError as e:
         raise ApiError(f"can't reach {base_url}: {e.reason}", retry=True) from None
 
+    try:
+        with resp:
+            return _read_stream(resp, started, on_text, on_reasoning, should_stop)
+    except (http.client.IncompleteRead, ConnectionError, socket.timeout, json.JSONDecodeError) as e:
+        # the connection broke mid-reply (seen on long benchmark runs): the call can go again
+        raise ApiError(f"the reply broke off: {type(e).__name__}: {e}", retry=True) from None
+
+
+def _read_stream(resp, started, on_text, on_reasoning, should_stop):
     text, reasoning = [], []
     calls = {}  # index -> {"id", "name", "args"}; tool calls arrive in pieces
     usage = None
     finish = None
     first = last = None
     served_by = None
-    with resp:
-        for raw in resp:
-            if should_stop():
-                raise Stopped({"text": "".join(text), "reasoning": "".join(reasoning), "provider": served_by,
-                               "tool_calls": [{"name": c["name"], "args": c["args"]} for c in calls.values()]})
-            line = raw.decode("utf-8", errors="replace").strip()
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            chunk = json.loads(data)
-            if chunk.get("error"):
-                err = chunk["error"]
-                code = err.get("code") if isinstance(err, dict) else None
-                raise ApiError(str(err), status=code if isinstance(code, int) else None)
-            if chunk.get("usage"):
-                usage = chunk["usage"]
-            served_by = chunk.get("provider") or served_by  # OpenRouter says who answered
-            for choice in chunk.get("choices") or []:
-                delta = choice.get("delta") or {}
-                if delta:
-                    last = time.monotonic()
-                    first = first or last
-                # DeepSeek calls it reasoning_content, Ollama calls it reasoning
-                r = delta.get("reasoning_content") or delta.get("reasoning")
-                if r:
-                    reasoning.append(r)
-                    on_reasoning(r)
-                if delta.get("content"):
-                    text.append(delta["content"])
-                    on_text(delta["content"])
-                for tc in delta.get("tool_calls") or []:
-                    i = tc.get("index", len(calls))
-                    slot = calls.setdefault(i, {"id": "", "name": "", "args": ""})
-                    slot["id"] = tc.get("id") or slot["id"]
-                    fn = tc.get("function") or {}
-                    slot["name"] += fn.get("name") or ""
-                    slot["args"] += fn.get("arguments") or ""
-                finish = choice.get("finish_reason") or finish
+    for raw in resp:
+        if should_stop():
+            raise Stopped({"text": "".join(text), "reasoning": "".join(reasoning), "provider": served_by,
+                           "tool_calls": [{"name": c["name"], "args": c["args"]} for c in calls.values()]})
+        line = raw.decode("utf-8", errors="replace").strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        chunk = json.loads(data)
+        if chunk.get("error"):
+            err = chunk["error"]
+            code = err.get("code") if isinstance(err, dict) else None
+            code = code if isinstance(code, int) else None
+            # an error in the middle of a stream is mostly the provider dropping it: try again,
+            # unless it's about the request itself
+            raise ApiError(str(err), retry=code is None or code == 429 or code >= 500, status=code)
+        if chunk.get("usage"):
+            usage = chunk["usage"]
+        served_by = chunk.get("provider") or served_by  # OpenRouter says who answered
+        for choice in chunk.get("choices") or []:
+            delta = choice.get("delta") or {}
+            if delta:
+                last = time.monotonic()
+                first = first or last
+            # DeepSeek calls it reasoning_content, Ollama calls it reasoning
+            r = delta.get("reasoning_content") or delta.get("reasoning")
+            if r:
+                reasoning.append(r)
+                on_reasoning(r)
+            if delta.get("content"):
+                text.append(delta["content"])
+                on_text(delta["content"])
+            for tc in delta.get("tool_calls") or []:
+                i = tc.get("index", len(calls))
+                slot = calls.setdefault(i, {"id": "", "name": "", "args": ""})
+                slot["id"] = tc.get("id") or slot["id"]
+                fn = tc.get("function") or {}
+                slot["name"] += fn.get("name") or ""
+                slot["args"] += fn.get("arguments") or ""
+            finish = choice.get("finish_reason") or finish
 
     tool_calls = []
     for n, i in enumerate(sorted(calls)):

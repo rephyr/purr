@@ -82,9 +82,17 @@ class BackgroundTest(unittest.TestCase):
         self.assertEqual(code, -1)
         self.assertIn("timed out after 1s", out)
 
-    def test_the_final_check_asks_about_services(self):
-        self.assertIn("keep running after you finish", agent_module.FINAL_CHECK)
-        self.assertIn("keep running after you finish", agent_module.FINAL_CHECK_LIGHT)
+    def test_the_final_check_asks_about_services_once_something_was_started(self):
+        for start in ({"command": "sleep 3 &"}, None):
+            a = agent_module.Agent(CONFIG, tempfile.mkdtemp(), "small", FakeView())
+            a.tools.trust_all = True
+            a.set_one_shot()
+            first = reply("", tool=("run", start)) if start else reply("", tool=("write_file", {"path": "a.py", "content": "x = 1\n"}))
+            scripted(a, [first, reply("done"), reply("really done")])
+            a.turn("serve the folder")
+            check = [m["content"] for m in a.messages if "before you finish" in str(m.get("content"))]
+            self.assertEqual(len(check), 1)
+            self.assertEqual("keep running after you finish" in check[0], bool(start))
 
 
 class ImageTest(unittest.TestCase):
