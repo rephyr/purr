@@ -118,6 +118,28 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(len(refs), 8)
         self.assertEqual(len(realbench.references("terminal-bench")), 9)
 
+    def test_terminal_bench_2_is_the_leaderboard(self):
+        entries, as_of = realbench.leaderboard()
+        self.assertEqual(len(entries), 142)
+        self.assertTrue(as_of)
+        self.assertEqual(realbench.place(99.0), (1, 143))
+        self.assertEqual(realbench.place(84.6)[0], 2)   # between #1 (84.7) and #2 (84.5)
+        self.assertEqual(realbench.place(1.0)[0], 143)
+        mood, head, _ = realbench.verdict("terminal-bench-2", "submit", 83.0, 445, 445)
+        self.assertEqual(mood, "celebrating")
+        self.assertIn("#4 of 143", head)
+        self.assertEqual(realbench.verdict("terminal-bench-2", "one", 40.0, 89, 89)[0], "purring")
+
+    def test_submit_is_terminal_bench_2_only(self):
+        self.assertEqual(realbench.command("terminal-bench-2", "submit")[1:], ["--submit"])
+        with self.assertRaises(ValueError):
+            realbench.command("deepswe", "submit")
+        self.assertEqual(realbench.trials_in("terminal-bench-2", "submit"), 445)
+        run = realbench.Run("terminal-bench-2", "quick")
+        with mock.patch.object(realbench.subprocess, "Popen") as popen:
+            run.start()
+        self.assertEqual(popen.call_args.kwargs["env"]["PURR_DATASET"], "terminal-bench/terminal-bench-2")
+
     def test_purr_bench_takes_real(self):
         args = bench.parse(["--real", "deepswe", "--size", "one", "--jobs", "8"])
         self.assertEqual((args.real, args.size, args.jobs), ("deepswe", "one", 8))

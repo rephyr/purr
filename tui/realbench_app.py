@@ -37,7 +37,10 @@ CSS = """
 #picks > Static { color: #c8a2f0; text-style: bold; margin: 1 0 0 1; }
 RadioSet { width: 100%; border: round $line; background: $panel; padding: 0 1; }
 RadioSet:focus { border: round $pink; }
-RadioSet > RadioButton.-selected { background: $hover; }
+RadioSet > RadioButton.-selected { background: transparent; }
+RadioSet RadioButton.-on > .toggle--label { color: $pink; text-style: bold; background: transparent; }
+RadioSet RadioButton > .toggle--label { background: transparent; }
+RadioSet:focus > RadioButton.-selected > .toggle--label { background: $hover; }
 #knobs { height: auto; margin-top: 1; }
 #knobs Static { width: auto; color: #82788f; padding: 1 1 0 1; }
 #jobs { width: 7; border: round $line; background: $panel; }
@@ -107,6 +110,13 @@ def big(text, phase=0.0):
         if r < 4:
             out.append("\n")
     return Align.center(out)
+
+
+def landmarks(entries):
+    """A few leaderboard rows to place purr between: the top, the well-known tools, cheap models."""
+    picks = {1, 4, 32, 63, 86, 116}
+    rows = [e for e in entries if e["rank"] in picks]
+    return rows + entries[-1:] if entries else rows
 
 
 def bar(pct, width=34, colour=LILAC, lo=0.0):
@@ -252,6 +262,18 @@ class RealBenchApp(App):
                 t.append(f" {pct:.1f}%\n", style=PINK)
             t.append("\nquick runs compare purr versions; the other harnesses only have whole-set scores\n",
                      style=DIM)
+        elif suite == "terminal-bench-2":
+            entries, as_of = realbench.leaderboard()
+            t.append("on the leaderboard ", style=f"bold {PINK}")
+            t.append(f"{len(entries)} entries as of {as_of} · bars start at 0%\n", style=DIM)
+            for e in landmarks(entries):
+                t.append(f"  #{e['rank']:<4}", style=DIM)
+                t.append(f"{(e['agent'] + ' · ' + e['model'])[:30]:<31}", style=TEXT)
+                t.append_text(bar(e["score"], 20, LILAC))
+                t.append(f" {e['score']:.1f}%\n", style=LILAC)
+            if size == "submit":
+                t.append("\n5 tries a task and purr's web tool off, as the leaderboard asks; then\n", style=DIM)
+                t.append("tbench/submit.py <job> checks every rule and readies the entry", style=DIM)
         else:
             refs = realbench.references(suite)
             lo = floor_of([p for _, p in refs])
@@ -274,6 +296,10 @@ class RealBenchApp(App):
             self.jobs = 6
         self.edge_cases = self.query_one("#edge", Switch).value
         suite, size = self.choice["suite"], self.choice["size"]
+        only = realbench.SIZES[size].get("only")
+        if only and suite != only:
+            self.notify(f"{size} is for {realbench.SUITES[only]['bench']} only ♡", severity="warning")
+            return
         self.total = realbench.trials_in(suite, size)
         self.job_run = realbench.Run(suite, size, self.jobs, self.edge_cases)
         try:
@@ -339,10 +365,7 @@ class RealBenchApp(App):
                                ("◌", counts["setup"], "setting up")):
             tally.append(f"{icon} {n} {label}   ", style=DIM if n else FAINT)
         tally.append("│  ", style=FAINT)
-        if pct is not None:
-            tally.append(f"{pct:.1f}% so far", style=f"bold {PINK}")
-            tally.append("  ·  ", style=FAINT)
-        tally.append(f"${spent:.2f}", style=PEACH)
+        tally.append(f"${spent:.2f} so far", style=PEACH)
         self.query_one("#tally", Static).update(tally)
         self.draw_bigscore(pct, se, done)
 
@@ -478,7 +501,28 @@ class RealBenchApp(App):
                   Align.center(Text.assemble(("♡ ", PINK), (headline, f"bold {TEXT}"))),
                   Align.center(Text(detail, style=DIM)), Text(""),
                   Align.center(self.standings(pct)), Text(""), self.task_grid()]
+        misses = self.misses()
+        if misses:
+            parts += [Text(""), misses]
         return Group(*parts)
+
+    def misses(self):
+        """What didn't pass, and how: for deciding what to fix (or which task was at fault)."""
+        bad = sorted((t for t in self.trials if t["state"] in ("failed", "timeout", "error")),
+                     key=lambda t: (t["state"], t["task"]))
+        if not bad:
+            return None
+        t = Table(box=box.SIMPLE_HEAD, border_style="#4a3a5c", header_style=f"bold {LILAC}", expand=True,
+                  padding=(0, 1), title=Text("✗ didn't pass", style=f"bold {PINK}"), title_justify="left")
+        for col, just in (("task", "left"), ("how", "left"), ("time", "right"), ("cost", "right")):
+            t.add_column(col, justify=just)
+        for tr in bad:
+            how = {"failed": "the hidden tests failed", "timeout": "ran out of time"}.get(
+                tr["state"], ERRORS.get(tr["error"], tr["error"] or "broke") + " (not purr's answer)")
+            t.add_row(Text(tr["task"], style=TEXT), Text(how, style=STATE_COLOUR[tr["state"]]),
+                      Text(ui.duration(tr["seconds"]) if tr["seconds"] else "", style=DIM),
+                      Text(f"${tr['cost']:.3f}" if tr["cost"] else "", style=DIM))
+        return t
 
     def standings(self, pct):
         suite, size = self.job_run.suite, self.job_run.size
@@ -490,15 +534,23 @@ class RealBenchApp(App):
         t.add_column("score", justify="right", min_width=7)
         if size == "quick":
             rows = [(f"purr {v[:16]}", s, False) for v, _, s in realbench.previous(suite, size)[-7:]]
+        elif suite == "terminal-bench-2":
+            rank, _ = realbench.place(pct)
+            rows = [(f"#{e['rank']} {e['agent']} · {e['model']}"[:38], e["score"], False)
+                    for e in landmarks(realbench.leaderboard()[0])]
+            rows.append((f"#{rank} purr · DeepSeek V4.1 Flash ♡", pct, True))
         else:
             rows = [(h, s, False) for h, s in realbench.references(suite)]
-        rows.append(("purr (this run) ♡", pct, True))
-        lo = floor_of([r[1] for r in rows])
+        if not (size != "quick" and suite == "terminal-bench-2"):
+            rows.append(("purr (this run) ♡", pct, True))
+        lo = 0 if suite == "terminal-bench-2" and size != "quick" else floor_of([r[1] for r in rows])
         for who, score, mine in sorted(rows, key=lambda r: -r[1]):
             t.add_row(Text(who, style=f"bold {PINK}" if mine else TEXT), bar(score, 44, PINK if mine else LILAC, lo),
                       Text(f"{score:.1f}%", style=f"bold {PINK}" if mine else LILAC))
         note = f"bars start at {lo}%"
-        if size != "quick":
+        if size != "quick" and suite == "terminal-bench-2":
+            note += " · the leaderboard's entries ran 5 tries a task (a submit run does too)"
+        elif size != "quick":
             note += " · theirs: DeepSeek's model card (3 or 8 tries a task); one try has a wider margin"
         t.caption = Text(note, style=DIM)
         return t
