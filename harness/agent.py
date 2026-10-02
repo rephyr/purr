@@ -308,7 +308,15 @@ def _mcp_lines(names):
     return "\n".join(lines)
 
 
-def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=(), overview=""):
+ASK_LINE = "- If the request is unclear, ask one short question instead of guessing."
+# one-shot runs (purr -p, benchmarks): nobody reads a question, so settle it yourself. Seen on
+# Terminal-Bench: purr assumed one reading, ended with "say so and I'll rerun", and failed the task.
+ONE_SHOT_LINE = ("- Nobody will answer questions in this run: when something is unclear, take the most likely "
+                 "reading, and if two readings seem possible, check which one is right (try both) before you "
+                 "finish. Never end by asking the user something.")
+
+
+def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=(), overview="", one_shot=False):
     """hidden: tools this model isn't offered, so the prompt doesn't mention them either.
     mode: code (all tools), ask (look only), chat or create (no tools, their own prompt).
     mcp_tools: names of the MCP servers' tools; overview: the project overview to start from."""
@@ -329,6 +337,8 @@ def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=()
     if extra:
         cut = text.index("\n\nHow to work")
         text = text[:cut] + "\n" + extra + text[cut:]
+    if one_shot:
+        text = text.replace(ASK_LINE, ONE_SHOT_LINE)
     if overview:
         text += ("\n\nProject overview (purr made it from the files; when they disagree, the files win):\n"
                  + overview)
@@ -634,6 +644,7 @@ class Agent:
         self.mode_model = {}     # mode -> the model it had last (switch_mode)
         self.router = None       # /model free: picks free models and moves on when one is maxed out
         self.time_limit = None   # seconds for a turn (purr --time-limit): reminders at half and four fifths
+        self.one_shot = False    # nobody answers questions (purr -p, benchmarks): set_one_shot
         self._echo_all = False   # True once a provider refused trimmed thinking (_for_provider)
         # /refine: "auto" rewrites a short first message into a clear task (you approve it),
         # "on" every message, "off" none. purr bench measured +2 solved hard tasks from vague asks.
@@ -1025,7 +1036,8 @@ class Agent:
         names = [s["function"]["name"] for s in self.mcp.schemas(read_only=self.helper or self.mode == "ask",
                                                                  taken=self.mcp_taken)] if tools else []
         text = system_prompt(self.root, self.model["id"], self.model["provider"], self.hidden_tools,
-                             self.mode, mcp_tools=names, overview=self.project_overview() if tools else "")
+                             self.mode, mcp_tools=names, overview=self.project_overview() if tools else "",
+                             one_shot=self.one_shot)
         return text + HELPER if self.helper else text
 
     def new(self):
@@ -1117,6 +1129,12 @@ class Agent:
                 m["content"] += " (not shown again here)"
             out.append(m)
         return out
+
+    def set_one_shot(self, on=True):
+        """One-shot runs: the prompt says nobody will answer, so settle unclear points yourself."""
+        self.one_shot = on
+        if getattr(self, "messages", None):
+            self.messages[0] = {"role": "system", "content": self._system()}
 
     def _time_note(self):
         """With a time limit (purr --time-limit, benchmarks): say how much is left at half time and

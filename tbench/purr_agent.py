@@ -21,6 +21,7 @@ Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the 
 """
 
 
+import asyncio
 import json
 import shlex
 import shutil
@@ -135,9 +136,21 @@ class PurrAgent(BaseInstalledAgent):
 
     # ---- install and run ----
 
+    async def install_packages(self, environment, packages, tries=3, pause=20):
+        """ensure_system_dependencies, tried again after a pause: a package mirror hiccup once
+        failed a whole task before purr even started (qemu-alpine-ssh, apt exit 100)."""
+        for attempt in range(tries):
+            try:
+                return await self.ensure_system_dependencies(environment, packages)
+            except Exception:  # noqa: BLE001 - Harbor raises its own error types for a failed command
+                if attempt == tries - 1:
+                    raise
+                self.logger.warning("installing %s failed, trying again in %ss", ", ".join(packages), pause)
+                await asyncio.sleep(pause)
+
     async def install(self, environment: BaseEnvironment) -> None:
         # tmux: purr's terminal sessions survive it, so a VM or server a task needs stays up
-        await self.ensure_system_dependencies(environment, ("curl", "ca_certificates", "ripgrep", "tmux"))
+        await self.install_packages(environment, ("curl", "ca_certificates", "ripgrep", "tmux"))
         with tempfile.TemporaryDirectory() as tmp:
             pack = Path(tmp) / "purr"
             pack.mkdir()

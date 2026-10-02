@@ -92,5 +92,30 @@ class ThinkingTest(unittest.TestCase):
         self.assertLess(a.context_used(), full)
 
 
+
+class OneShotTest(unittest.TestCase):
+    def test_nobody_to_ask_in_one_shot_runs(self):
+        a = agent()
+        self.assertIn("ask one short question", a.messages[0]["content"])
+        a.set_one_shot()
+        prompt = a.messages[0]["content"]
+        self.assertIn("Nobody will answer questions", prompt)
+        self.assertNotIn("ask one short question", prompt)
+
+    def test_purr_bench_runs_are_one_shot(self):
+        import shutil
+
+        from harness import bench
+        from harness.agent import Agent
+        from tests.test_limits import CONFIG
+        seen = []
+        task = bench.load_tasks({"rename"})[0]
+        work = Path(tempfile.mkdtemp()) / "rename"
+        shutil.copytree(task["dir"] / "files", work)
+        with mock.patch.object(Agent, "turn", lambda agent, text: seen.append(agent.one_shot)):
+            bench.run_purr(CONFIG, "small", task, work, Path(tempfile.mkdtemp()), 600)
+        self.assertEqual(seen, [True])
+
+
 if __name__ == "__main__":
     unittest.main()

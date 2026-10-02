@@ -221,6 +221,7 @@ def run_purr(config, model, task, work, log_dir, timeout, refine=False, final_ch
         return r
     agent.tools.trust_all = True
     agent.time_limit = 0.9 * timeout  # like Terminal-Bench: purr hears its limit (less 10%) and gets reminders
+    agent.set_one_shot()  # nobody answers questions during a bench run
     agent.log_path = log_dir / "purr-session.json"
     timer = threading.Timer(timeout, lambda: (r.__setitem__("timeout", True), setattr(agent, "stop_flag", True)))
     timer.start()
