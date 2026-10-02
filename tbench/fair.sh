@@ -22,14 +22,28 @@ cd "$(dirname "$0")/.."
 QUICK_FILE=tbench/quick-tasks.txt
 OFFLINE=""
 SUBMIT=""
-if [ "${1:-}" = "--submit" ]; then
-    shift
+SIZE=""
+DEEPSWE=""
+# the leading options, in any order: one size (--quick, --one or --submit) and maybe --deepswe
+while :; do
+    case "${1:-}" in
+        --quick|--one|--submit)
+            [ -z "$SIZE" ] || { echo "fair.sh: pick one of --quick, --one and --submit" >&2; exit 1; }
+            SIZE="$1"
+            shift ;;
+        --deepswe)
+            DEEPSWE=1
+            shift ;;
+        *) break ;;
+    esac
+done
+if [ "$SIZE" = "--submit" ]; then
+    [ -z "$DEEPSWE" ] || { echo "fair.sh: --submit is for the Terminal-Bench 2.0 leaderboard, not DeepSWE" >&2; exit 1; }
     # the leaderboard's own dataset (Harbor Hub package), 5 tries a task, the rest as always
     PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2}"
     SUBMIT="--ak web=false"
 fi
-if [ "${1:-}" = "--deepswe" ]; then
-    shift
+if [ -n "$DEEPSWE" ]; then
     PURR_DATASET="${PURR_DATASET:-datacurve/deep-swe-1-1}"
     QUICK_FILE=tbench/quick-tasks-deepswe.txt
     # its tasks run with no network; the agent may still reach the model, like in DeepSeek's runs
@@ -44,16 +58,14 @@ export PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2-1}"
 # a package dataset (org/name, like 2.1) names its tasks org/task: mteb-retrieve -> terminal-bench/mteb-retrieve
 case "$PURR_DATASET" in */*) ORG="${PURR_DATASET%%/*}/" ;; *) ORG="" ;; esac
 ATTEMPTS=3
-[ -n "$SUBMIT" ] && ATTEMPTS=5
 TASKS=""
-if [ "${1:-}" = "--one" ]; then
-    shift
-    ATTEMPTS=1
-elif [ "${1:-}" = "--quick" ]; then
-    shift
-    ATTEMPTS=1
-    TASKS=$(grep -v '^#' "$QUICK_FILE" | awk -v org="$ORG" 'NF {printf "-i %s%s ", org, $1}')
-fi
+case "$SIZE" in
+    --submit) ATTEMPTS=5 ;;
+    --one) ATTEMPTS=1 ;;
+    --quick)
+        ATTEMPTS=1
+        TASKS=$(grep -v '^#' "$QUICK_FILE" | awk -v org="$ORG" 'NF {printf "-i %s%s ", org, $1}') ;;
+esac
 # the same for tasks picked by hand (-i name)
 n=$#
 while [ "$n" -gt 0 ]; do
@@ -74,14 +86,22 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     echo "purr has uncommitted changes: commit first, so the results name the exact version" >&2
     [ "${PURR_ALLOW_DIRTY:-}" = 1 ] || exit 1
 fi
+export PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}"
+case "$PURR_MODEL" in
+    openrouter/*) ;;
+    *) echo "fair.sh runs the fair settings on OpenRouter (pinned to the deepseek host); other models:" \
+            "tbench/run.sh, or tbench/local.sh for Ollama" >&2
+       exit 1 ;;
+esac
 # one tiny request to the pinned host first: a refused host (OpenRouter privacy settings, an
-# outage) would otherwise turn the whole run into errors
-.venv/bin/python - <<'PY' || exit 1
-import json, sys, tomllib, urllib.error, urllib.request
+# outage) would otherwise turn the whole run into errors (PURR_SKIP_PREFLIGHT=1: the tests skip it)
+[ "${PURR_SKIP_PREFLIGHT:-}" = 1 ] || .venv/bin/python - <<'PY' || exit 1
+import json, os, sys, tomllib, urllib.error, urllib.request
 sys.path.insert(0, ".")
 from harness.agent import provider_key
 p = tomllib.load(open("config.toml", "rb"))["providers"]["openrouter"]
-body = {"model": "deepseek/deepseek-v4.1-flash", "messages": [{"role": "user", "content": "Reply: ok"}],
+model = os.environ["PURR_MODEL"].split("/", 1)[1]
+body = {"model": model, "messages": [{"role": "user", "content": "Reply: ok"}],
         "max_tokens": 5, "provider": {"only": ["deepseek"], "allow_fallbacks": False}}
 req = urllib.request.Request(p["base_url"] + "/chat/completions", data=json.dumps(body).encode(),
                              headers={"Authorization": "Bearer " + (provider_key(p) or ""), "Content-Type": "application/json"})
@@ -92,8 +112,9 @@ except urllib.error.HTTPError as e:
     hint = ("\nDeepSeek's host uses prompts for training: allow 'paid model training' at "
             "https://openrouter.ai/settings/privacy") if "training" in detail else ""
     sys.exit(f"DeepSeek's host on OpenRouter refused a test request ({e.code}): {detail}{hint}")
+except (urllib.error.URLError, OSError) as e:
+    sys.exit(f"can't reach OpenRouter for the test request: {getattr(e, 'reason', e)}")
 PY
-export PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}"
 # prebuilt task images (DeepSWE: ~2.7 GB each) stay after their trial: remove each once it's graded,
 # or a whole run fills the disk. It watches this process ($$, Harbor after the exec) and stops with it.
 JOB_NAME="${PURR_JOB:-$(date +%Y-%m-%d__%H-%M-%S)}"  # a known name: the cleaner and the window find it
