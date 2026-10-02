@@ -25,6 +25,11 @@ if [ "${1:-}" = "--deepswe" ]; then
     QUICK_FILE=tbench/quick-tasks-deepswe.txt
     # its tasks run with no network; the agent may still reach the model, like in DeepSeek's runs
     OFFLINE="--allow-agent-host openrouter.ai"
+    # Harbor builds the network filter with buildx: without it every trial fails in a second
+    if ! docker buildx version >/dev/null 2>&1; then
+        echo "DeepSWE needs docker buildx (Harbor's network filter): sudo pacman -S docker-buildx" >&2
+        exit 1
+    fi
 fi
 export PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2-1}"
 # a package dataset (org/name, like 2.1) names its tasks org/task: mteb-retrieve -> terminal-bench/mteb-retrieve
