@@ -1,1 +1,1 @@
-VERSION = "0.3.0"  # bump for every release: benchmark results are filed under it
+VERSION = "0.3.1"  # bump for every release: benchmark results are filed under it
