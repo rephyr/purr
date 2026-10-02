@@ -62,6 +62,8 @@ RadioSet > RadioButton.-selected { background: $hover; }
 #count { width: auto; margin-left: 2; }
 #tally { height: 1; margin: 1 0; }
 #middle { height: 1fr; }
+#leftside { width: 66; height: 1fr; }
+#bigscore { height: 9; border: round $line-hi; background: $panel; content-align: center middle; }
 #trials { width: 66; height: 1fr; border: round $line; background: $panel; scrollbar-size-horizontal: 0; }
 #trials:focus { border: round $pink; }
 #liveside { width: 1fr; height: 1fr; margin-left: 1; }
@@ -79,10 +81,10 @@ RadioSet > RadioButton.-selected { background: $hover; }
 """
 
 ICON = {"setup": ("◌", DIM), "grading": ("⚖", LILAC), "passed": ("✓", MINT), "failed": ("✗", ROSE),
-        "error": ("⚠", PEACH), "timeout": ("⏱", ROSE)}
+        "error": ("⚠", PEACH), "timeout": ("⏱", ROSE), "cancelled": ("⊘", FAINT)}
 SPIN = "◐◓◑◒"
 STATE_COLOUR = {"setup": DIM, "working": PINK, "grading": LILAC, "passed": MINT, "failed": ROSE,
-                "error": PEACH, "timeout": ROSE}
+                "error": PEACH, "timeout": ROSE, "cancelled": FAINT}
 FINISHED = ("passed", "failed", "error", "timeout")
 
 # a 5-line font for the score, 3 columns a glyph (. is 1): plain blocks read best in every terminal
@@ -91,18 +93,20 @@ BIG = {"0": ["███", "█ █", "█ █", "█ █", "███"], "1": ["
        "4": ["█ █", "█ █", "███", "  █", "  █"], "5": ["███", "█  ", "███", "  █", "███"],
        "6": ["███", "█  ", "███", "█ █", "███"], "7": ["███", "  █", "  █", "  █", "  █"],
        "8": ["███", "█ █", "███", "█ █", "███"], "9": ["███", "█ █", "███", "  █", "███"],
-       ".": [" ", " ", " ", " ", "█"], "%": ["█ █", "  █", " █ ", "█  ", "█ █"]}
+       ".": [" ", " ", " ", " ", "█"], "-": ["   ", "   ", "███", "   ", "   "],
+       "%": ["██  █", "██ █ ", "  █  ", " █ ██", "█  ██"]}
 
 
 def big(text, phase=0.0):
     """The score in big letters, pink fading to lilac from top to bottom."""
     shades = [PINK, "#e9a6dc", "#dfa4e4", "#d3a3ea", LILAC]
-    out = Text(justify="center")
+    out = Text(no_wrap=True, overflow="crop")
     for r in range(5):
+        # every row the same width, trailing spaces kept: rows centred one by one would shift apart
         out.append("  ".join(BIG.get(ch, ["   "] * 5)[r] for ch in text), style=f"bold {shades[r]}")
         if r < 4:
             out.append("\n")
-    return out
+    return Align.center(out)
 
 
 def bar(pct, width=34, colour=LILAC, lo=0.0):
@@ -193,7 +197,9 @@ class RealBenchApp(App):
                 yield Static("", id="count")
             yield Static("", id="tally")
             with Horizontal(id="middle"):
-                yield DataTable(id="trials", cursor_type="row", zebra_stripes=False)
+                with Vertical(id="leftside"):
+                    yield Static("", id="bigscore")
+                    yield DataTable(id="trials", cursor_type="row", zebra_stripes=False)
                 with Vertical(id="liveside"):
                     yield Static("", id="livehead")
                     yield RichLog(id="live", wrap=True, markup=False, highlight=False, max_lines=4000, min_width=20)
@@ -338,6 +344,16 @@ class RealBenchApp(App):
             tally.append("  ·  ", style=FAINT)
         tally.append(f"${spent:.2f}", style=PEACH)
         self.query_one("#tally", Static).update(tally)
+        self.draw_bigscore(pct, se, done)
+
+    def draw_bigscore(self, pct, se, done):
+        """The score so far, big, above the tasks."""
+        if pct is None:
+            body = Group(big("--"), Align.center(Text("waiting for the first task to be graded ♡", style=DIM)))
+        else:
+            body = Group(big(f"{pct:.1f}%"), Align.center(Text(f"so far  ·  ± {se}  ·  {done} of {self.total} graded",
+                                                               style=DIM)))
+        self.query_one("#bigscore", Static).update(body)
 
     def cells(self, t):
         state = t["state"]

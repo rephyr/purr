@@ -54,9 +54,10 @@ class JobFolderTest(unittest.TestCase):
         graded(job, "f__1", None, ex="NonZeroAgentExitCodeError")
         graded(job, "g__1", 0.0, ex="AgentTimeoutError")
         graded(job, "h__1", 1.0, ex="AgentTimeoutError")           # out of time, but the files were right
+        graded(job, "i__1", None, ex="CancelledError")             # the run was stopped first
         states = {t["task"]: t["state"] for t in realbench.scan(job)}
         self.assertEqual(states, {"a": "setup", "b": "working", "c": "grading", "d": "passed", "e": "failed",
-                                  "f": "error", "g": "timeout", "h": "passed"})
+                                  "f": "error", "g": "timeout", "h": "passed", "i": "cancelled"})
         d = next(t for t in realbench.scan(job) if t["task"] == "d")
         self.assertEqual((d["seconds"], d["cost"]), (150.0, 0.01))
 
@@ -71,6 +72,12 @@ class JobFolderTest(unittest.TestCase):
         pct, se = realbench.score(realbench.scan(job))
         self.assertEqual(pct, 50.0)  # (0.5 + 1 + 0) / 3
         self.assertGreater(se, 0)
+
+    def test_a_stopped_run_is_not_a_zero(self):
+        job = make_job()
+        for n in range(6):
+            graded(job, f"t{n}__1", None, ex="CancelledError")
+        self.assertEqual(realbench.score(realbench.scan(job)), (None, None))  # not "0.0%"
 
     def test_the_last_tool_in_purrs_log(self):
         lines = ["\x1b[38;2;200;162;240m  ◆ terminal send vm root\x1b[0m", "thinking about it", "  ◆ run make"]
