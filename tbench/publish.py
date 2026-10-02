@@ -1,6 +1,10 @@
 """Turn a finished Harbor run of purr into published results in the repo.
 
     tbench/publish.py ~/.local/state/purr/tbench/<job folder>
+    tbench/publish.py <job folder> --stopped "what happened"
+
+A run stopped part-way can be filed with --stopped and a note saying why: it goes in its own table
+of stopped runs (the score over the tasks graded before it stopped), never next to the real ones.
 
 Two benchmarks, each with its own page: Terminal-Bench (benchmarks/terminal-bench/) and DeepSWE
 (benchmarks/deepswe/). Three kinds of run get published, each in its own table: the full run (every
@@ -65,7 +69,8 @@ def load_job(job):
             "reward": reward, "timeout": exception == "AgentTimeoutError",
             # a time limit is the task's own rule (a fail, like on the leaderboards); anything else
             # (a crash, the model server) is an error worth re-running
-            "error": exception if exception != "AgentTimeoutError" else None,
+            "error": exception if exception not in ("AgentTimeoutError", "CancelledError") else None,
+            "cancelled": exception == "CancelledError",  # the run was stopped first: never graded
             "agent_seconds": round(seconds, 1) if seconds is not None else None,
             "cost_usd": agent.get("cost_usd"), "tokens_in": agent.get("n_input_tokens"),
             "tokens_cached": agent.get("n_cache_tokens"), "tokens_out": agent.get("n_output_tokens"),
@@ -124,7 +129,8 @@ def summarise(config, trials):
     like on the leaderboards); ± is the standard error over tasks."""
     by_task = defaultdict(list)
     for t in trials:
-        by_task[t["task"]].append(1.0 if (t["reward"] or 0) >= 1 else 0.0)
+        if not t.get("cancelled"):
+            by_task[t["task"]].append(1.0 if (t["reward"] or 0) >= 1 else 0.0)
     shares = [sum(v) / len(v) for v in by_task.values()]
     n = len(shares)
     se = statistics.stdev(shares) / math.sqrt(n) if n > 1 else 0.0
@@ -246,6 +252,14 @@ def readme(results, page="terminal-bench"):
                       "try each the margin is wide (see ±): compare quick runs with each other, not with the full",
                       "runs or the leaderboards.", ""]
         lines += quick_head + (quick or ["| (none yet) |"]) + [""]
+        stopped = [r for r in mine if r.get("profile") == "stopped"]
+        if stopped:
+            lines += [f"### {bench}: stopped runs (not comparable)", "",
+                      "Runs stopped part-way, kept for the record: the score is over the tasks graded before the",
+                      "stop, and the note says why it stopped. Don't set these next to the reference scores.", "",
+                      "| purr | date | graded | pass@1 of those | cost | why it stopped |", "|---|---|---|---|---|---|"]
+            lines += [f"| {r['purr']} | {r['date']} | {r['tasks']} of {conf['tasks']} | {r['pass@1']}% | "
+                      f"${r['cost_usd']} | {r.get('note', '')} |" for r in stopped] + [""]
     lines.pop()
     lines += ["", "## Other harnesses, same model (published, full runs)", "",
               "| harness | model | benchmark | pass@1 | source |", "|---|---|---|---|---|"]
@@ -272,6 +286,9 @@ def row(r, full):
 
 
 def main(argv):
+    note = None
+    if len(argv) == 3 and argv[1] == "--stopped" and argv[2].strip():
+        argv, note = argv[:1], argv[2].strip()
     if len(argv) != 1:
         print(__doc__)
         return 1
@@ -281,6 +298,11 @@ def main(argv):
         return 1
     summary = summarise(config, trials)
     summary["profile"] = profile(summary["dataset"], trials)
+    if note:
+        if not bench_name(summary["dataset"]):
+            print(f"not published: {summary['dataset']} isn't a benchmark this publishes")
+            return 1
+        summary["profile"], summary["note"] = "stopped", note
     if not summary["profile"]:
         print(f"not published: {summary['tasks']} tasks x {summary['settings']['attempts']} on {summary['dataset']} "
               "is not a full run (every task x 3, tbench/fair.sh), a one-try run (every task x 1, --one) or a "

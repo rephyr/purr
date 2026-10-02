@@ -391,6 +391,16 @@ class PublishTest(unittest.TestCase):
         self.assertIn("2.1: one-try runs", page)
         self.assertNotIn("DeepSWE 1.1 (113", page)  # the other benchmark's references go on its own page
 
+    def test_a_stopped_run_gets_its_own_table_with_its_note(self):
+        base = {"date": "2026-10-02", "pass@1": 56.2, "stderr": 7.2, "pass@k": 56.2, "timeouts": 0, "errors": 0,
+                "trials": 54, "tasks": 48, "cost_usd": 7.0, "tokens_in": 1, "tokens_cached": 1, "tokens_out": 1,
+                "median_agent_minutes": 14.0, "purr": "0.4.0", "dataset": "datacurve/deep-swe-1-1"}
+        page = self.publish.readme([{**base, "profile": "stopped", "note": "a step cap bug"}], "deepswe")
+        self.assertIn("stopped runs (not comparable)", page)
+        self.assertIn("| 0.4.0 | 2026-10-02 | 48 of 113 | 56.2% | $7.0 | a step cap bug |", page)
+        one = page.split("one-try runs")[1].split("###")[0]
+        self.assertIn("(none yet)", one)  # not in the real tables
+
     def test_deepswe_has_its_own_page(self):
         quick = [{"task": t} for t in self.publish.BENCHES["DeepSWE 1.1"]["quick"]]
         self.assertEqual(len(quick), 20)
