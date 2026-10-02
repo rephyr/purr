@@ -32,7 +32,7 @@ from harness.agent import STATE_DIR, Agent, list_sessions
 HISTORY = STATE_DIR / "history"
 
 from harness import VERSION  # noqa: E402
-from tui.themes import CYAN, DIM, LILAC, MINT, PEACH, PINK, ROSE, TEXT  # noqa: E402,F401 - PEACH: warnings, "paid"
+from tui.themes import CYAN, DIM, LILAC, MINT, MODE_COLOUR, PEACH, PINK, ROSE, TEXT  # noqa: E402,F401 - PEACH: warnings, "paid"
 ATTACHED = re.compile(r'\n\n<file path="[^"]*">\n.*?\n</file>', re.S)
 MENTION_AT_CURSOR = re.compile(r"(?:^|\s)@(\S*)$")
 TEST_COMMAND = re.compile(r"\b(pytest|unittest|tests?|jest|vitest|cargo test|go test|npm test|gut)\b")
@@ -605,7 +605,7 @@ class PurrApp(App):
             with Center(id="dockrow"), Vertical(id="dock"):
                 yield CatWidget(id="cat")
                 with Vertical(id="box"):
-                    yield PromptArea(id="prompt", placeholder='ask anything…  "fix the failing test"',
+                    yield PromptArea(id="prompt", placeholder=self.MODE_HINT["code"],
                                      soft_wrap=True, highlight_cursor_line=False, compact=True)
                     with Horizontal(id="modelline"):
                         yield Static(id="model")
@@ -678,6 +678,8 @@ class PurrApp(App):
             return
         for m in MODE_NAMES:
             self.screen.set_class(m == mode, f"mode-{m}")
+        if shown is None:  # starting up, maybe in another mode (a session carried on): its hint
+            self.prompt.placeholder = self.MODE_HINT[mode]
         self.shown_mode = mode
         moved, self.mode_moved = getattr(self, "mode_moved", None), None
         if shown is not None and f"mode_{mode}" in cat.MOODS:
@@ -699,7 +701,9 @@ class PurrApp(App):
             self.busy_since = self.busy_since or time.monotonic()
         else:
             self.busy_since = None
-        self.query_one("#status", Static).update(Text(self.status_text, style=DIM))
+        if self.status_text != getattr(self, "status_shown", None):  # every 0.12 s: redraw only a change
+            self.status_shown = self.status_text
+            self.query_one("#status", Static).update(Text(self.status_text, style=DIM))
         self.update_pinned()
         self.cat_tick += 1
         now = time.monotonic()
@@ -1160,21 +1164,18 @@ class PurrApp(App):
 
     @work(thread=True, exclusive=True)
     def run_turn(self, text):
-        self.job = "turn"
-        try:
-            self.agent.turn(text)
-        except Exception as e:  # keep the app alive whatever happens in the agent
-            self.view.note(f"purr broke: {type(e).__name__}: {e}", "error")
-        finally:
-            summary = (getattr(self.agent, "turn_stats", None) or {}).get("summary", "")
-            self.call_from_thread(self._turn_done, summary.lstrip("✓ "))
+        self._agent_job("turn", self.agent.turn, text)
 
     @work(thread=True, exclusive=True)
     def run_plan(self, start):
-        self.job = "plan"
+        self._agent_job("plan", self.agent.run_plan, start)  # run the tickets already in .purr/tickets/
+
+    def _agent_job(self, job, call, *args):
+        """A turn or a plan, in its worker thread: then the turn's summary, whatever broke."""
+        self.job = job
         try:
-            self.agent.run_plan(start)  # run the tickets already in .purr/tickets/
-        except Exception as e:
+            call(*args)
+        except Exception as e:  # keep the app alive whatever happens in the agent
             self.view.note(f"purr broke: {type(e).__name__}: {e}", "error")
         finally:
             summary = (getattr(self.agent, "turn_stats", None) or {}).get("summary", "")
@@ -1413,8 +1414,12 @@ class PurrApp(App):
         if self.menu_items:
             self._menu_hide()
         elif self.busy:
-            self.agent.stop_flag = True
-            self.set_cat("startled", "")
+            self._stop_agent()
+
+    def _stop_agent(self):
+        """esc / ctrl+c while purr works: it stops after the step going on."""
+        self.agent.stop_flag = True
+        self.set_cat("startled", "")
 
     # ---- copying: drag over any text to copy it; ctrl+c copies a selection too ----
 
@@ -1460,15 +1465,14 @@ class PurrApp(App):
             self.screen.clear_selection()
             return
         if self.busy:
-            self.agent.stop_flag = True
-            self.set_cat("startled", "")
+            self._stop_agent()
         else:
             self.prompt.clear()
 
     # ---- modes: code, ask, learn, pair, plan, chat, create ----
 
-    MODE_LOOK = {"code": ("✎", PINK), "ask": ("◈", LILAC), "learn": ("✿", ROSE), "pair": ("⇄", "#a8b8ff"), "plan": ("✦", CYAN),
-                 "chat": ("♡", PEACH), "create": ("✧", MINT)}
+    MODE_LOOK = {m: (icon, MODE_COLOUR[m]) for m, icon in
+                 {"code": "✎", "ask": "◈", "learn": "✿", "pair": "⇄", "plan": "✦", "chat": "♡", "create": "✧"}.items()}
     MODE_HINT = {"code": 'ask anything…  "fix the failing test"', "ask": "ask about the code, nothing gets changed…",
                  "learn": "what do you want to learn to build? purr leaves the key lines to you ✿",
                  "pair": "let's build it together: one step each, edit the code yourself any time ⇄",
