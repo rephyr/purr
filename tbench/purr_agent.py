@@ -170,7 +170,8 @@ class PurrAgent(BaseInstalledAgent):
             return
         try:
             await self.exec_as_root(environment, command="mkdir -p /opt/uv")
-            await environment.upload_file(uv, "/opt/uv/uv")
+            # the file itself: uv is often a symlink (pipx, ~/.local/bin), and docker cp copies the link
+            await environment.upload_file(Path(uv).resolve(), "/opt/uv/uv")
             await self.exec_as_root(environment, command="chmod 755 /opt/uv/uv; /opt/uv/uv --version >/dev/null 2>&1 "
                                                          "|| rm -f /opt/uv/uv")
         except Exception:  # noqa: BLE001 - then the curl way below
