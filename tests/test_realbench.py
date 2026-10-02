@@ -8,7 +8,6 @@ import json
 import os
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -86,17 +85,20 @@ class JobFolderTest(unittest.TestCase):
 
     def test_finds_its_own_job_folder(self):
         jobs = Path(tempfile.mkdtemp())
-        old = jobs / "old"
-        old.mkdir()
-        (old / "config.json").write_text("{}")
-        os.utime(old, (time.time() - 3600, time.time() - 3600))
         run = realbench.Run("terminal-bench", "quick")
         with mock.patch.object(realbench, "JOBS", jobs):
             self.assertIsNone(run.find_job())
-            new = jobs / "new"
-            new.mkdir()
-            (new / "config.json").write_text("{}")
-            self.assertEqual(run.find_job(), new)
+            other = jobs / "2026-10-02__23-00-00"  # another run, newer: not ours
+            other.mkdir()
+            (other / "config.json").write_text("{}")
+            self.assertIsNone(run.find_job())
+            mine = jobs / run.job_name
+            mine.mkdir()
+            (mine / "config.json").write_text("{}")
+            self.assertEqual(run.find_job(), mine)
+        with mock.patch.object(realbench.subprocess, "Popen") as popen:
+            run.start()
+        self.assertEqual(popen.call_args.kwargs["env"]["PURR_JOB"], run.job_name)
 
 
 class PlanTest(unittest.TestCase):

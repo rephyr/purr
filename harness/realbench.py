@@ -122,11 +122,13 @@ class Run:
         self.lines = []  # fair.sh's output, ANSI stripped
         self.proc = None
         self.job = None
+        # fair.sh names the job after this (PURR_JOB), so the window finds its own run's folder
+        self.job_name = time.strftime("%Y-%m-%d__%H-%M-%S", time.localtime(self.started)) + "__window"
         self.stopping = False
 
     def start(self):
         env = {**os.environ, **SUITES[self.suite].get("env", {}), "PURR_JOBS": str(self.jobs),
-               "PYTHONUNBUFFERED": "1", "NO_COLOR": "1"}
+               "PURR_JOB": self.job_name, "PYTHONUNBUFFERED": "1", "NO_COLOR": "1"}
         self.proc = subprocess.Popen(self.cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      stdin=subprocess.DEVNULL, env=env, start_new_session=True)
         return self.proc
@@ -148,12 +150,9 @@ class Run:
         self.proc.wait()
 
     def find_job(self):
-        """The job folder Harbor made for this run: the newest one started after it."""
-        if self.job is None and JOBS.is_dir():
-            new = [d for d in JOBS.iterdir() if d.is_dir() and d.stat().st_mtime >= self.started - 2
-                   and (d / "config.json").exists()]
-            if new:
-                self.job = max(new, key=lambda d: d.stat().st_mtime)
+        """The job folder Harbor made for this run: the one named after it (PURR_JOB)."""
+        if self.job is None and (JOBS / self.job_name / "config.json").exists():
+            self.job = JOBS / self.job_name
         return self.job
 
     @property
