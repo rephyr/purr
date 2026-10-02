@@ -269,6 +269,11 @@ class Tools:
             return self._failed(name, {}, f"error: arguments were not valid JSON: {raw_args[:300]}")
         # models trained on other harnesses use their names: say grep for search, path for file_path
         wanted = name
+        mcp = getattr(self, "mcp", None)
+        if mcp and mcp.has(wanted) and not hasattr(self, "t_" + wanted):
+            # an MCP tool by exactly this name (search, read, exec...) is what was offered: an alias
+            # mustn't send its calls to purr's own tool instead
+            return self._mcp_call(wanted, args)
         name = TOOL_ALIASES.get(re.sub(r"[^\w]", "", name), name)
         if name != wanted:
             self.repairs.append(f"tool {wanted} -> {name}")
