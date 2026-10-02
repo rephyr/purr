@@ -7,8 +7,9 @@
 # for the older 2.0, which gets its own tables). DeepSeek's host trains on prompts, so OpenRouter has
 # to allow "paid model training" (openrouter.ai/settings/privacy). Then: tbench/publish.py <job folder>.
 #
-#   tbench/fair.sh              the full run: all 89 tasks x 3 (~$15-30, a night)
-#   tbench/fair.sh --quick      the quick set: the same 20 tasks x 1 (~$1-2, under an hour), for
+#   tbench/fair.sh              the full run: all 89 tasks x 3 (~$6, 4-5 hours)
+#   tbench/fair.sh --one        all 89 tasks x 1 (~$2, about 2 hours): the same score, a wider margin
+#   tbench/fair.sh --quick      the quick set: the same 20 tasks x 1 (under $0.50, about an hour), for
 #                               comparing purr versions with each other (tbench/quick-tasks.txt)
 set -eu
 cd "$(dirname "$0")/.."
@@ -17,7 +18,10 @@ export PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2-1}"
 case "$PURR_DATASET" in */*) ORG="${PURR_DATASET%%/*}/" ;; *) ORG="" ;; esac
 ATTEMPTS=3
 TASKS=""
-if [ "${1:-}" = "--quick" ]; then
+if [ "${1:-}" = "--one" ]; then
+    shift
+    ATTEMPTS=1
+elif [ "${1:-}" = "--quick" ]; then
     shift
     ATTEMPTS=1
     TASKS=$(grep -v '^#' tbench/quick-tasks.txt | awk -v org="$ORG" 'NF {printf "-i %s%s ", org, $1}')

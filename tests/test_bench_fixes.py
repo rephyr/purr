@@ -366,6 +366,9 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(self.publish.profile("terminal-bench@2.0", quick), "quick")
         self.assertIsNone(self.publish.profile("terminal-bench/terminal-bench", quick))  # 4.0
         self.assertIsNone(self.publish.profile("terminal-bench/terminal-bench-2-1", quick[:5]))
+        every = [{"task": f"t{i}"} for i in range(89)]
+        self.assertEqual(self.publish.profile("terminal-bench/terminal-bench-2-1", every), "one")
+        self.assertEqual(self.publish.profile("terminal-bench/terminal-bench-2-1", every * 3), "full")
 
     def test_each_dataset_has_its_own_tables(self):
         base = {"date": "2026-10-02", "pass@1": 75.0, "stderr": 9.9, "pass@k": 75.0, "timeouts": 0, "errors": 0,
@@ -378,6 +381,7 @@ class PublishTest(unittest.TestCase):
         self.assertNotIn("| 0.3.1 |", new)
         self.assertIn("| 0.3.1 |", old)
         self.assertNotIn("2.0: full runs", page)  # no full 2.0 run: no empty table for it
+        self.assertIn("2.1: one-try runs", page)
 
 
 if __name__ == "__main__":

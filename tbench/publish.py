@@ -2,9 +2,10 @@
 
     tbench/publish.py ~/.local/state/purr/tbench/<job folder>
 
-Two kinds of run get published, each in its own table: the full run (all 89 Terminal-Bench
-tasks x 3 attempts, compared with other harnesses' published scores) and the quick run (the 20
-tasks in tbench/quick-tasks.txt x 1, compared only with other quick runs). Terminal-Bench 2.1 and
+Three kinds of run get published, each in its own table: the full run (all 89 Terminal-Bench
+tasks x 3 attempts, compared with other harnesses' published scores), the one-try run (all 89 x 1:
+the same score with a wider margin, in a third of the time) and the quick run (the 20 tasks in
+tbench/quick-tasks.txt x 1, compared only with other quick runs). Terminal-Bench 2.1 and
 the older 2.0 runs get separate tables. Anything else is refused, so a partial run can't sneak
 into the tables.
 
@@ -85,7 +86,7 @@ QUICK = [line.split()[0] for line in (Path(__file__).parent / "quick-tasks.txt")
 
 
 def profile(dataset, trials):
-    """ "full", "quick", or None (not a run we publish)."""
+    """ "full", "one", "quick", or None (not a run we publish)."""
     tasks = {t["task"] for t in trials}
     per_task = len(trials) / max(len(tasks), 1)
     if not bench_name(dataset):
@@ -94,6 +95,8 @@ def profile(dataset, trials):
         return "quick"
     if len(tasks) == 89 and per_task == 3:
         return "full"
+    if len(tasks) == 89 and per_task == 1:
+        return "one"
     return None
 
 
@@ -169,11 +172,18 @@ def readme(results):
         if not mine and bench != "Terminal-Bench 2.1":
             continue  # an old dataset only shows when it has runs
         full = [row(r, full=True) for r in mine if r.get("profile") == "full"]
+        one = [row(r, full=False) for r in mine if r.get("profile") == "one"]
         quick = [row(r, full=False) for r in mine if r.get("profile") == "quick"]
         if bench == "Terminal-Bench 2.1" or full:
             lines += [f"### {bench}: full runs, all 89 tasks, 3 attempts each", ""] + head
             lines += full or ["| (none yet) |"]
             lines += [""]
+        if bench == "Terminal-Bench 2.1" or one:
+            lines += [f"### {bench}: one-try runs, all 89 tasks, 1 attempt each", ""]
+            if bench == "Terminal-Bench 2.1":
+                lines += ["The same score as a full run (pass@1) in about 2 hours instead of 5, with a wider margin",
+                          "(see ±). Fine to set next to the reference scores below, keeping the ± in mind.", ""]
+            lines += quick_head + (one or ["| (none yet) |"]) + [""]
         lines += [f"### {bench}: quick runs, the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each", ""]
         if bench == "Terminal-Bench 2.1":
             lines += ["Cheap (well under $1 with DeepSeek V4.1 Flash) and quick, for seeing whether a purr version got",
@@ -214,8 +224,8 @@ def main(argv):
     summary["profile"] = profile(summary["dataset"], trials)
     if not summary["profile"]:
         print(f"not published: {summary['tasks']} tasks x {summary['settings']['attempts']} on {summary['dataset']} "
-              "is neither the full run (89 x 3, tbench/fair.sh) nor the quick one (the 20 in quick-tasks.txt x 1, "
-              "tbench/fair.sh --quick)")
+              "is not the full run (89 x 3, tbench/fair.sh), the one-try run (89 x 1, tbench/fair.sh --one) "
+              "or the quick one (the 20 in quick-tasks.txt x 1, tbench/fair.sh --quick)")
         return 1
     version = summary["purr"] if isinstance(summary["purr"], str) else "mixed"
     if "dirty" in version:
