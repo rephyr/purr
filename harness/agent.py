@@ -1615,11 +1615,12 @@ class Agent:
         return max(1, round((self.time_limit - (time.monotonic() - self._started)) / 60))
 
     def _step_cap(self):
-        """Steps before purr asks to keep going. One-shot runs can't ask, so they get a fixed cap
-        (a time limit ends them anyway; without one, enough for a long task)."""
+        """Steps before purr asks to keep going. One-shot runs can't ask, so they get at least a
+        fixed cap, and never less than max_steps: a benchmark's own limit (500 in the fair runs)
+        wins. Capping those at 150 cut 17 of 54 DeepSWE tasks off before they could commit."""
         steps = self.config.get("max_steps", 40)
         if self.one_shot and not self.helper:
-            return ONE_SHOT_STEPS if self.time_limit else max(steps, ONE_SHOT_STEPS_FREE)
+            return max(steps, ONE_SHOT_STEPS if self.time_limit else ONE_SHOT_STEPS_FREE)
         return steps
 
     def _probe(self):

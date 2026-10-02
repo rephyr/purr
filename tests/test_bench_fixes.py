@@ -302,6 +302,13 @@ class EndTest(unittest.TestCase):
         self.assertTrue(any("before you finish" in u for u in users(a)))  # checked once at the cap
         self.assertEqual(calls["n"], 4 + agent_module.CHECK_STEPS)
 
+    def test_a_benchmarks_own_step_limit_wins(self):
+        a = one_shot(time_limit=5400)
+        a.config = {**a.config, "max_steps": 500}  # fair.sh: the same as DeepSeek's harnesses
+        self.assertEqual(a._step_cap(), 500)
+        a.config = {**a.config, "max_steps": 40}
+        self.assertEqual(a._step_cap(), agent_module.ONE_SHOT_STEPS)
+
     def stream(self, *lines):
         resp = mock.MagicMock()
         resp.__enter__.return_value = resp
