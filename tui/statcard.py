@@ -34,12 +34,20 @@ def short(n):
 def big(s, colour):
     """A number in the pixel font, 3 rows tall."""
     rows = [" ".join(FONT[ch][r] for ch in s if ch in FONT) for r in range(3)]
-    return Text("\n".join(rows), style=f"bold {colour}")
+    return Text("\n".join(rows), style=f"bold {colour}", no_wrap=True, overflow="crop")
 
 
-def tile(value, label, colour):
+def big_width(s):
+    """How many columns a number takes in the pixel font."""
+    return sum(len(FONT[ch][0]) + 1 for ch in s if ch in FONT) - 1
+
+
+TILE = 18  # the narrowest a tile gets: they all grow to fit the widest number ("114k", "1.2M")
+
+
+def tile(value, label, colour, width=TILE):
     return Panel(Group(Align.center(big(value, colour)), Align.center(Text(label, style=DIM))),
-                 box=box.ROUNDED, border_style=colour, padding=(0, 1), width=18)
+                 box=box.ROUNDED, border_style=colour, padding=(0, 1), width=width)
 
 
 def bar(n, most, width=18):
@@ -92,8 +100,11 @@ def render(s, cat=None):
     t = s["tools"]
     tokens = short(s["out"])
     tiles = Table.grid(padding=(0, 1))
-    row = [tile(str(s["chats"]), "chats", PINK), tile(tokens, ("≈ " if s["guessed"] else "") + "tokens made", LILAC),
-           tile(short(s["added"]), "lines written", MINT), tile(str(s["streak"]), "day streak 🔥", PEACH)]
+    numbers = [str(s["chats"]), tokens, short(s["added"]), str(s["streak"])]
+    width = max([TILE] + [big_width(n) + 4 for n in numbers])  # + border and padding
+    row = [tile(numbers[0], "chats", PINK, width),
+           tile(numbers[1], ("≈ " if s["guessed"] else "") + "tokens made", LILAC, width),
+           tile(numbers[2], "lines written", MINT, width), tile(numbers[3], "day streak 🔥", PEACH, width)]
     face = "^ω^" if (cat or {}).get("pets", 0) >= 5 else "˘ω˘"
     cat_art = Text(f"\n /\\_/\\\n( {face} )\n (\")(\")~", style=PINK)
     tiles.add_row(*row, cat_art)

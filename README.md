@@ -316,6 +316,11 @@ and model details) and runs `purr -p <task> --yes` once.
     tbench/run.sh -l 10 --ak mcp=false              # without purr's MCP servers
     PURR_MODEL=openrouter/<model id> tbench/run.sh  # default: DeepSeek V4.1 Flash on OpenRouter
 
+Each task's own time limit is passed on (less 10%, `purr --time-limit`): purr tells the model up
+front and reminds it at half and four-fifths time to get a working version in place, since an
+unfinished deliverable scores nothing. `--ak edge_cases=true` turns on the edge-case step of the
+final check, which purr leaves off for API models, to measure whether it helps here.
+
 `run.sh` hands purr's saved OpenRouter key to Harbor and passes everything else to `harbor run`.
 Results land in `~/.local/state/purr/tbench/`, with purr's own log (`agent/purr.txt`) and saved
 chat (`agent/purr-state/`) per task. Terminal-Bench 4.0 is hard: 66 tasks, a median of 4 hours

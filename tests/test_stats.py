@@ -69,6 +69,19 @@ class StatsTest(unittest.TestCase):
         self.assertIn("Mochi got 9 pets", text)
         self.assertEqual(statcard.short(12_345), "12k")
 
+    def test_wide_numbers_dont_wrap_in_their_tiles(self):
+        from rich.console import Console
+        from tui import statcard
+        d = tempfile.mkdtemp()
+        chat(d, "2026-10-01_230000", [{"role": "user", "content": "hi"}], out=114_000)
+        for out in (114_000, 1_234_567):  # "114k" and "1.2M" are wider than a tile used to be
+            found = stats.gather(d)
+            found["out"] = out
+            console = Console(width=110, record=True, color_system=None)
+            console.print(statcard.render(found, None))
+            lines = console.export_text().splitlines()
+            self.assertTrue(lines[5].startswith("╰"), lines[:6])  # 3 pixel rows + label: no wrapped lines
+
     def test_no_chats(self):
         self.assertIn("no chats yet", stats.report(stats.gather(tempfile.mkdtemp()))[0][1])
 
