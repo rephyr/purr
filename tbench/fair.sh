@@ -42,7 +42,8 @@ except urllib.error.HTTPError as e:
             "https://openrouter.ai/settings/privacy") if "training" in detail else ""
     sys.exit(f"DeepSeek's host on OpenRouter refused a test request ({e.code}): {detail}{hint}")
 PY
-PURR_DATASET="${PURR_DATASET:-terminal-bench@2.0}" PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}" \
+export PURR_DATASET="${PURR_DATASET:-terminal-bench@2.0}"
+export PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}"
 # shellcheck disable=SC2086  # $TASKS is a list of -i options
 exec tbench/run.sh -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS \
     --ak hosts=deepseek --ak temperature=1.0 --ak top_p=0.95 --ak max_tokens=65536 --ak max_steps=500 "$@"
