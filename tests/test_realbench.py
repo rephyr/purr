@@ -145,6 +145,44 @@ class VerdictTest(unittest.TestCase):
         self.assertEqual(realbench.verdict("terminal-bench", "quick", 80.0, 8, 20, stopped=True)[0], "startled")
 
 
+class ImageCleanerTest(unittest.TestCase):
+    """tbench/clean_images.py: a graded task's prebuilt image goes, one still in use stays for later."""
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "clean_images", Path(__file__).resolve().parent.parent / "tbench" / "clean_images.py")
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+        root = Path(tempfile.mkdtemp())
+        self.mod.JOBS, self.mod.TASKS = root / "jobs", root / "tasks"
+        for task, image in (("datacurve/a", "img-a"), ("datacurve/b", "img-b"), ("terminal-bench/c", None)):
+            d = self.mod.TASKS / task / "sha1"
+            d.mkdir(parents=True)
+            (d / "task.toml").write_text(f'[environment]\ndocker_image = "{image}"\n' if image else "[environment]\n")
+        job = self.mod.JOBS / "2026-10-02__20-00-00"
+        for trial, task in (("a__1", "datacurve/a"), ("c__1", "terminal-bench/c")):
+            (job / trial).mkdir(parents=True)
+            (job / trial / "result.json").write_text(json.dumps({"task_name": task}))
+        (job / "b__1").mkdir()  # still running: no result yet
+
+    def test_only_graded_tasks_with_a_prebuilt_image(self):
+        self.assertEqual(self.mod.graded_images(time.time() - 60), {"img-a"})
+        self.assertEqual(self.mod.graded_images(time.time() + 3600), set())  # an older job isn't touched
+
+    def test_an_image_in_use_is_tried_again_later(self):
+        calls = []
+
+        def docker(cmd, **kw):
+            calls.append(cmd[-1])
+            in_use = len(calls) == 1
+            return mock.Mock(returncode=1 if in_use else 0, stderr="image is being used" if in_use else "")
+        with mock.patch.object(self.mod.subprocess, "run", docker), mock.patch.object(self.mod.time, "sleep"), \
+                mock.patch.object(self.mod, "alive", side_effect=[True, False]):
+            self.mod.main(["1", str(time.time() - 60)])
+        self.assertEqual(calls, ["img-a", "img-a"])  # refused while in use, removed on the next round
+
+
 @unittest.skipIf(realbench_app is None, "needs textual (uv sync)")
 class WindowTest(unittest.IsolatedAsyncioTestCase):
     async def test_from_setup_to_mochis_verdict(self):
