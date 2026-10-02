@@ -228,13 +228,32 @@ fix it now. If everything is really done, reply with a short summary of what you
 # one-shot runs (benchmarks, purr -p): what failed on Terminal-Bench was mostly the spec, not the
 # code: a tuple where a list was asked for, one image tested where the grader used 50, a choice the
 # task left open settled by guessing instead of reading what the named library does
-ONE_SHOT_CHECK = """(purr: before you finish{time}: your files will be checked on inputs other than the \
-example. Read the request again word by word: 1. Every file it names exists at that exact path, with \
-the name, format and types it describes; read your output back the way the request describes it. \
-2. Measure every limit it states (size, time, score), leaving a margin on scores. 3. Run it exactly \
-the way the task says it will be run, on 2-3 inputs other than the example. 4. For each choice the \
-task left open, check how the given code or the named library does it (read it).{services}{nobody} \
-Fix what fails, then reply in at most 3 lines.)"""
+# DeepSWE showed what the first version missed: checks on inputs where a wrong reading gives the
+# same answer (1-character cells, an override set on one side only), expectations copied from the
+# code's own output, the request's notation overruled by the code's habits (x() where it wrote x),
+# and a scratch test file left behind that broke the real ones
+ONE_SHOT_CHECK = """(purr: before you finish{time}: hidden tests will check your work on other inputs and \
+against the request's exact wording. Read it again sentence by sentence: 1. Every file, name and \
+signature it gives exists exactly as written (path, name, x() or x, format, types). 2. For each rule \
+it states (if/unless/only/order/precedence/overrides), work out the expected result from the request \
+text first, then check it on an input where a wrong reading would give a different answer; test \
+both sides of each condition and override (set both, conflicting). Never copy an expectation from \
+your own output. 3. Measure every limit it states, with a margin on scores. 4. The request's wording \
+and notation beat the code's habits; only choices it leaves open follow the given code. If two \
+requirements seem to conflict, take the reading that satisfies both. Don't undo an earlier choice \
+without a reason from the request.{scratch}{services}{nobody} Fix what fails, then reply in at most \
+3 lines.)"""
+
+# one-shot runs that check, find nothing and stop with most of the time left (DeepSWE: 13 of 90
+# minutes) get one more, different look: evidence for every requirement
+EVIDENCE_PASS = """(purr: you have about {left} of {total} minutes left, so use some of it before you \
+finish. Make a short list: one line per requirement in the request, with the command and output \
+that shows it holds. Every line without direct evidence: test it now, on an input that would catch \
+a wrong reading. Fix what fails, then reply in at most 3 lines.)"""
+
+SCRATCH_NOTE = (" You created these files: {files}. Delete the ones that are scratch work the task "
+                "doesn't need (a leftover test file can break the real tests); a new test file must not "
+                "depend on another new one.")
 
 ONE_SHOT_SHORT_CHECK = (" Check now: 1. every file the request names exists at that exact path, with the "
                         "name, format and types it describes; 2. every limit it states (size, time, score) is "
@@ -364,8 +383,8 @@ ASK_LINE = "- If the request is unclear, ask one short question instead of guess
 ONE_SHOT_LINE = (
     "- Nobody answers during this run: decide unclear points from the task, the files and the tools' "
     "defaults; never end with a question; use -y/--yes (no stdin).\n"
-    "- Where the task leaves a choice open, prefer what the given code, data and named tools already do "
-    "(read their source) over your own additions.\n"
+    "- Follow the request's exact wording and notation (names, x() or x, types, order); where it leaves a "
+    "choice open, prefer what the given code, data and named tools already do (read their source).\n"
     "- Hard requirements (exact paths, names, format, size/time/score limits) are part of done.\n"
     "- Hidden tests will check your files on other inputs; they aren't on this machine. Scratch files go in /tmp.")
 # one-shot runs drop what only matters with a person watching: who purr is, the approvals
@@ -1395,6 +1414,7 @@ class Agent:
         self._acted = False    # ran a command, a terminal or an MCP tool that changes things
         self._background = False  # started something that should keep running (a terminal, cmd &)
         self._hedged = False   # one-shot: told once that nobody will answer its question
+        self._evidence = False  # one-shot: the second look (EVIDENCE_PASS) at most once
         cap = self._step_cap()
         try:
             while True:
@@ -1503,7 +1523,8 @@ class Agent:
                             "(purr: your tool call came out as plain text, so it did not run. "
                             "Call the tool again.)"})
                         continue
-                    if self._final_check(reply["text"]) or self._learn_check() or self._hedge(reply["text"]):
+                    if (self._final_check(reply["text"]) or self._evidence_pass() or self._learn_check()
+                            or self._hedge(reply["text"])):
                         continue
                     break
                 stopped = self._run_tools(reply["tool_calls"])
@@ -1534,7 +1555,8 @@ class Agent:
                 if all(c["name"] == "todo" for c in reply["tool_calls"]):
                     todo_only += 1
                     if reply["text"] and not self.tools.todos_left:
-                        if self._final_check(reply["text"]) or self._learn_check() or self._hedge(reply["text"]):
+                        if (self._final_check(reply["text"]) or self._evidence_pass() or self._learn_check()
+                                or self._hedge(reply["text"])):
                             continue
                         break  # it answered and everything is done: that's the end
                     if todo_only >= 3:
@@ -1578,11 +1600,33 @@ class Agent:
         if self.one_shot:
             left = self._minutes_left()
             check = ONE_SHOT_CHECK.format(time=f" (about {left} minutes left)" if left else "", services=services,
-                                          nobody=NOBODY if self._hedges(reply) else "")
+                                          nobody=NOBODY if self._hedges(reply) else "", scratch=self._new_files_note())
             self._hedged = self._hedged or self._hedges(reply)
         else:
             check = (FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT).format(services=services)
         self.messages.append({"role": "user", "content": self._test_report() + check})
+        return True
+
+    def _new_files_note(self):
+        """The files this run created that still exist, for the check: leftovers break real tests."""
+        new = [p for p, before in self.tools.session_changes().items() if before is None and p.exists()]
+        if not new:
+            return ""
+        names = [os.path.relpath(p, self.root) if self.root in p.parents else str(p) for p in new]
+        return SCRATCH_NOTE.format(files=", ".join(sorted(names)[:15]) + (" …" if len(names) > 15 else ""))
+
+    def _evidence_pass(self):
+        """After the check, a one-shot run that wants to stop with more than half its time left gets
+        one more look (once). Returns True when it asked."""
+        if not (self.one_shot and self._checked and self.time_limit) or self._evidence or self.helper:
+            return False
+        left = self._minutes_left()
+        total = max(1, round(self.time_limit / 60))
+        if not left or left * 2 < total:
+            return False
+        self._evidence = True
+        self.view.note("♡ plenty of time left: one more look, with evidence for every requirement")
+        self.messages.append({"role": "user", "content": EVIDENCE_PASS.format(left=left, total=total)})
         return True
 
     def _one_shot_setup(self, text):

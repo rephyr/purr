@@ -92,10 +92,33 @@ class FinalCheckTest(unittest.TestCase):
         scripted(a, [reply("", tool=("write_file", {"path": "out.json", "content": "[]"})), reply("done"), reply("ok")])
         a.turn("write out.json")
         check = next(u for u in users(a) if "before you finish" in u)
-        self.assertIn("inputs other than the example", check)
+        self.assertIn("a wrong reading would give a different answer", check)
         self.assertIn("minutes left", check)
+        self.assertIn("You created these files: out.json", check)  # leftovers break real tests
         self.assertNotIn("keep running", check)  # nothing was started
         self.assertNotIn("Nobody will answer", check)
+
+    def test_plenty_of_time_left_gets_one_more_look(self):
+        a = one_shot(time_limit=5400)
+        scripted(a, [reply("", tool=("write_file", {"path": "a.py", "content": "x = 1\n"})), reply("done")])
+        a.turn("make a.py")
+        looks = [u for u in users(a) if "one line per requirement" in u]
+        self.assertEqual(len(looks), 1)  # once, after the check
+        self.assertIn("of 90 minutes left", looks[0])
+
+    def test_little_time_left_just_finishes(self):
+        a = one_shot(time_limit=5400)
+        a._started = agent_module.time.monotonic() - 3000  # 50 of 90 minutes gone
+        a._checked, a._evidence = True, False
+        self.assertFalse(a._evidence_pass())
+        b = one_shot()  # no time limit: no second look either
+        b._checked, b._evidence = True, False
+        self.assertFalse(b._evidence_pass())
+
+    def test_the_requests_notation_wins(self):
+        prompt = agent_module.system_prompt("/app", "m", "x", one_shot=True)
+        self.assertIn("exact wording and notation", prompt)
+        self.assertIn("beat the code's habits", agent_module.ONE_SHOT_CHECK)
 
     def test_a_question_at_the_end_is_answered_with_nobody(self):
         a = one_shot()
