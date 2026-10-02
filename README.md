@@ -319,6 +319,16 @@ you missed, and your row ("you / human") is added at the end of the latest bench
 task, **idle-catchup** (from desk-pets' idle core), is aimed at top models: exact catch-up where
 one big step must equal any split, ties at a buff's line, and float crumbs that add up to coins.
 
+**The real ones:** `purr bench --real` (or **r** on the setup screen) runs Terminal-Bench 2.1 or
+DeepSWE 1.1 the way other harnesses are scored (`tbench/fair.sh` underneath, so the same fair
+settings and checks). Pick the benchmark and how much (the quick 20, every task once, or ×3) and
+it shows the time, cost and scores to beat; then a table of every task (setting up, purr working,
+grading, ✓ / ✗ / out of time / broke) next to the live log of the one you pick (**f** follows the
+newest), the score so far and the cost. Mochi does what the purr she's watching does, cheers or
+sniffles as tasks get graded, and at the end reacts to the score: next to the published harnesses
+for a whole run, next to the last quick run for a quick one. **p** publishes it to `benchmarks/`.
+`purr bench --real deepswe --size quick --jobs 8` skips the picking; `--plain` just runs fair.sh.
+
 ## Published results
 
 - [`benchmarks/terminal-bench/`](benchmarks/terminal-bench/): Terminal-Bench, the official numbers
