@@ -5,7 +5,6 @@ The run is tbench/fair.sh (harness/realbench.py starts it and reads Harbor's job
 only shows it. q stops (Harbor cancels the trials and cleans up), q again quits.
 """
 
-import json
 import subprocess
 import threading
 import time
@@ -16,26 +15,23 @@ from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.widgets import (Button, DataTable, Input, ProgressBar, RadioButton, RadioSet, RichLog, Static,
                              Switch)
 
 from harness import realbench, ui
-from harness.agent import STATE_DIR
 from tui import cat, themes
+from tui.window import BenchWindow
 
-PINK, LILAC, MINT, ROSE, PEACH, TEXT, DIM = "#f5a9d0", "#c8a2f0", "#96dcaf", "#f0829b", "#ffb8c8", "#e9dff2", "#82788f"
-FAINT = "#4f465c"
+from tui.themes import DIM, FAINT, LILAC, MINT, PEACH, PINK, ROSE, TEXT  # noqa: E402
 
 CSS = """
-#setup { align: center top; padding: 1 2; }
-#title { width: 100%; text-align: center; }
-#subtitle { width: 100%; text-align: center; color: #82788f; margin-bottom: 1; }
+#start { min-width: 22; }
 #choices { height: auto; }
 #picks { width: 44; height: auto; margin-right: 2; }
-#picks > Static { color: #c8a2f0; text-style: bold; margin: 1 0 0 1; }
+#picks > Static { color: $lilac; text-style: bold; margin: 1 0 0 1; }
 RadioSet { width: 100%; border: round $line; background: $panel; padding: 0 1; }
 RadioSet:focus { border: round $pink; }
 RadioSet > RadioButton.-selected { background: transparent; }
@@ -43,29 +39,18 @@ RadioSet RadioButton.-on > .toggle--label { color: $pink; text-style: bold; back
 RadioSet RadioButton > .toggle--label { background: transparent; }
 RadioSet:focus > RadioButton.-selected > .toggle--label { background: $hover; }
 #knobs { height: auto; margin-top: 1; }
-#knobs Static { width: auto; color: #82788f; padding: 1 1 0 1; }
+#knobs Static { width: auto; color: $dim; padding: 1 1 0 1; }
 #jobs { width: 7; border: round $line; background: $panel; }
 #edge { border: round $line; background: $panel; width: 10; }
 #edge:focus { border: round $pink; }
 #edge > .switch--slider { color: $pink; background: $line; }
 #preview { width: 1fr; height: auto; min-height: 20; border: round $line-hi; background: $panel;
            padding: 1 2; }
-#start { margin-top: 1; background: $button; color: #e9dff2; border: none; min-width: 22; }
-#start:focus { background: $pink; color: #15101c; text-style: bold; }
-#setuphint { width: 100%; text-align: center; color: #6f6580; margin-top: 1; }
 #setupcat { height: 3; margin-top: 2; padding-left: 2; }
 
-#run { display: none; padding: 0 2; }
-#run.show { display: block; }
-#setup.hide { display: none; }
 #runhead { height: 1; margin-top: 1; }
 #runtitle { width: auto; margin-right: 2; }
-#bar { width: 1fr; }
-#bar Bar > .bar--bar { color: $pink; background: $line; }
-#bar Bar > .bar--complete { color: #96dcaf; }
-#count { width: auto; margin-left: 2; }
 #tally { height: 1; margin: 1 0; }
-#middle { height: 1fr; }
 #leftside { width: 66; height: 1fr; }
 #bigscore { height: 9; border: round $line-hi; background: $panel; content-align: center middle; }
 #trials { width: 66; height: 1fr; border: round $line; background: $panel; scrollbar-size-horizontal: 0; }
@@ -74,14 +59,9 @@ RadioSet:focus > RadioButton.-selected > .toggle--label { background: $hover; }
 #livehead { height: 1; padding: 0 1; }
 #live { height: 1fr; border: round $line; background: $bg; padding: 0 1; scrollbar-size-vertical: 1;
         scrollbar-size-horizontal: 0; }
-#runner { height: 1; color: #6f6580; margin-top: 1; }
-#benchcat { height: 3; margin-top: 1; }
-#results { display: none; height: 1fr; padding: 0 1; }
-#run.results #results { display: block; }
-#run.results #middle { display: none; }
+#runner { height: 1; color: $hint; margin-top: 1; }
 #run.results #tally { display: none; }
 #run.results #runner { display: none; }
-#runhint { color: #6f6580; height: 1; }
 """
 
 ICON = {"setup": ("◌", DIM), "grading": ("⚖", LILAC), "passed": ("✓", MINT), "failed": ("✗", ROSE),
@@ -128,11 +108,11 @@ def landmarks(entries):
     return rows + entries[-1:] if entries else rows
 
 
-def bar(pct, width=34, colour=LILAC, lo=0.0):
+def bar(pct, width=34, colour=LILAC, lo=0.0, empty="#3d3349"):
     """A bar from lo% to 100%: scores bunched together (65-74%) still look different."""
     filled = max(1, round((pct - lo) / (100 - lo) * width)) if pct > lo else 0
     t = Text("━" * filled, style=f"bold {colour}")
-    t.append("╌" * (width - filled), style="#3d3349")
+    t.append("╌" * (width - filled), style=empty)
     return t
 
 
@@ -141,9 +121,9 @@ def floor_of(scores):
     return max(0, (int(min(scores)) - 10) // 10 * 10) if scores else 0
 
 
-class RealBenchApp(App):
+class RealBenchApp(BenchWindow):
     TITLE = "purr bench · real"
-    CSS_PATH = "purr.tcss"
+    CSS_PATH = ["purr.tcss", "bench.tcss"]
     CSS = CSS
     BINDINGS = [
         Binding("q", "stop_or_quit", "stop / quit", priority=True),
@@ -155,23 +135,10 @@ class RealBenchApp(App):
     ]
 
     def __init__(self, config, suite=None, size=None, jobs=6, edge_cases=False):
-        super().__init__()
-        self.config = config
+        super().__init__(config)
         self.choice = {"suite": suite or "terminal-bench", "size": size or "quick"}
         self.go_now = bool(suite and size)
         self.jobs, self.edge_cases = jobs, edge_cases
-        for name in themes.PALETTES:
-            self.register_theme(themes.make(name))
-        try:
-            choice = (STATE_DIR / "theme").read_text().strip()
-        except OSError:
-            choice = config.get("theme", themes.DEFAULT)
-        self.theme = f"purr-{themes.resolve(choice)}"
-        try:
-            self.pet = json.loads((STATE_DIR / "cat.json").read_text())
-        except (OSError, ValueError):
-            self.pet = {"name": config.get("cat_name", "Mochi")}
-        self.name_ = self.pet.get("name", "Mochi")
         self.job_run = None
         self.trials, self.rows = [], {}
         self.selected, self.follow = None, True
@@ -179,8 +146,6 @@ class RealBenchApp(App):
         self.finished_names = set()
         self.final = None  # (mood, headline, detail) once it's over
         self.published = False
-        self.cat_mood, self.cat_label, self.cat_detail, self.cat_tick, self.cat_until = "sleeping", "", "", 0, 0.0
-        self.night = themes.is_night()
 
     # ---- layout ----
 
@@ -267,7 +232,7 @@ class RealBenchApp(App):
             lo = floor_of([p for _, _, p in before])
             for version, date, pct in before[-6:]:
                 t.append(f"  {version[:20]:<21}", style=TEXT)
-                t.append_text(bar(pct, 26, PINK, lo))
+                t.append_text(bar(pct, 26, PINK, lo, empty=themes.colour(self, "line")))
                 t.append(f" {pct:.1f}%\n", style=PINK)
             t.append("\nquick runs compare purr versions; the other harnesses only have whole-set scores\n",
                      style=DIM)
@@ -278,7 +243,7 @@ class RealBenchApp(App):
             for e in landmarks(entries):
                 t.append(f"  #{e['rank']:<4}", style=DIM)
                 t.append(f"{(e['agent'] + ' · ' + e['model'])[:30]:<31}", style=TEXT)
-                t.append_text(bar(e["score"], 20, LILAC))
+                t.append_text(bar(e["score"], 20, LILAC, empty=themes.colour(self, "line")))
                 t.append(f" {e['score']:.1f}%\n", style=LILAC)
             if size == "submit":
                 t.append("\n5 tries a task and purr's web tool off, as the leaderboard asks; then\n", style=DIM)
@@ -290,7 +255,7 @@ class RealBenchApp(App):
             t.append(f"same model, published · bars start at {lo}%\n", style=DIM)
             for harness, pct in refs:
                 t.append(f"  {harness[:28]:<29}", style=TEXT)
-                t.append_text(bar(pct, 26, LILAC, lo))
+                t.append_text(bar(pct, 26, LILAC, lo, empty=themes.colour(self, "line")))
                 t.append(f" {pct:.1f}%\n", style=LILAC)
         self.query_one("#preview", Static).update(t)
 
@@ -521,7 +486,7 @@ class RealBenchApp(App):
                      key=lambda t: (t["state"], t["task"]))
         if not bad:
             return None
-        t = Table(box=box.SIMPLE_HEAD, border_style="#4a3a5c", header_style=f"bold {LILAC}", expand=True,
+        t = Table(box=box.SIMPLE_HEAD, border_style=themes.colour(self, "line-hi"), header_style=f"bold {LILAC}", expand=True,
                   padding=(0, 1), title=Text("✗ didn't pass", style=f"bold {PINK}"), title_justify="left")
         for col, just in (("task", "left"), ("how", "left"), ("time", "right"), ("cost", "right")):
             t.add_column(col, justify=just)
@@ -535,7 +500,7 @@ class RealBenchApp(App):
 
     def standings(self, pct):
         suite, size = self.job_run.suite, self.job_run.size
-        t = Table(box=box.ROUNDED, border_style="#4a3a5c", show_header=False, padding=(0, 1),
+        t = Table(box=box.ROUNDED, border_style=themes.colour(self, "line-hi"), show_header=False, padding=(0, 1),
                   title=Text("♛ where purr lands" if size != "quick" else "♛ quick runs so far", style=f"bold {PINK}"),
                   title_justify="left")
         t.add_column("who", no_wrap=True, min_width=30)
@@ -554,7 +519,7 @@ class RealBenchApp(App):
             rows.append(("purr (this run) ♡", pct, True))
         lo = 0 if suite == "terminal-bench-2" and size != "quick" else floor_of([r[1] for r in rows])
         for who, score, mine in sorted(rows, key=lambda r: -r[1]):
-            t.add_row(Text(who, style=f"bold {PINK}" if mine else TEXT), bar(score, 44, PINK if mine else LILAC, lo),
+            t.add_row(Text(who, style=f"bold {PINK}" if mine else TEXT), bar(score, 44, PINK if mine else LILAC, lo, empty=themes.colour(self, "line")),
                       Text(f"{score:.1f}%", style=f"bold {PINK}" if mine else LILAC))
         note = f"bars start at {lo}%"
         if size != "quick" and suite == "terminal-bench-2":
@@ -565,7 +530,7 @@ class RealBenchApp(App):
         return t
 
     def task_grid(self):
-        t = Table(box=box.ROUNDED, border_style="#4a3a5c", show_header=False, expand=True, padding=(0, 1),
+        t = Table(box=box.ROUNDED, border_style=themes.colour(self, "line-hi"), show_header=False, expand=True, padding=(0, 1),
                   title=Text("♡ task by task", style=f"bold {PINK}"), title_justify="left")
         cols = 3
         for _ in range(cols):
@@ -616,20 +581,13 @@ class RealBenchApp(App):
             self.notify(out[-1] if out else "publishing failed", severity="error", timeout=10)
 
     def action_open_job(self):
-        if self.job_run and self.job_run.job:
-            subprocess.Popen(["xdg-open", str(self.job_run.job)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if self.job_run:
+            self.open_path(self.job_run.job)
 
     # ---- Mochi ----
 
-    def mood(self, mood, detail, hold=0.0, label=None):
-        if mood != self.cat_mood or label:
-            self.cat_tick = 0 if mood != self.cat_mood else self.cat_tick
-            self.cat_label = label or cat.label_for(mood, self.name_)
-        self.cat_mood, self.cat_detail = mood, detail
-        self.cat_until = time.monotonic() + hold if hold else 0.0
-
     def tick(self):
-        if not self.screen.query("#benchcat"):  # closing: the widgets are already gone
+        if self.closing():
             return
         self.cat_tick += 1
         if not self.job_run:

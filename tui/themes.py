@@ -11,7 +11,13 @@ from pathlib import Path
 
 from textual.theme import Theme
 
+# purr's colours, the same in every theme (only the backgrounds change): every window imports them from here
 PINK, LILAC, PEACH, ROSE, MINT, TEXT = "#f5a9d0", "#c8a2f0", "#ffb8c8", "#f0829b", "#96dcaf", "#e9dff2"
+DIM, FAINT, CYAN = "#82788f", "#5e5469", "#8fd8e8"
+HINT, INK = "#6f6580", "#15101c"  # key hints; text on a pink button
+# each mode's colour: its scene in cat.py, the message box's bar in purr.tcss ($mode-code, ...)
+MODE_COLOUR = {"code": PINK, "ask": LILAC, "learn": ROSE, "pair": "#a8b8ff", "plan": CYAN,
+               "chat": PEACH, "create": MINT}
 
 # name -> background colours, darkest to lightest
 PALETTES = {
@@ -67,7 +73,18 @@ def make(name):
         name=f"purr-{name}", dark=True,
         primary=PINK, secondary=LILAC, accent=PEACH, warning=PEACH, error=ROSE, success=MINT,
         foreground=TEXT, background=c["bg"], surface=c["panel"], panel=c["panel-hi"],
-        variables={**c, "pink": PINK, "lilac": LILAC, "peach": PEACH,
+        variables={**c, "pink": PINK, "lilac": LILAC, "peach": PEACH, "rose": ROSE, "mint": MINT, "cyan": CYAN,
+                   "fg": TEXT, "dim": DIM, "hint": HINT, "ink": INK,
+                   **{f"mode-{m}": colour for m, colour in MODE_COLOUR.items()},
                    "border": c["line-hi"], "block-cursor-background": PINK,
                    "input-selection-background": c["line-hi"], "footer-background": c["panel"]},
     )
+
+
+def colour(app, name):
+    """A theme colour (line, line-hi, panel, ...) for Rich tables and bars, in the app's current
+    theme: hardcoded, they stayed plum in every other theme."""
+    try:
+        return app.get_css_variables().get(name) or PALETTES["plum"][name]
+    except Exception:  # noqa: BLE001 - not mounted yet: plum's
+        return PALETTES["plum"][name]

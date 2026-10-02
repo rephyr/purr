@@ -174,16 +174,16 @@ Screen {
     border-left: outer $pink;
 }
 /* each mode colours the message box's bar (while you type) and your messages sent in it */
-.mode-code #box:focus-within, .user.mode-code { border-left: outer #f5a9d0; }
-.mode-ask #box:focus-within, .user.mode-ask { border-left: outer #c8a2f0; }
-.mode-learn #box:focus-within, .user.mode-learn { border-left: outer #f0829b; }
-.mode-pair #box:focus-within, .user.mode-pair { border-left: outer #a8b8ff; }
-.mode-plan #box:focus-within, .user.mode-plan { border-left: outer #8fd8e8; }
-.mode-chat #box:focus-within, .user.mode-chat { border-left: outer #ffb8c8; }
-.mode-create #box:focus-within, .user.mode-create { border-left: outer #96dcaf; }
+.mode-code #box:focus-within, .user.mode-code { border-left: outer $mode-code; }
+.mode-ask #box:focus-within, .user.mode-ask { border-left: outer $mode-ask; }
+.mode-learn #box:focus-within, .user.mode-learn { border-left: outer $mode-learn; }
+.mode-pair #box:focus-within, .user.mode-pair { border-left: outer $mode-pair; }
+.mode-plan #box:focus-within, .user.mode-plan { border-left: outer $mode-plan; }
+.mode-chat #box:focus-within, .user.mode-chat { border-left: outer $mode-chat; }
+.mode-create #box:focus-within, .user.mode-create { border-left: outer $mode-create; }
 
 /* private mode: a mint bar on the message box whatever the mode (after the mode rules, so it wins) */
-.private #box, .private #box:focus-within { border-left: outer #96dcaf; }
+.private #box, .private #box:focus-within { border-left: outer $mint; }
 
 #prompt, #prompt:focus {
     height: auto;

@@ -10,17 +10,16 @@ import random
 
 from rich.text import Text
 
+from tui.themes import DIM, LILAC, MODE_COLOUR, PINK
+
 EARS = " /\\_/\\♡"  # the ♡ is a little bow on the ear
 SIT = " > ^ < "
 WIDTH = 19  # the cat and its extras; the label starts after this
 
-PINK = "#f5a9d0"
-LILAC = "#c8a2f0"
 HOT = "#ff8fcf"     # the bow and hearts
 SPARKLE = "#ffd6f0"
 MOON = "#d9c8ff"
 SUN = "#ffc9a8"
-DIM = "#82788f"
 
 
 def _frames(lines_per_frame):
@@ -224,8 +223,6 @@ def _startled():
 
 # ---- a little scene for each mode, played when you switch to it (in the mode's colour) ----
 
-MODE_COLOUR = {"code": PINK, "ask": LILAC, "learn": "#f0829b", "pair": "#a8b8ff", "plan": "#8fd8e8",
-               "chat": "#ffb8c8", "create": "#96dcaf"}
 
 MODE_ART = {
     "code": [  # at her laptop

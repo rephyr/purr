@@ -1,0 +1,23 @@
+/* What purr bench and purr bench --real share, on top of purr.tcss. Colours are theme
+   variables (tui/themes.py), never hex: each window adds only its own layout. */
+
+#setup { align: center top; padding: 1 2; }
+#title { width: 100%; text-align: center; }
+#subtitle { width: 100%; text-align: center; color: $dim; margin-bottom: 1; }
+#start { margin-top: 1; background: $button; color: $fg; border: none; min-width: 20; }
+#start:focus { background: $pink; color: $ink; text-style: bold; }
+#setuphint { width: 100%; text-align: center; color: $hint; margin-top: 1; }
+
+#run { display: none; padding: 0 2; }
+#run.show { display: block; }
+#setup.hide { display: none; }
+#bar { width: 1fr; }
+#bar Bar > .bar--bar { color: $pink; background: $line; }
+#bar Bar > .bar--complete { color: $mint; }
+#count { width: auto; margin-left: 2; }
+#middle { height: 1fr; }
+#benchcat { height: 3; margin-top: 1; }
+#results { display: none; height: 1fr; padding: 0 1; }
+#run.results #results { display: block; }
+#run.results #middle { display: none; }
+#runhint { color: $hint; height: 1; }

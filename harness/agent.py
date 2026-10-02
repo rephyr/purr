@@ -19,161 +19,25 @@ from .limits import LOCAL, Limits
 from .free import FreeRouter, rest_for
 from .mcp import Mcp
 from . import checks
+from .prompts import (  # noqa: F401 - the words purr says; some only re-exported for others
+    SYSTEM, ASK_TOOLS, LEARN, LEARN_NUDGE, LEARN_SHORTEN, PAIR,
+    PAIR_HAND_BACK, CHAT, CREATE, PLAN, TICKET_WORK, TIME_INTRO,
+    TIME_NOTES, CUT_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK,
+    ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
+    HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
+    ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE,
+)
 from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, run_shell, schemas
 
-SYSTEM = """You are {model}, an AI model, working as a coding agent. You are running inside purr, \
-a small terminal program that gives you tools and shows your replies to the user. purr is only \
-the program around you; it is not you. If someone asks who or what you are, say you are {model} \
-(served by {provider}) running in purr. Don't invent a name, persona or backstory, and don't claim \
-to be a different model.
 
-Environment
-- Project folder: {root} (use paths relative to it, like src/app.py, not full paths)
-- Today: {date}
-- System: Linux
-
-Tools
-- {look} to look around; edit_file, write_file, run to make changes.
-- todo: a short task list, only for work with several steps (not for questions or chat).{task}
-- The user approves every edit and command. If they say no, stop and wait for them.
-- edit_file needs old_text copied exactly from the file, without the line numbers read_file adds.
-
-How to work
-- Understand before changing: find the right files with grep or list_files and read them. Never guess what a file contains or how a library behaves: read it (its source or docs).
-- Do what was asked, no more. Keep changes small and match the existing style, naming and indentation (tabs or spaces).
-- After changing code, check it (run the tests or a quick command) when the project allows it.
-- When something fails, read the error and fix the cause. Don't repeat a step that just failed.
-- Don't create files the task doesn't need. Never run destructive commands (rm -rf, git reset --hard, force pushes) unless asked.
-- If the request is unclear, ask one short question instead of guessing.
-
-Replies
-- Short and plain. Say what you changed and where (file and line).
-- Be honest: say when something failed or you're unsure, and never claim you ran or checked something you didn't."""
-
-ASK_TOOLS = """Tools
-- {look} to look around. This is ask mode: you can't change files or run commands.
-- Explain, answer and plan. If something should change, say exactly where and what (file, \
-line, the new code) instead of doing it."""
-
-LEARN = """How to work: learn mode
-The user is here to learn by writing code themselves. You are their pair programmer and teacher.
-- Understand first: find and read the files that matter, like always. Never guess what a file contains.
-- Write the boring parts yourself: setup, imports, wiring, boilerplate, tests. Leave the interesting \
-part to the user: the 3 to 10 lines where the real idea is (the logic, the algorithm, the decision).
-- One idea per piece. If the feature has two ideas (say stacking items, then a limit per stack), \
-leave only the first now; the second comes after the user has done the first.
-- Leave the piece in the file as a short comment where the code goes, in the file's own comment \
-style, two lines at most: the task in one sentence, and one small hint (a function or idea to use). \
-The hint must never spell out the steps or the code: working those out is what the user is here for. \
-For example:
-    # TODO(you): if a slot already holds this item, add to it instead of making a new slot
-    # hint: loop over self.slots and look at slot[0]
-  Keep the code around it runnable (a pass or return placeholder under the comment).
-- Then tell the user, short: where the TODO(you) is (file and line), what it should do, and one \
-line starting with "✦ why:" about the idea behind it.
-- Never write the TODO(you) code yourself, even when it is easy. Only when the user asks you to \
-("show me", "just do it"): then write it and explain it line by line.
-
-When the user says done or check
-- Read what they wrote and run the tests or the code.
-- Start with what is good. Then at most one or two things to improve, as questions or hints \
-("what happens when the list is empty?"). Don't fix their code for them: they fix it.
-- When it works, remove the TODO(you) and hint comments, then offer the next piece.
-
-When the user is stuck ("hint", "help", "I don't get it")
-- Each time a little more: first a question that points the way, then the idea, then a tiny \
-example in a different setting. The full answer only when they ask for it.
-
-Replies
-- Short, friendly and plain. Explain a new word the first time you use it. No lectures.
-- Be honest: say when something failed or you're unsure, and never claim you ran or checked something you didn't."""
-
-LEARN_NUDGE = """(purr: this is learn mode, and you changed files without leaving anything for the \
-user to write. If the change has an interesting part (real logic, not boilerplate), take it back \
-out now: put a TODO(you) comment with a hint where it goes, keep a placeholder so the code still \
-runs, and tell the user where it is. If the user asked you to write it, or it really was all \
-boilerplate, just say so.)"""
-
-LEARN_SHORTEN = """(purr: the TODO(you) comment at {where} is {n} lines long. Make it two lines: the \
-task in one sentence and one small hint that doesn't give away the steps or the code. Also, if it \
-asks for two ideas at once, keep only the first. Change the comment now; say anything else in your reply.)"""
 LEARN_TODO_LINES = 4  # a longer TODO(you) comment has usually written out the answer
 
 TODO_YOU = "TODO(you)"
 
-PAIR = """How to work: pair mode
-You and the user are pair programming: you take turns at the keyboard.
-- Work in small steps: one change at a time (one edit, or a few edits for one small thing). After \
-it, purr hands the keyboard back to the user.
-- If the task needs more than a couple of steps, first say the plan in 2 to 4 short lines and ask \
-if it sounds right, before changing anything.
-- When you hand back, say in 1 to 3 lines what you did and what you would do next, so the user can \
-say "go", change direction, or take over.
-- The user edits files too. purr shows you what they changed since your last turn ("the user \
-changed"). Build on their code: never undo or rewrite it. If you see a bug in it, say so and ask \
-before fixing it.
-- When the user asks for your opinion or a review, give it straight: what works, what you would \
-change and why.
-- Understand before changing: find the right files and read them. Never guess what a file contains.
-- Keep changes small and match the existing style, naming and indentation (tabs or spaces).
-
-Replies
-- Short and plain, like talking to a friend at the same desk.
-- Be honest: say when something failed or you're unsure, and never claim you ran or checked something you didn't."""
-
-PAIR_HAND_BACK = """(purr: pair mode: that was your step, the keyboard goes back to the user now. \
-Don't call any more tools. In 1 to 3 short lines say what you did and what you would do next.)"""
 
 PAIR_SNAPSHOT_FILES = 3000  # files remembered to spot the user's own edits (text, < 200 kB each)
 PAIR_DIFF_CHARS = 6000      # the most of the user's changes shown to the model at once
 
-CHAT = """You are {model}, an AI model, chatting with the user inside purr, a small terminal \
-program. purr is only the program around you; it is not you. If someone asks who or what you are, \
-say you are {model} (served by {provider}). Don't invent a name, persona or backstory.
-
-Be warm, natural and honest. Keep replies fairly short unless the user wants more, and say so \
-when you don't know something. In this mode you can't see or change any files. Today is {date}."""
-
-CREATE = """You are {model}, an AI model, and the user's creative partner inside purr, a small \
-terminal program. purr is only the program around you; it is not you. If someone asks who you \
-are, say you are {model} (served by {provider}).
-
-Brainstorm, imagine and write with the user: names, ideas, game designs, stories, plans. Offer a \
-few different directions rather than one, be specific and playful, build on what the user likes, \
-and ask a question back when it would help. In this mode you can't see or change any files. \
-Today is {date}."""
-
-PLAN = """You are planning work for a small local coding model. Look around the project with \
-your read tools first. Break the request below into tickets the model can do on its own, one at a \
-time and in order; together they must cover the whole request. Don't do the work yourself.
-
-Reply with only the tickets, each one exactly like this:
-
-## A short title
-Files: the exact paths it touches (one to three)
-Change: what to do, naming the functions or classes to add or change
-Done when: a command to run, or a fact that must be true
-
-Rules:
-- Each ticket touches one to three files and is small enough for the model to finish in one go.
-- Each ticket runs in a fresh chat and can't see the others, so it must be self-contained.
-- Order the tickets so each one builds on the last.
-- The project's tests must still pass after every ticket, so put a function and its first caller \
-in the same ticket.
-
-The request:
-{request}"""
-
-TICKET_WORK = """(purr: plan ticket {i}/{total}. Do this ticket only; don't work on later \
-tickets. When it's done, reply with a short summary of what you changed.)
-
-The whole plan is for: {request}
-
-Tickets (✓ = done):
-{titles}
-
-This ticket:
-{ticket}"""
 
 # mode -> (which tools, what it's for). The TUI's chip and /mode use this.
 MODES = {
@@ -186,79 +50,15 @@ MODES = {
     "create": ("none", "brainstorming and writing, no tools, a bit more random"),
 }
 
-TIME_INTRO = """(purr: you have about {minutes} minutes for this. Get a version that meets every hard \
-requirement in place early, then improve it: when the time is up, only what's in the files counts.)"""
-
-TIME_NOTES = [  # (share of the time gone, what to say then)
-    (0.5, "(purr: about {left} minutes left. If what the task asks for doesn't exist or doesn't work "
-          "yet, make a working version now; polish only after that.)"),
-    (0.8, "(purr: only about {left} minutes left. Stop exploring: make sure what the task asks for "
-          "is in place and works, and check it.)"),
-    (0.92, "(purr: about {left} minutes left: no new experiments. Make sure the files the task asks for "
-           "exist and meet its requirements, then finish.)"),
-]
 
 REASONING_KEEP = 2  # past replies whose thinking goes back to providers that want it (echo_reasoning)
 IMAGES_KEEP = 3     # images (look_at_image) sent again with every request: only the latest few
 
-CUT_NUDGE = """(purr: your reply hit the output limit and was cut off, so nothing in it happened. \
-Carry on from where you were, but don't write code or long plans in your reply: put code straight \
-into the files with write_file or edit_file (a long file in a few parts), and keep your reply short.)"""
 
-EMPTY_NUDGE = """(purr: your reply was empty. Look at the last results you got: if anything looks \
-wrong, fix it now; if everything is done, give a short summary of what you changed.)"""
-
-SERVICES = """If the task needs something to keep running after you finish (a server, a VM, a \
-service), check it's running in the background (not tied to a command or session that ends) and \
-that it answers."""
-
-FINAL_CHECK_LIGHT = """(purr: before you finish, read the user's request again. Is every part done, \
-including any tests they asked for, and checked where you can?{services} If not, do it now; \
-otherwise reply with a short summary of what you changed.)"""
-
+TEST_TIMEOUT = 180  # seconds for a run of the project's tests (the final check, plan mode)
 REMIND_EVERY = 8  # model calls between reminders of the request (reminders = false turns them off)
 
-FINAL_CHECK = """(purr: before you finish, read the user's request again and go through it point by \
-point. Is every part done, including any tests they asked for, and did you check it (run the tests \
-or the code) where you can? Then try 2 or 3 inputs other than the example, within what the request \
-describes (empty input, duplicates, the exact boundary of a limit), for example with python3 -c; \
-don't change behaviour the request specifies.{services} If something is missing, untested or breaks, \
-fix it now. If everything is really done, reply with a short summary of what you changed.)"""
 
-# one-shot runs (benchmarks, purr -p): what failed on Terminal-Bench was mostly the spec, not the
-# code: a tuple where a list was asked for, one image tested where the grader used 50, a choice the
-# task left open settled by guessing instead of reading what the named library does
-# DeepSWE showed what the first version missed: checks on inputs where a wrong reading gives the
-# same answer (1-character cells, an override set on one side only), expectations copied from the
-# code's own output, the request's notation overruled by the code's habits (x() where it wrote x),
-# and a scratch test file left behind that broke the real ones
-ONE_SHOT_CHECK = """(purr: before you finish{time}: hidden tests will check your work on other inputs and \
-against the request's exact wording. Go through your requirements list and the request again, \
-sentence by sentence: 1. Every file, name and \
-signature it gives exists exactly as written (path, name, x() or x, format, types). 2. For each rule \
-it states (if/unless/only/order/precedence/overrides), work out the expected result from the request \
-text first, then check it on an input where a wrong reading would give a different answer; test \
-both sides of each condition and override (set both, conflicting). Never copy an expectation from \
-your own output. 3. Measure every limit it states, with a margin on scores. 4. The request's wording \
-and notation beat the code's habits; only choices it leaves open follow the given code. If two \
-requirements seem to conflict, take the reading that satisfies both. Don't undo an earlier choice \
-without a reason from the request.{scratch}{services}{nobody} Fix what fails, then reply in at most \
-3 lines.)"""
-
-# one-shot runs that check, find nothing and stop with most of the time left (DeepSWE: 13 of 90
-# minutes) get one more, different look: evidence for every requirement
-EVIDENCE_PASS = """(purr: you have about {left} of {total} minutes left, so use some of it before you \
-finish. Make a short list: one line per requirement in the request, with the command and output \
-that shows it holds. Every line without direct evidence: test it now, on an input that would catch \
-a wrong reading. Fix what fails, then reply in at most 3 lines.)"""
-
-SCRATCH_NOTE = (" You created these files: {files}. Delete the ones that are scratch work the task "
-                "doesn't need (a leftover test file can break the real tests); a new test file must not "
-                "depend on another new one.")
-
-ONE_SHOT_SHORT_CHECK = (" Check now: 1. every file the request names exists at that exact path, with the "
-                        "name, format and types it describes; 2. every limit it states (size, time, score) is "
-                        "met, with a margin on scores.)")
 ONE_SHOT_STEPS = 150  # one-shot runs with a time limit: nobody can say "keep going", so a fixed cap
 ONE_SHOT_STEPS_FREE = 200  # without a time limit (at least this, or max_steps if that's higher)
 CHECK_STEPS = 10      # steps left for the final check once the cap is hit
@@ -287,70 +87,12 @@ SYSTEM_DIRS = {"bin", "boot", "dev", "etc", "home", "lib", "lib64", "opt", "proc
                "srv", "sys", "usr", "var"}  # named on their own, they don't open the whole folder
 INTERACTIVE = re.compile(r"\b(ssh|qemu|vm|repl|interactive|tmux|telnet|gdb)\b", re.I)
 
-NOBODY = (" Nobody will answer a question: decide from the task, the files and the tools' defaults, "
-          "make the files match, and finish without asking.")
 # a final reply that hands a choice back to someone who isn't there
 HEDGE = re.compile(r"say so|tell me if|if you'?d (rather|prefer|like)|if you (want|prefer|intended)|"
                    r"say the word|shall i|want me to|judge?ment call", re.I)
 
 REFINE_MODES = ("auto", "on", "off")
 
-REFINE = """You turn a user's short or vague request into a clear task for a coding agent that \
-works in this project. Use only what you can see below: don't invent files, functions or \
-requirements. Where the request is unclear, keep that part general instead of guessing. When tests \
-fail, don't decide whether the code or the test is wrong: say to find out why they fail. Don't \
-narrow the request either: if it doesn't say what exactly to return or include, don't decide it.
-
-Write it like this, short:
-Task: one or two sentences
-Where: the files that most likely matter (from the list)
-Steps: 2 to 5 short steps
-Done when: how to check it worked (tests to run, or what should be true)
-
-Reply with only that.
-
-Project files:
-{files}
-{notes}
-The user's request:
-{request}"""
-
-HELPER = """
-
-You are a helper for another agent: it gave you one research job. You can only read (files, grep, \
-the web). Do the job, then reply with a clear, complete summary of what you found, with file paths \
-and line numbers. Your reply is all the other agent will see."""
-
-# the model that wrote a change reads its own assumptions back; a call with only the request and the
-# diff doesn't (DeepSWE: a spec's x() overruled by habit, a rule quoted and then built the other way)
-REVIEW = """You review a code change against the request it was made for. You did not write it. \
-Compare them point by point and list every requirement in the request that the change does not meet \
-or gets wrong (a name, a signature, a type, an order, a case it doesn't handle, "all" done as "one"), \
-quoting the request's words and saying where in the diff. Don't suggest style changes or anything the \
-request didn't ask for. If it meets every requirement, answer exactly: ALL MET
-
-The request:
-{request}
-
-The change (unified diff, cut where long):
-{diff}"""
-
-REVIEW_NOTE = """(purr: a second reader compared the request with your changes and says:
-{findings}
-Check each against the request and the code: fix what's really wrong, ignore what isn't, then \
-finish in at most 3 lines.)"""
-
-COMPACT = """Below is a conversation between a user and you (a coding agent). It is getting too long, \
-so write a summary that lets you carry on the work without the original. Include:
-- what the user wants (their goals and requests; quote important wording)
-- decisions made and things the user said yes or no to
-- files read and changed (paths, what changed)
-- what is done, what is left, and the very next step
-- errors met and how they were solved
-Be complete but short. Use bullet points. Don't add anything that isn't in the conversation.
-
-CONVERSATION:
-{transcript}"""
 
 # PURR_STATE moves saved chats and history elsewhere (tests use it to stay away from your real ones)
 STATE_DIR = Path(os.environ.get("PURR_STATE") or Path.home() / ".local/state/purr")
@@ -372,10 +114,6 @@ def _notes(path, label):
     return f"\n\n{label}:\n{notes}"
 
 
-TASK_LINE = ("\n- task: send a helper to explore many files or the web and report back, "
-             "so this chat stays small.")
-
-
 MCP_HINTS = [  # one short line each: the prompt goes with every request
     ({"outline", "find_symbol"}, "- {names}: outline a file, then read just the lines you need."),
 ]
@@ -394,26 +132,6 @@ def _mcp_lines(names):
     if names:
         lines.append(f"- also: {', '.join(names)} (see their descriptions)")
     return "\n".join(lines)
-
-
-ASK_LINE = "- If the request is unclear, ask one short question instead of guessing."
-# one-shot runs (purr -p, benchmarks): nobody reads a question, so settle it yourself. Seen on
-# Terminal-Bench: purr assumed one reading, ended with "say so and I'll rerun", and failed the task;
-# another normalised images from memory where the given code did it differently.
-ONE_SHOT_LINE = (
-    "- Nobody answers during this run: decide unclear points from the task, the files and the tools' "
-    "defaults; never end with a question; use -y/--yes (no stdin).\n"
-    "- Follow the request's exact wording and notation (names, x() or x, types, order); where it leaves a "
-    "choice open, prefer what the given code, data and named tools already do (read their source).\n"
-    "- Hard requirements (exact paths, names, format, size/time/score limits) are part of done.\n"
-    # a requirement misread at the start stays misread ("all winning moves" became "a move")
-    "- First put the request's requirements in your todo list, one each, quoting the words that set "
-    "them (all, only, exactly, every, at least, unless); check them off with evidence as you go.\n"
-    "- Hidden tests will check your files on other inputs; they aren't on this machine. Scratch files go in /tmp.")
-# one-shot runs drop what only matters with a person watching: who purr is, the approvals
-IDENTITY_TAIL = SYSTEM[SYSTEM.index(" You are running inside purr"):SYSTEM.index("\n\nEnvironment")]
-APPROVE_LINE = "\n- The user approves every edit and command. If they say no, stop and wait for them."
-FOLDER_LINE = "(use paths relative to it, like src/app.py, not full paths)"
 
 
 def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=(), overview="", one_shot=False):
@@ -502,6 +220,20 @@ def calls_from_text(text):
 
 LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file does
 ROUTINE_TOOLS = (*LOOKS, "outline", "find_symbol", "todo")  # steps routine_effort may think less after
+
+
+def _new_stats():
+    """A turn's numbers, every key there from the start (purr bench and the window read them)."""
+    return {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0, "in": 0,
+            "cached": 0, "providers": {}}
+
+
+def _cached(usage):
+    """Prompt tokens a provider served from its cache (DeepSeek's and OpenAI's ways of saying it)."""
+    hit = (usage or {}).get("prompt_cache_hit_tokens")
+    if hit is None:
+        hit = ((usage or {}).get("prompt_tokens_details") or {}).get("cached_tokens")
+    return hit or 0
 
 
 def _ends(text, head, tail):
@@ -855,9 +587,7 @@ class Agent:
             self.refine_mode = "auto" if self.limits.helpers == "full" else "off"
         if getattr(self, "tools", None):
             self.tools.limits = self.limits  # 32k and 1M models need different caps
-        if getattr(self, "messages", None):
-            # the system prompt names the model, so it changes with it
-            self.messages[0] = {"role": "system", "content": self._system()}
+        self._refresh_system()  # the system prompt names the model, so it changes with it
 
     def set_mode(self, mode):
         """code: every tool. ask: look but never change. chat / create: no tools at all."""
@@ -868,8 +598,7 @@ class Agent:
         self.tools.no_tools = MODES[mode][0] == "none"
         if mode == "pair" and not self.helper:
             self.pair_snapshot()  # from now on, file changes between turns are the user's
-        if getattr(self, "messages", None):
-            self.messages[0] = {"role": "system", "content": self._system()}
+        self._refresh_system()
 
     def switch_mode(self, mode):
         """set_mode for your own switches (shift+tab, /mode, /plan): also moves to the model that
@@ -926,7 +655,7 @@ class Agent:
         edit them, then hand each ticket to the executor (a small local model) one at a time. Each
         ticket runs in a fresh agent, so the small model's context holds only the ticket in front
         of it, not the whole task."""
-        self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+        self.turn_stats = _new_stats()
         self.title = self.title or " ".join(text.split())[:70]
         plan = self.config.get("plan", {})
         planner_name = plan.get("planner") or self.model_name
@@ -991,7 +720,7 @@ class Agent:
         """`/plan run [N]`: run the tickets already in .purr/tickets/ from ticket N, without
         planning again. The files are read fresh, so any edits the user made count."""
         self.stop_flag = False  # an Esc on an earlier answer mustn't stop this before it starts
-        self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+        self.turn_stats = _new_stats()
         self.title = self.title or "plan"
         self.messages.append({"role": "user", "content": f"(purr: run the plan tickets from {start})"})
         self.run_tickets(start, self._saved_request())
@@ -1003,7 +732,7 @@ class Agent:
         record in the parent chat and saves it."""
         executor_name = executor_name or self.config.get("plan", {}).get("executor") or "qwen3_6-iq3"
         if not getattr(self, "turn_stats", None):
-            self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+            self.turn_stats = _new_stats()
         tickets = read_tickets(self.root)
         total = len(tickets)
         if not tickets:
@@ -1084,8 +813,7 @@ class Agent:
         added, not for ones the project already had. None when there's nothing to run."""
         if not cmd:
             return None
-        self.view.activity("run", cmd)
-        output, code = run_shell(cmd, self.root, timeout=180)
+        output, code = self._run_tests(cmd, ask=False)
         baseline = {"code": code, "failed": failed_tests(output)}
         if code != 0:
             known = f" ({len(baseline['failed'])} failing)" if baseline["failed"] else ""
@@ -1099,8 +827,7 @@ class Agent:
         name = f"ticket {i}/{total}: {title}"
         if not cmd:
             return True, f"✓ {name} (not checked: no tests found)", None
-        self.view.activity("run", cmd)
-        output, code = run_shell(cmd, self.root, timeout=180)
+        output, code = self._run_tests(cmd, ask=False)
         now = {"code": code, "failed": failed_tests(output)}
         if code == 0:
             return True, f"✓ {name} (tests pass)", now
@@ -1197,7 +924,7 @@ class Agent:
         self.messages = data["messages"]
         if data.get("mode") in MODES:
             self.set_mode(data["mode"])
-        self.messages[0] = {"role": "system", "content": self._system()}
+        self._refresh_system()
         self.title = data.get("title", "")
         self.session_cost = data.get("cost", 0.0)
         self.session_out = data.get("out", 0)
@@ -1273,6 +1000,11 @@ class Agent:
     def set_one_shot(self, on=True):
         """One-shot runs: the prompt says nobody will answer, so settle unclear points yourself."""
         self.one_shot = on
+        self._refresh_system()
+
+    def _refresh_system(self):
+        """Rebuild the system prompt (the model, the mode or one-shot changed). Before the chat
+        exists (set_model runs before new()), there's nothing to rebuild."""
         if getattr(self, "messages", None):
             self.messages[0] = {"role": "system", "content": self._system()}
 
@@ -1372,9 +1104,7 @@ class Agent:
         if isinstance(usage.get("cost"), (int, float)):
             return usage["cost"]  # OpenRouter says what the call really cost
         prompt = usage.get("prompt_tokens", 0)
-        hit = usage.get("prompt_cache_hit_tokens")
-        if hit is None:
-            hit = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+        hit = _cached(usage)
         miss = usage.get("prompt_cache_miss_tokens", prompt - hit)
         out = usage.get("completion_tokens", 0)
         times = 2 if is_peak(self.provider) else 1
@@ -1389,8 +1119,7 @@ class Agent:
         self.session_cost += cost
         self.session_out += usage.get("completion_tokens", 0)
         self.session_in += usage.get("prompt_tokens", 0)
-        self.session_cached += (usage.get("prompt_cache_hit_tokens")
-                                or (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
+        self.session_cached += _cached(usage)
         if self.parent:
             self.parent.session_cost += cost
         return cost
@@ -1422,44 +1151,13 @@ class Agent:
             return self.plan_turn(text)
         if not self.title:
             self.title = " ".join(text.split())[:70]
-        content = self.expand(text)
-        if self.mode == "pair" and not self.helper:
-            yours = self.pair_changes()
-            if yours:
-                content += f"\n\n(purr: the user changed these files since your last turn:)\n{yours}"
-        open_todos = self.learn_todos() if self.mode == "learn" and not self.helper else []
-        if open_todos:  # small models lose track of what they left for the user: say it every time
-            content += f"\n\n(purr: {TODO_YOU} still in the code: {', '.join(open_todos)})"
-        self._started = time.monotonic()
-        self._time_said = set()
-        if self.time_limit and not self.helper:
-            content += "\n\n" + TIME_INTRO.format(minutes=max(1, round(self.time_limit / 60)))
-            if len(self.messages) == 1:
-                content += self._probe()
-        self.tools.deadline = self._started + self.time_limit if self.time_limit and not self.helper else None
-        self._request = text  # kept word for word through a compaction
-        if self.one_shot and not self.helper:
-            self._one_shot_setup(text)
-        self.messages.append({"role": "user", "content": content})
-        self.tools.begin_turn()
-        self._learn_nudged = bool(open_todos)  # pieces already out there: no need to leave new ones
-        self._pair_handing_back = False
-        self._learn_shortened = False
+        self._begin_turn(text)
+        self.messages.append({"role": "user", "content": self._turn_content(text)})
         turn_cost = 0.0
-        steps = 0
-        retries = 0
-        self._repeats = {}  # (tool, args) -> how often it's been called, and the last result
-        self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+        steps = retries = 0
         todo_only = 0  # steps in a row that did nothing but update the task list
         empty = 0      # empty answers nudged this turn
         cut = 0        # replies cut off at the output limit, nudged this turn
-        self._checked = False  # the final check (below) runs at most once a turn
-        self._acted = False    # ran a command, a terminal or an MCP tool that changes things
-        self._background = False  # started something that should keep running (a terminal, cmd &)
-        self._hedged = False   # one-shot: told once that nobody will answer its question
-        self._evidence = False  # one-shot: the second look (EVIDENCE_PASS) at most once
-        self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
-        self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
         cap = self._step_cap()
         try:
             while True:
@@ -1475,25 +1173,7 @@ class Agent:
                         if ans != "y":
                             break
                         steps = 1
-                ctx = self.model.get("context", 0)
-                if ctx and len(self.messages) > 4:
-                    used = self.context_used()
-                    if used > ctx * self.limits.prune_at:
-                        self._prune_old_tools()
-                        used = self.context_used()
-                    if used > ctx * self.limits.compact_at and len(self.messages) >= self._compact_again_at:
-                        try:
-                            done = self.compact(auto=True)
-                        except ApiError as e:
-                            # the summary call failed (a full context, a server hiccup): free what
-                            # can be freed without a model and carry on, rather than end the run
-                            self.view.note(f"compacting failed ({e}), trimming old output instead", "warn")
-                            done = None
-                        if not done:
-                            # nothing was freed: trim old output, and don't try again until the chat
-                            # has grown (every try is a long call that would fail the same way)
-                            self._prune_old_tools(keep=1)
-                            self._compact_again_at = len(self.messages) + 10
+                self._make_room()
                 try:
                     if (self._helper_on("reminders") and self.mode == "code" and not self.helper
                             and steps > 1 and (steps - 1) % REMIND_EVERY == 0):
@@ -1507,22 +1187,8 @@ class Agent:
                     self.view.note(f"api error: {e}", "error")
                     self.failed = str(e)  # the turn ended on the model server, not on the task
                     break
-                turn_cost += self._count(reply["usage"])
+                turn_cost += self._record(reply)
                 self.save_log()  # after every step: a run that's killed (a time limit, a crash) keeps its chat and cost
-                self.turn_stats["out"] += (reply["usage"] or {}).get("completion_tokens", 0)
-                self.turn_stats["calls"] += 1
-                usage = reply["usage"] or {}
-                cached = usage.get("prompt_cache_hit_tokens") or (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
-                self.turn_stats["in"] = self.turn_stats.get("in", 0) + (usage.get("prompt_tokens") or 0)
-                self.turn_stats["cached"] = self.turn_stats.get("cached", 0) + cached
-                if reply.get("provider"):
-                    self.turn_stats.setdefault("providers", {})
-                    self.turn_stats["providers"][reply["provider"]] = self.turn_stats["providers"].get(reply["provider"], 0) + 1
-                self.turn_stats["model_s"] += reply.get("call_seconds", 0.0)
-                # Ollama sends a tool call as one piece at the very end, and a short answer is over
-                # in a blink: then there's no writing time to measure, so count the whole call
-                gen = reply.get("gen_seconds", 0.0)
-                self.turn_stats["gen"] += gen if gen >= 0.3 else reply.get("call_seconds", gen)
 
                 if not reply["tool_calls"] and "<function=" in reply["text"]:
                     reply["tool_calls"], reply["text"] = calls_from_text(reply["text"])
@@ -1535,17 +1201,7 @@ class Agent:
                     reply["tool_calls"] = []
                     self.view.note(f"⇄ held back for your go: {held}")
 
-                # content may only be null next to tool calls: Ollama refuses an empty reply's null
-                msg = {"role": "assistant", "content": reply["text"] or (None if reply["tool_calls"] else "")}
-                if reply["tool_calls"]:
-                    msg["tool_calls"] = [
-                        {"id": c["id"], "type": "function",
-                         "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
-                        for c in reply["tool_calls"]]
-                echo = self.provider.get("echo_reasoning")
-                if echo:
-                    msg[echo] = reply["reasoning"]
-                self.messages.append(msg)
+                self.messages.append(self._assistant_message(reply))
 
                 if reply["finish"] == "length":
                     self.view.note("(the reply hit the output limit and was cut off)", "error")
@@ -1573,8 +1229,7 @@ class Agent:
                             "(purr: your tool call came out as plain text, so it did not run. "
                             "Call the tool again.)"})
                         continue
-                    if (self._final_check(reply["text"]) or self._evidence_pass() or self._review() or self._learn_check()
-                            or self._hedge(reply["text"])):
+                    if self._one_more_look(reply["text"]):
                         continue
                     break
                 stopped = self._run_tools(reply["tool_calls"])
@@ -1605,8 +1260,7 @@ class Agent:
                 if all(c["name"] == "todo" for c in reply["tool_calls"]):
                     todo_only += 1
                     if reply["text"] and not self.tools.todos_left:
-                        if (self._final_check(reply["text"]) or self._evidence_pass() or self._review() or self._learn_check()
-                                or self._hedge(reply["text"])):
+                        if self._one_more_look(reply["text"]):
                             continue
                         break  # it answered and everything is done: that's the end
                     if todo_only >= 3:
@@ -1617,6 +1271,113 @@ class Agent:
         except Stopped as e:
             self.view.note("stopped", "warn")
             self.cut_off = e.partial  # the reply it was writing: only in the log, not the chat
+        self._after_turn(turn_cost)
+
+    def _begin_turn(self, text):
+        """Everything a turn starts from, in one place: the clock, the request, and every flag the
+        checks and nudges below use (each runs at most once a turn)."""
+        self._started = time.monotonic()
+        self._time_said = set()
+        self.tools.deadline = self._started + self.time_limit if self.time_limit and not self.helper else None
+        self._request = text  # kept word for word through a compaction
+        if self.one_shot and not self.helper:
+            self._one_shot_setup(text)
+        self.tools.begin_turn()
+        self.turn_stats = _new_stats()
+        self._repeats = {}  # (tool, args) -> how often it's been called, and the last result
+        self._learn_nudged = False  # learn mode: asked to leave a TODO(you) (_turn_content sets it)
+        self._pair_handing_back = False
+        self._learn_shortened = False
+        self._checked = False  # the final check runs at most once a turn
+        self._acted = False    # ran a command, a terminal or an MCP tool that changes things
+        self._background = False  # started something that should keep running (a terminal, cmd &)
+        self._hedged = False   # one-shot: told once that nobody will answer its question
+        self._evidence = False  # one-shot: the second look (EVIDENCE_PASS) at most once
+        self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
+        self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
+
+    def _turn_content(self, text):
+        """Your message as the model gets it: @files attached, your own edits (pair mode), the
+        TODO(you)s still open (learn mode), the time it has (with a time limit)."""
+        content = self.expand(text)
+        if self.mode == "pair" and not self.helper:
+            yours = self.pair_changes()
+            if yours:
+                content += f"\n\n(purr: the user changed these files since your last turn:)\n{yours}"
+        open_todos = self.learn_todos() if self.mode == "learn" and not self.helper else []
+        if open_todos:  # small models lose track of what they left for the user: say it every time
+            content += f"\n\n(purr: {TODO_YOU} still in the code: {', '.join(open_todos)})"
+        self._learn_nudged = bool(open_todos)  # pieces already out there: no need to leave new ones
+        if self.time_limit and not self.helper:
+            content += "\n\n" + TIME_INTRO.format(minutes=max(1, round(self.time_limit / 60)))
+            if len(self.messages) == 1:
+                content += self._probe()
+        return content
+
+    def _make_room(self):
+        """Before a call: trim old tool output when the context fills up, and compact when that's
+        not enough."""
+        ctx = self.model.get("context", 0)
+        if not ctx or len(self.messages) <= 4:
+            return
+        used = self.context_used()
+        if used > ctx * self.limits.prune_at:
+            self._prune_old_tools()
+            used = self.context_used()
+        if used > ctx * self.limits.compact_at and len(self.messages) >= self._compact_again_at:
+            try:
+                done = self.compact(auto=True)
+            except ApiError as e:
+                # the summary call failed (a full context, a server hiccup): free what
+                # can be freed without a model and carry on, rather than end the run
+                self.view.note(f"compacting failed ({e}), trimming old output instead", "warn")
+                done = None
+            if not done:
+                # nothing was freed: trim old output, and don't try again until the chat
+                # has grown (every try is a long call that would fail the same way)
+                self._prune_old_tools(keep=1)
+                self._compact_again_at = len(self.messages) + 10
+
+    def _record(self, reply):
+        """One model call into the session's and the turn's numbers. Returns its price."""
+        cost = self._count(reply["usage"])
+        usage = reply["usage"] or {}
+        s = self.turn_stats
+        s["out"] += usage.get("completion_tokens", 0)
+        s["calls"] += 1
+        s["in"] += usage.get("prompt_tokens") or 0
+        s["cached"] += _cached(usage)
+        if reply.get("provider"):
+            s["providers"][reply["provider"]] = s["providers"].get(reply["provider"], 0) + 1
+        s["model_s"] += reply.get("call_seconds", 0.0)
+        # Ollama sends a tool call as one piece at the very end, and a short answer is over
+        # in a blink: then there's no writing time to measure, so count the whole call
+        gen = reply.get("gen_seconds", 0.0)
+        s["gen"] += gen if gen >= 0.3 else reply.get("call_seconds", gen)
+        return cost
+
+    def _assistant_message(self, reply):
+        """The model's reply as a chat message (with its thinking, for providers that want it back)."""
+        # content may only be null next to tool calls: Ollama refuses an empty reply's null
+        msg = {"role": "assistant", "content": reply["text"] or (None if reply["tool_calls"] else "")}
+        if reply["tool_calls"]:
+            msg["tool_calls"] = [
+                {"id": c["id"], "type": "function",
+                 "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
+                for c in reply["tool_calls"]]
+        echo = self.provider.get("echo_reasoning")
+        if echo:
+            msg[echo] = reply["reasoning"]
+        return msg
+
+    def _one_more_look(self, reply_text):
+        """The model wants to stop: every check that may send it back once, in order. True when one
+        did (the turn goes on). One place, so a new check can't end up in only one of the stops."""
+        return (self._final_check(reply_text) or self._evidence_pass() or self._review()
+                or self._learn_check() or self._hedge(reply_text))
+
+    def _after_turn(self, turn_cost):
+        """The turn is over: save, show the numbers, and what's next in pair and learn mode."""
         self.save_log()
         self._status(turn_cost)
         changed = len(self.tools.undo_stack[-1]) if self.tools.undo_stack else 0
@@ -1874,18 +1635,27 @@ class Agent:
         else the model's size does (on for local models, off for API ones)."""
         return self.config[key] if key in self.config else self.limits.helpers == "full"
 
+    def _run_tests(self, cmd, ask=True):
+        """Run the project's tests: (output, exit code), or None when you said no. Plan mode doesn't
+        ask (ask=False): you approved the plan, its test runs between tickets included."""
+        self.view.activity("run", cmd)
+        if ask:
+            self.view.tool(f"run {cmd}")
+            ok, _ = self.tools._run_allowed(cmd)
+            if not ok:
+                return None
+        return run_shell(cmd, self.root, timeout=TEST_TIMEOUT)
+
     def _test_report(self):
         """For the final check: purr runs the project's tests itself, so the model sees the real
         result instead of trusting its own "tests pass". "" when there's nothing to run."""
         cmd = checks.test_command(self.root) if self.config.get("final_check_tests", True) else None
         if not cmd:
             return ""
-        self.view.activity("run", cmd)
-        self.view.tool(f"run {cmd}")
-        ok, _ = self.tools._run_allowed(cmd)
-        if not ok:
+        ran = self._run_tests(cmd)
+        if ran is None:
             return ""
-        output, code = run_shell(cmd, self.root, timeout=180)
+        output, code = ran
         self.view.tool_result("run", {"command": cmd}, f"{output}\n[exit code {code}]")
         tail = "\n".join(output.strip().splitlines()[-40:])
         verdict = "they pass" if code == 0 else (
@@ -1894,7 +1664,7 @@ class Agent:
             "in your answer")
         result = f"exit code {code}, {verdict}"
         if code == -1:  # stopped, not failed: something hangs, or the suite is just slow
-            result = "timed out after 180s: check whether a test hangs (run one file at a time)"
+            result = f"timed out after {TEST_TIMEOUT}s: check whether a test hangs (run one file at a time)"
         return f"(purr, not the user, ran the tests itself: `{cmd}` → {result})\n```\n{tail}\n```\n"
 
     def on_my_gpu(self):

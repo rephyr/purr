@@ -47,6 +47,23 @@ class CatTest(unittest.TestCase):
             self.assertIn(mode, cat.MODE_COLOUR, mode)
             self.assertIn(mode, cat.MODES_WHAT, mode)
             self.assertIn(f".mode-{mode} #box:focus-within", css, mode)
+            self.assertIn(f"outer $mode-{mode};", css, mode)  # the colour comes from themes.MODE_COLOUR
+
+    def test_the_stylesheets_use_only_colours_the_theme_has(self):
+        import re
+
+        from tui import bench_app, realbench_app, themes
+        known = set(themes.make("plum").variables)
+        from textual.app import App
+        known |= set(App().get_css_variables())
+        tui = Path(__file__).resolve().parent.parent / "tui"
+        sheets = {"purr.tcss": (tui / "purr.tcss").read_text(), "bench.tcss": (tui / "bench.tcss").read_text(),
+                  "bench_app": bench_app.CSS, "realbench_app": realbench_app.CSS}
+        for name, css in sheets.items():
+            for var in re.findall(r"\$([a-z][a-z0-9-]*)", css):
+                self.assertIn(var, known, f"{name}: ${var}")
+            if name != "purr.tcss":  # the bench windows: theme variables only, no hex colours
+                self.assertNotRegex(css, r"#[0-9a-fA-F]{6}\b", name)
 
     def test_labels_use_her_name(self):
         self.assertIn("Luna", cat.label_for("exploring", "Luna"))

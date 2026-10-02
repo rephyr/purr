@@ -265,10 +265,12 @@ class PurrAgent(BaseInstalledAgent):
             "/opt/uv/uv python install 3.12 >/dev/null; "
             f"ln -sf \"$(/opt/uv/uv python find 3.12)\" {PY}; chmod -R a+rX {REMOTE} /opt/uv; "
             f"{PY} -c 'import sys, tomllib; print(sys.version)'; "
-            # the gateway of the container's network is this machine (for a local model's bridge)
-            f"GW=$({PY} -c 'import socket, struct; print(next(socket.inet_ntoa(struct.pack(\"<L\", int(f[2], 16))) "
-            f"for f in (l.split() for l in open(\"/proc/net/route\")) if f[1] == \"00000000\"))'); "
-            f"sed -i \"s/{GATEWAY}/$GW/\" {REMOTE}/config.toml"))
+            # the gateway of the container's network is this machine (for a local model's bridge); only
+            # when the config asks for it, so an image with no default route still installs
+            f"if grep -q {GATEWAY} {REMOTE}/config.toml; then "
+            f"GW=$({PY} -c 'import socket, struct; print(next((socket.inet_ntoa(struct.pack(\"<L\", int(f[2], 16))) "
+            f"for f in (l.split() for l in open(\"/proc/net/route\")) if f[1] == \"00000000\"), \"\"))'); "
+            f"sed -i \"s/{GATEWAY}/$GW/\" {REMOTE}/config.toml; fi"))
 
     def task_time_limit(self):
         """The task's own agent time limit in seconds (its task.toml, times the job's multiplier), less
@@ -302,8 +304,10 @@ class PurrAgent(BaseInstalledAgent):
         limit = self.task_time_limit()
         timed = f"--time-limit {int(limit)} " if limit else ""
         await self.exec_as_agent(environment, command=(
-            f"{PY} {REMOTE}/purr.py \"$PWD\" --plain --yes {timed}-p {shlex.quote(instruction)} "
-            "2>&1 </dev/null | stdbuf -oL tee /logs/agent/purr.txt"), env=env)
+            # -u: purr's own output unbuffered, so the log fills as it goes (stdbuf did nothing for tee
+            # and isn't on every image)
+            f"{PY} -u {REMOTE}/purr.py \"$PWD\" --plain --yes {timed}-p {shlex.quote(instruction)} "
+            "2>&1 </dev/null | tee /logs/agent/purr.txt"), env=env)
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Tokens and cost from purr's saved chat (in the trial's logs)."""

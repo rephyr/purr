@@ -7,8 +7,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-PINK, LILAC, MINT, PEACH, CYAN = "#f5a9d0", "#c8a2f0", "#96dcaf", "#ffb8c8", "#8fd8e8"
-TEXT, DIM = "#e9dff2", "#82788f"
+from tui.themes import CYAN, DIM, LILAC, MINT, PEACH, PINK, TEXT  # noqa: E402
 
 # a 3-row pixel font for the big numbers
 FONT = {

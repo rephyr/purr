@@ -4,8 +4,6 @@ The runs themselves are harness/bench.py's run_all, in a background thread; this
 what it reports. q stops (the run going on is cancelled and not counted), and q again quits.
 """
 
-import json
-import subprocess
 import time
 from pathlib import Path
 
@@ -14,27 +12,24 @@ from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Input, ProgressBar, RichLog, SelectionList, Static, Switch
 from textual.widgets.selection_list import Selection
 
 from harness import bench, ui
-from harness.agent import STATE_DIR
 from tui import cat, themes
+from tui.window import BenchWindow
 
-PINK, LILAC, MINT, ROSE, PEACH, TEXT, DIM = "#f5a9d0", "#c8a2f0", "#96dcaf", "#f0829b", "#ffb8c8", "#e9dff2", "#82788f"
+from tui.themes import DIM, FAINT, LILAC, MINT, PEACH, PINK, ROSE, TEXT  # noqa: E402
 HARNESS_COLOUR = {"purr": PINK, "purr+refine": PEACH, "purr-nocheck": "#e7a6c9", "purr-bare": "#d99fc0",
                   "opencode": LILAC}
 
 CSS = """
-#setup { align: center top; padding: 1 2; }
-#title { width: 100%; text-align: center; margin-bottom: 0; }
-#subtitle { width: 100%; text-align: center; color: #82788f; margin-bottom: 1; }
 #lists { height: auto; max-height: 30; }
 .column { width: 1fr; height: auto; margin: 0 1; }
-.column > Static { color: #c8a2f0; text-style: bold; margin-bottom: 1; }
+.column > Static { color: $lilac; text-style: bold; margin-bottom: 1; }
 SelectionList { height: auto; max-height: 24; border: round $line; background: $panel; }
 SelectionList:focus { border: round $pink; }
 SelectionList > .option-list--option-highlighted { background: $hover; }
@@ -44,38 +39,22 @@ SelectionList > .selection-list--button-selected { color: $pink; background: tra
 SelectionList > .selection-list--button-highlighted { color: $line-hi; background: transparent; }
 SelectionList > .selection-list--button-selected-highlighted { color: $pink; background: transparent; text-style: bold; }
 #options { height: auto; margin-top: 1; }
-#options Static { width: auto; color: #82788f; padding: 1 1 0 0; }
+#options Static { width: auto; color: $dim; padding: 1 1 0 0; }
 #runs { width: 8; border: round $line; background: $panel; }
-#start { margin-top: 1; background: $button; color: #e9dff2; border: none; min-width: 20; }
-#start:focus { background: $pink; color: #15101c; text-style: bold; }
-#setuphint { width: 100%; text-align: center; color: #6f6580; margin-top: 1; }
 
-#run { display: none; padding: 0 2; }
-#run.show { display: block; }
-#setup.hide { display: none; }
 #runhead { height: auto; margin: 1 0; }
-#bar { width: 1fr; }
-#bar Bar > .bar--bar { color: $pink; background: $line; }
-#bar Bar > .bar--complete { color: #96dcaf; }
-#count { width: auto; margin-left: 2; }
-#middle { height: 1fr; }
 #runs_table { width: 1fr; height: 1fr; border: round $line; background: $panel; }
 #board { width: 46; height: 1fr; margin-left: 1; padding: 0 1; border: round $line; }
-#benchcat { height: 3; margin-top: 1; }
-#results { display: none; height: 1fr; padding: 0 1; }
 #watch { display: none; width: 2fr; height: 1fr; margin-left: 1; padding: 0 1; border: round $line;
          background: $bg; scrollbar-size-vertical: 1; }
 #run.watching #watch { display: block; }
 #run.watching #board { display: none; }
-#run.results #results { display: block; }
-#run.results #middle { display: none; }
-#runhint { color: #6f6580; height: 1; }
 """
 
 
-class BenchApp(App):
+class BenchApp(BenchWindow):
     TITLE = "purr bench"
-    CSS_PATH = "purr.tcss"
+    CSS_PATH = ["purr.tcss", "bench.tcss"]
     CSS = CSS  # the bench's own layout, on top of purr.tcss
     BINDINGS = [
         Binding("q", "stop_or_quit", "stop / quit", priority=True),
@@ -88,24 +67,11 @@ class BenchApp(App):
     ]
 
     def __init__(self, config, args):
-        super().__init__()
-        self.config, self.args = config, args
-        for name in themes.PALETTES:  # same colours as purr itself
-            self.register_theme(themes.make(name))
-        try:
-            choice = (STATE_DIR / "theme").read_text().strip()
-        except OSError:
-            choice = config.get("theme", themes.DEFAULT)
-        self.theme = f"purr-{themes.resolve(choice)}"
-        try:
-            self.pet = json.loads((STATE_DIR / "cat.json").read_text())
-        except (OSError, ValueError):
-            self.pet = {"name": config.get("cat_name", "Mochi")}
+        super().__init__(config)
+        self.args = args
         self.results, self.running, self.done = [], False, False
         self.started = self.run_started = None
         self.report = None
-        self.cat_mood, self.cat_label, self.cat_detail, self.cat_tick, self.cat_until = "sleeping", "", "", 0, 0.0
-        self.night = themes.is_night()
         self.live_kind, self.live_line = None, ""  # the watch panel's line being streamed into
 
     # ---- layout ----
@@ -345,7 +311,7 @@ class BenchApp(App):
                              (s["harness"], HARNESS_COLOUR.get(s["harness"], TEXT)))
 
     def _ranking(self, rank):
-        t = Table(box=box.ROUNDED, border_style="#4a3a5c", show_header=True, header_style=f"bold {LILAC}",
+        t = Table(box=box.ROUNDED, border_style=themes.colour(self, "line-hi"), show_header=True, header_style=f"bold {LILAC}",
                   title=Text("♛ ranking", style=f"bold {PINK}"), title_justify="left", expand=True, padding=(0, 1))
         for col, just in (("", "right"), ("who", "left"), ("solved", "left"), ("hidden tests", "left"),
                           ("avg time", "right"), ("tok/s", "right"), ("mistakes", "right")):
@@ -357,11 +323,11 @@ class BenchApp(App):
             colour = HARNESS_COLOUR.get(s["harness"], TEXT)
             per = 1 if s["runs"] <= 16 else s["runs"] / 16  # long benches: one heart per few runs
             hearts.append("♥" * round(s["solved"] / per), style=colour)
-            hearts.append("♡" * (round(s["runs"] / per) - round(s["solved"] / per)), style="#4f465c")
+            hearts.append("♡" * (round(s["runs"] / per) - round(s["solved"] / per)), style=FAINT)
             hearts.append(f" {s['solved']}/{s['runs']}", style=colour)
             pct = s["passed"] / max(s["total"], 1)
             bar = Text("█" * round(pct * 12), style=MINT)
-            bar.append("░" * (12 - round(pct * 12)), style="#3d3349")
+            bar.append("░" * (12 - round(pct * 12)), style=themes.colour(self, "line"))
             bar.append(f" {100 * pct:.0f}%", style=MINT)
             avg = s["seconds"] / s["runs"]
             speed = bench.speed(s) or "–"
@@ -372,9 +338,9 @@ class BenchApp(App):
         return t
 
     def _stats(self, rank):
-        t = Table(box=box.SIMPLE_HEAD, border_style="#4a3a5c", header_style=f"bold {LILAC}",
+        t = Table(box=box.SIMPLE_HEAD, border_style=themes.colour(self, "line-hi"), header_style=f"bold {LILAC}",
                   title=Text("✧ every number", style=f"bold {PINK}"), title_justify="left", expand=True,
-                  padding=(0, 1), row_styles=["", "on #221b2a"])
+                  padding=(0, 1), row_styles=["", f"on {themes.colour(self, 'panel')}"])
         cols = [("tokens", "right"), ("calls", "right"), ("tool\ncalls", "right"),
                 ("tool\nerrors", "right"), ("failed\nedits", "right"), ("made-up\ntools", "right"),
                 ("made-up\nfiles", "right"), ("calls\nas text", "right"), ("false\n'done'", "right"),
@@ -398,7 +364,7 @@ class BenchApp(App):
         return t
 
     def _grid(self, rank):
-        t = Table(box=box.ROUNDED, border_style="#4a3a5c", header_style=f"bold {LILAC}",
+        t = Table(box=box.ROUNDED, border_style=themes.colour(self, "line-hi"), header_style=f"bold {LILAC}",
                   title=Text("♡ task by task", style=f"bold {PINK}"), title_justify="left", expand=True,
                   padding=(0, 1))
         t.add_column("task")
@@ -492,16 +458,11 @@ class BenchApp(App):
 
     # ---- the cat ----
 
-    def mood(self, mood, detail, hold=0.0):
-        if mood != self.cat_mood:
-            self.cat_tick = 0
-            name = self.pet.get("name", "Mochi")
-            self.cat_label = f"{name} is benchmarking" if mood == "running" else cat.label_for(mood, name)
-        self.cat_mood, self.cat_detail = mood, detail
-        self.cat_until = time.monotonic() + hold if hold else 0.0
+    def cat_label_for(self, mood):
+        return f"{self.name_} is benchmarking" if mood == "running" else super().cat_label_for(mood)
 
     def tick(self):
-        if not self.screen.query("#benchcat"):  # closing: the widgets are already gone
+        if self.closing():
             return
         self.cat_tick += 1
         now = time.monotonic()
@@ -554,5 +515,4 @@ class BenchApp(App):
             self.exit("real")
 
     def action_open_report(self):
-        if self.report:
-            subprocess.Popen(["xdg-open", str(self.report)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.open_path(self.report)

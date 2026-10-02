@@ -88,7 +88,8 @@ def grade(task, work):
     if not ran or int(ran.group(1)) < total:  # it couldn't even import the code
         return 0, total, syntax
     bad = re.search(r"FAILED \((.*?)\)", out)
-    wrong = sum(int(n) for n in re.findall(r"=(\d+)", bad.group(1))) if bad else 0
+    # "FAILED (failures=1, errors=2, skipped=3)": skipped tests aren't wrong ones
+    wrong = sum(int(n) for n in re.findall(r"(?:failures|errors)=(\d+)", bad.group(1))) if bad else 0
     return max(0, total - wrong), total, syntax
 
 
@@ -349,7 +350,11 @@ def run_opencode(config, model, task, work, log_dir, timeout):
         if STOP.is_set() or time.monotonic() > deadline:
             r["timeout"] = not STOP.is_set()
             os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:  # it ignored SIGTERM: make sure it goes
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
             break
         time.sleep(0.2)
     for t in readers:

@@ -473,8 +473,11 @@ class Tools:
                 return (f"error: new_text contains the placeholder {hole!r} instead of real code; that would "
                         "delete code. Put the real lines in new_text.")
         p = self._path(path)
-        if self._outside(path):
-            return self._outside(path)
+        outside = self._outside(path)
+        if outside:
+            return outside
+        if not p.exists():  # a guessed path: the closest real ones, not a bare FileNotFoundError
+            return self._no_such_file(path)
         if self.read_before_edit and p.exists() and p.resolve() not in self.seen:
             self.warnings.append(f"{path}: edit before reading refused")
             return (f"error: read {path} first (read_file), so your old_text matches what is really in it. "
@@ -537,8 +540,9 @@ class Tools:
 
     def t_write_file(self, path, content):
         p = self._path(path)
-        if self._outside(path):
-            return self._outside(path)
+        outside = self._outside(path)
+        if outside:
+            return outside
         if self.read_before_edit and p.exists() and p.resolve() not in self.seen:
             self.warnings.append(f"{path}: overwrite before reading refused")
             return f"error: {path} already exists: read it first (read_file) before replacing it."

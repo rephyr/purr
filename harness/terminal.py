@@ -38,10 +38,13 @@ class PtySession:
     def __init__(self, command, cwd):
         self.buffer, self.lock = [], threading.Lock()
         self.pid, self.fd = pty.fork()
-        if self.pid == 0:  # the child: become the program
-            os.chdir(cwd)
-            os.environ["TERM"] = "dumb"
-            os.execvp("bash", ["bash", "-c", command] if command else ["bash", "-i"])
+        if self.pid == 0:  # the child: become the program, or end (never a second copy of purr)
+            try:
+                os.chdir(cwd)
+                os.environ["TERM"] = "dumb"
+                os.execvp("bash", ["bash", "-c", command] if command else ["bash", "-i"])
+            finally:
+                os._exit(127)
         threading.Thread(target=self._read, daemon=True).start()
 
     def _read(self):

@@ -264,6 +264,22 @@ class WindowTest(unittest.IsolatedAsyncioTestCase):
             self.assertIs(getattr(realbench_app.RealBenchApp, name), getattr(App, name), name)
         self.assertEqual(realbench_app._mtime(Path("/no/such/log")), 0.0)
 
+    def test_both_bench_windows_share_mochi(self):
+        from tui import bench_app, window
+        real = realbench_app.RealBenchApp({"models": {}, "providers": {}, "cat_name": "Mochi"})
+        local = bench_app.BenchApp({"models": {}, "providers": {}, "cat_name": "Mochi"}, mock.Mock())
+        for app in (real, local):
+            self.assertIsInstance(app, window.BenchWindow)
+            self.assertTrue(app.theme.startswith("purr-"))
+        local.mood("running", "x")
+        self.assertEqual(local.cat_label, f"{local.name_} is benchmarking")
+        real.mood("proud", "x", label="custom")
+        self.assertEqual((real.cat_label, real.cat_detail), ("custom", "x"))
+        with mock.patch.object(window.subprocess, "Popen") as popen:
+            real.open_path(None)
+            real.open_path(Path("/tmp/job"))
+        self.assertEqual(popen.call_args.args[0], ["xdg-open", "/tmp/job"])
+
     async def test_from_setup_to_mochis_verdict(self):
         job = make_job()
         quick = realbench.PUBLISH.QUICK

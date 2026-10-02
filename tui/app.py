@@ -31,17 +31,10 @@ from harness.agent import STATE_DIR, Agent, list_sessions
 
 HISTORY = STATE_DIR / "history"
 
-PINK = "#f5a9d0"
-LILAC = "#c8a2f0"
-DIM = "#82788f"
-MINT = "#96dcaf"
-ROSE = "#f0829b"
-PEACH = "#ffb8c8"  # warnings and "paid": soft peach-pink, not yellow
-TEXT = "#e9dff2"
 from harness import VERSION  # noqa: E402
+from tui.themes import CYAN, DIM, LILAC, MINT, MODE_COLOUR, PEACH, PINK, ROSE, TEXT  # noqa: E402,F401 - PEACH: warnings, "paid"
 ATTACHED = re.compile(r'\n\n<file path="[^"]*">\n.*?\n</file>', re.S)
 MENTION_AT_CURSOR = re.compile(r"(?:^|\s)@(\S*)$")
-CYAN = "#8fd8e8"
 TEST_COMMAND = re.compile(r"\b(pytest|unittest|tests?|jest|vitest|cargo test|go test|npm test|gut)\b")
 # tool name -> (icon, verb, colour) for the lines in the chat
 TOOL_LOOK = {
@@ -612,7 +605,7 @@ class PurrApp(App):
             with Center(id="dockrow"), Vertical(id="dock"):
                 yield CatWidget(id="cat")
                 with Vertical(id="box"):
-                    yield PromptArea(id="prompt", placeholder='ask anything…  "fix the failing test"',
+                    yield PromptArea(id="prompt", placeholder=self.MODE_HINT["code"],
                                      soft_wrap=True, highlight_cursor_line=False, compact=True)
                     with Horizontal(id="modelline"):
                         yield Static(id="model")
@@ -685,6 +678,8 @@ class PurrApp(App):
             return
         for m in MODE_NAMES:
             self.screen.set_class(m == mode, f"mode-{m}")
+        if shown is None:  # starting up, maybe in another mode (a session carried on): its hint
+            self.prompt.placeholder = self.MODE_HINT[mode]
         self.shown_mode = mode
         moved, self.mode_moved = getattr(self, "mode_moved", None), None
         if shown is not None and f"mode_{mode}" in cat.MOODS:
@@ -706,7 +701,9 @@ class PurrApp(App):
             self.busy_since = self.busy_since or time.monotonic()
         else:
             self.busy_since = None
-        self.query_one("#status", Static).update(Text(self.status_text, style=DIM))
+        if self.status_text != getattr(self, "status_shown", None):  # every 0.12 s: redraw only a change
+            self.status_shown = self.status_text
+            self.query_one("#status", Static).update(Text(self.status_text, style=DIM))
         self.update_pinned()
         self.cat_tick += 1
         now = time.monotonic()
@@ -1011,22 +1008,25 @@ class PurrApp(App):
     async def end_reply(self):
         await self._close_block_async()
 
-    async def _close_block_async(self):
-        if self.md_stream is not None:
-            await self.md_stream.stop()
-            self.md_stream = None
+    async def _close_block_async(self, block=None):
+        """Finish a streamed block: `block` is (stream, widget, text) when _close_block handed it
+        over; otherwise the current one, whose fields are reset first."""
+        if block is None:
+            block = (self.md_stream, self.cur_widget, self.cur_text)
+            self.md_stream, self.cur_kind, self.cur_widget, self.cur_text = None, None, None, ""
+        stream, widget, text = block
+        if stream is not None:
+            await stream.stop()
             # the stream can drop its last piece when stopped, so set the full text once
-            await self.cur_widget.update(self.cur_text)
+            await widget.update(text)
             self._follow()
-        self.cur_kind = self.cur_widget = None
-        self.cur_text = ""
 
     def _close_block(self):
+        # the closing runs later: hand it its own copies and reset now, or the next block's first
+        # pieces would land in this one (or this close would wipe the next block)
         if self.md_stream is not None:
-            self.call_later(self._close_block_async)
-        else:
-            self.cur_kind = self.cur_widget = None
-            self.cur_text = ""
+            self.call_later(self._close_block_async, (self.md_stream, self.cur_widget, self.cur_text))
+        self.md_stream, self.cur_kind, self.cur_widget, self.cur_text = None, None, None, ""
 
     def replay(self):
         """Draw a loaded chat: your messages, the answers and the tool lines."""
@@ -1164,21 +1164,18 @@ class PurrApp(App):
 
     @work(thread=True, exclusive=True)
     def run_turn(self, text):
-        self.job = "turn"
-        try:
-            self.agent.turn(text)
-        except Exception as e:  # keep the app alive whatever happens in the agent
-            self.view.note(f"purr broke: {type(e).__name__}: {e}", "error")
-        finally:
-            summary = (getattr(self.agent, "turn_stats", None) or {}).get("summary", "")
-            self.call_from_thread(self._turn_done, summary.lstrip("✓ "))
+        self._agent_job("turn", self.agent.turn, text)
 
     @work(thread=True, exclusive=True)
     def run_plan(self, start):
-        self.job = "plan"
+        self._agent_job("plan", self.agent.run_plan, start)  # run the tickets already in .purr/tickets/
+
+    def _agent_job(self, job, call, *args):
+        """A turn or a plan, in its worker thread: then the turn's summary, whatever broke."""
+        self.job = job
         try:
-            self.agent.run_plan(start)  # run the tickets already in .purr/tickets/
-        except Exception as e:
+            call(*args)
+        except Exception as e:  # keep the app alive whatever happens in the agent
             self.view.note(f"purr broke: {type(e).__name__}: {e}", "error")
         finally:
             summary = (getattr(self.agent, "turn_stats", None) or {}).get("summary", "")
@@ -1417,8 +1414,12 @@ class PurrApp(App):
         if self.menu_items:
             self._menu_hide()
         elif self.busy:
-            self.agent.stop_flag = True
-            self.set_cat("startled", "")
+            self._stop_agent()
+
+    def _stop_agent(self):
+        """esc / ctrl+c while purr works: it stops after the step going on."""
+        self.agent.stop_flag = True
+        self.set_cat("startled", "")
 
     # ---- copying: drag over any text to copy it; ctrl+c copies a selection too ----
 
@@ -1464,15 +1465,14 @@ class PurrApp(App):
             self.screen.clear_selection()
             return
         if self.busy:
-            self.agent.stop_flag = True
-            self.set_cat("startled", "")
+            self._stop_agent()
         else:
             self.prompt.clear()
 
     # ---- modes: code, ask, learn, pair, plan, chat, create ----
 
-    MODE_LOOK = {"code": ("✎", PINK), "ask": ("◈", LILAC), "learn": ("✿", ROSE), "pair": ("⇄", "#a8b8ff"), "plan": ("✦", CYAN),
-                 "chat": ("♡", PEACH), "create": ("✧", MINT)}
+    MODE_LOOK = {m: (icon, MODE_COLOUR[m]) for m, icon in
+                 {"code": "✎", "ask": "◈", "learn": "✿", "pair": "⇄", "plan": "✦", "chat": "♡", "create": "✧"}.items()}
     MODE_HINT = {"code": 'ask anything…  "fix the failing test"', "ask": "ask about the code, nothing gets changed…",
                  "learn": "what do you want to learn to build? purr leaves the key lines to you ✿",
                  "pair": "let's build it together: one step each, edit the code yourself any time ⇄",
