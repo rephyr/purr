@@ -2,10 +2,11 @@
 
     tbench/publish.py ~/.local/state/purr/tbench/<job folder>
 
-Two kinds of run get published, each in its own table: the full run (all 89 Terminal-Bench 2.0
+Two kinds of run get published, each in its own table: the full run (all 89 Terminal-Bench
 tasks x 3 attempts, compared with other harnesses' published scores) and the quick run (the 20
-tasks in tbench/quick-tasks.txt x 1, compared only with other quick runs). Anything else is
-refused, so a partial run can't sneak into the tables.
+tasks in tbench/quick-tasks.txt x 1, compared only with other quick runs). Terminal-Bench 2.1 and
+the older 2.0 runs get separate tables. Anything else is refused, so a partial run can't sneak
+into the tables.
 
 Writes benchmarks/terminal-bench/results/<purr version>.json (every trial, plus the totals) and
 rebuilds benchmarks/terminal-bench/README.md: how the run was done, a row per purr version, and
@@ -66,6 +67,19 @@ def load_job(job):
     return job, config, trials
 
 
+# Harbor's dataset name -> the tables it goes in. 2.1 is what the reference scores used; the first
+# runs were on 2.0 (the same 89 tasks before 2.1's fixes) and keep their own tables.
+DATASETS = {"terminal-bench/terminal-bench-2-1": "Terminal-Bench 2.1", "terminal-bench": "Terminal-Bench 2.0"}
+
+
+def bench_name(dataset):
+    """ "Terminal-Bench 2.1", "Terminal-Bench 2.0", or None (a dataset we don't publish)."""
+    name, _, version = str(dataset).partition("@")
+    if name == "terminal-bench" and not version.startswith("2.0"):
+        return None
+    return DATASETS.get(name)
+
+
 QUICK = [line.split()[0] for line in (Path(__file__).parent / "quick-tasks.txt").read_text().splitlines()
          if line.strip() and not line.startswith("#")]
 
@@ -74,7 +88,7 @@ def profile(dataset, trials):
     """ "full", "quick", or None (not a run we publish)."""
     tasks = {t["task"] for t in trials}
     per_task = len(trials) / max(len(tasks), 1)
-    if not dataset.startswith("terminal-bench@2.0"):
+    if not bench_name(dataset):
         return None
     if tasks == set(QUICK) and per_task == 1:
         return "quick"
@@ -139,9 +153,9 @@ def readme(results):
         "- **attempts:** 3 per task; pass@1 = the average share of attempts that passed (timeouts and",
         "  errors count as fails, like on the leaderboards), ± the standard error over tasks",
         "- **purr:** as shipped (its MCP servers on), the exact commit recorded with every trial",
-        "- **dataset:** `terminal-bench@2.0` from Harbor's registry. The reference scores below are on",
-        "  Terminal-Bench 2.1, which has the same 89 tasks with fixes and isn't in the registry, so the",
-        "  comparison is close but not exact.",
+        "- **dataset:** Terminal-Bench 2.1 (`terminal-bench/terminal-bench-2-1` in Harbor's registry), the",
+        "  version the reference scores below used. The first runs were on 2.0 (the same 89 tasks before",
+        "  2.1's fixes), so they have their own tables: don't compare across the two.",
         "",
         "## purr, version by version",
         "",
@@ -150,13 +164,23 @@ def readme(results):
             "|---|---|---|---|---|---|---|---|---|"]
     quick_head = [h.replace(" pass@3 |", "").replace("---|---|---|---|---|---|---|---|---|", "---|---|---|---|---|---|---|---|")
                   for h in head]
-    lines += ["### Full runs: all 89 tasks, 3 attempts each", ""] + head
-    lines += [row(r, full=True) for r in sorted(results, key=key) if r.get("profile") == "full"] or ["| (none yet) |"]
-    lines += ["", "### Quick runs: the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each", "",
-              "Cheap (well under $1 with DeepSeek V4.1 Flash) and quick, for seeing whether a purr version got better or worse. With 20",
-              "tasks and one try each the margin is wide (see ±): compare quick runs with each other, not",
-              "with the full runs or the leaderboards.", ""] + quick_head
-    lines += [row(r, full=False) for r in sorted(results, key=key) if r.get("profile") == "quick"] or ["| (none yet) |"]
+    for bench in DATASETS.values():
+        mine = [r for r in sorted(results, key=key) if bench_name(r.get("dataset")) == bench]
+        if not mine and bench != "Terminal-Bench 2.1":
+            continue  # an old dataset only shows when it has runs
+        full = [row(r, full=True) for r in mine if r.get("profile") == "full"]
+        quick = [row(r, full=False) for r in mine if r.get("profile") == "quick"]
+        if bench == "Terminal-Bench 2.1" or full:
+            lines += [f"### {bench}: full runs, all 89 tasks, 3 attempts each", ""] + head
+            lines += full or ["| (none yet) |"]
+            lines += [""]
+        lines += [f"### {bench}: quick runs, the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each", ""]
+        if bench == "Terminal-Bench 2.1":
+            lines += ["Cheap (well under $1 with DeepSeek V4.1 Flash) and quick, for seeing whether a purr version got",
+                      "better or worse. With 20 tasks and one try each the margin is wide (see ±): compare quick runs",
+                      "with each other, not with the full runs or the leaderboards.", ""]
+        lines += quick_head + (quick or ["| (none yet) |"]) + [""]
+    lines.pop()
     lines += ["", "## Other harnesses, same model (published, full runs)", "",
               "| harness | model | benchmark | pass@1 | source |", "|---|---|---|---|---|"]
     for ref in REFERENCE:

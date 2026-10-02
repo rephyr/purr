@@ -3,9 +3,9 @@
 # every harness through Terminal-Bench 2.1 with DeepSeek V4.1 Flash (their model card): 3 attempts
 # per task, temperature 1.0, top_p 0.95, a 1M context, 500 steps, Linux containers. The model is
 # served by DeepSeek itself (OpenRouter pinned to the "deepseek" host, no fallback to other hosts,
-# some of which run it at fp4/fp8). Terminal-Bench 2.1 isn't in Harbor's registry: 2.0 has the same
-# 89 tasks, which the results say. DeepSeek's host trains on prompts, so OpenRouter has to allow
-# "paid model training" (openrouter.ai/settings/privacy). Then: tbench/publish.py <job folder>.
+# some of which run it at fp4/fp8), on Terminal-Bench 2.1 like theirs (PURR_DATASET=terminal-bench@2.0
+# for the older 2.0, which gets its own tables). DeepSeek's host trains on prompts, so OpenRouter has
+# to allow "paid model training" (openrouter.ai/settings/privacy). Then: tbench/publish.py <job folder>.
 #
 #   tbench/fair.sh              the full run: all 89 tasks x 3 (~$15-30, a night)
 #   tbench/fair.sh --quick      the quick set: the same 20 tasks x 1 (~$1-2, under an hour), for
@@ -42,7 +42,7 @@ except urllib.error.HTTPError as e:
             "https://openrouter.ai/settings/privacy") if "training" in detail else ""
     sys.exit(f"DeepSeek's host on OpenRouter refused a test request ({e.code}): {detail}{hint}")
 PY
-export PURR_DATASET="${PURR_DATASET:-terminal-bench@2.0}"
+export PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2-1}"
 export PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}"
 # shellcheck disable=SC2086  # $TASKS is a list of -i options
 exec tbench/run.sh -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS \

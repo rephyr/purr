@@ -232,6 +232,8 @@ def main():
         return 1
     agent.tools.trust_all = args.yes
     agent.time_limit = args.time_limit
+    if args.prompt:
+        agent.set_one_shot()  # one task, then purr exits: there's nobody to answer a question
     if args.resume:
         sessions = list_sessions(agent.root)
         if sessions:

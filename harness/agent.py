@@ -34,12 +34,12 @@ Environment
 
 Tools
 - {look} to look around; edit_file, write_file, run to make changes.
-- todo: only for work with several steps (never for questions or chat): keep a short task list and update it as you go.{task}
+- todo: a short task list, only for work with several steps (not for questions or chat).{task}
 - The user approves every edit and command. If they say no, stop and wait for them.
 - edit_file needs old_text copied exactly from the file, without the line numbers read_file adds.
 
 How to work
-- Understand before changing: find the right files with grep or list_files and read them. Never guess what a file contains.
+- Understand before changing: find the right files with grep or list_files and read them. Never guess what a file contains or how a library behaves: read it (its source or docs).
 - Do what was asked, no more. Keep changes small and match the existing style, naming and indentation (tabs or spaces).
 - After changing code, check it (run the tests or a quick command) when the project allows it.
 - When something fails, read the error and fix the cause. Don't repeat a step that just failed.
@@ -186,17 +186,20 @@ MODES = {
     "create": ("none", "brainstorming and writing, no tools, a bit more random"),
 }
 
-TIME_INTRO = """(purr: you have about {minutes} minutes for this. Get a working version of what's \
-asked for in place early, then improve it: when the time is up, only what's in the files counts.)"""
+TIME_INTRO = """(purr: you have about {minutes} minutes for this. Get a version that meets every hard \
+requirement in place early, then improve it: when the time is up, only what's in the files counts.)"""
 
 TIME_NOTES = [  # (share of the time gone, what to say then)
     (0.5, "(purr: about {left} minutes left. If what the task asks for doesn't exist or doesn't work "
           "yet, make a working version now; polish only after that.)"),
     (0.8, "(purr: only about {left} minutes left. Stop exploring: make sure what the task asks for "
           "is in place and works, and check it.)"),
+    (0.92, "(purr: about {left} minutes left: no new experiments. Make sure the files the task asks for "
+           "exist and meet its requirements, then finish.)"),
 ]
 
 REASONING_KEEP = 2  # past replies whose thinking goes back to providers that want it (echo_reasoning)
+IMAGES_KEEP = 3     # images (look_at_image) sent again with every request: only the latest few
 
 CUT_NUDGE = """(purr: your reply hit the output limit and was cut off, so nothing in it happened. \
 Carry on from where you were, but don't write code or long plans in your reply: put code straight \
@@ -205,18 +208,70 @@ into the files with write_file or edit_file (a long file in a few parts), and ke
 EMPTY_NUDGE = """(purr: your reply was empty. Look at the last results you got: if anything looks \
 wrong, fix it now; if everything is done, give a short summary of what you changed.)"""
 
+SERVICES = """If the task needs something to keep running after you finish (a server, a VM, a \
+service), check it's running in the background (not tied to a command or session that ends) and \
+that it answers."""
+
 FINAL_CHECK_LIGHT = """(purr: before you finish, read the user's request again. Is every part done, \
-including any tests they asked for, and checked where you can? If not, do it now; otherwise reply with \
-a short summary of what you changed.)"""
+including any tests they asked for, and checked where you can?{services} If not, do it now; \
+otherwise reply with a short summary of what you changed.)"""
 
 REMIND_EVERY = 8  # model calls between reminders of the request (reminders = false turns them off)
 
 FINAL_CHECK = """(purr: before you finish, read the user's request again and go through it point by \
 point. Is every part done, including any tests they asked for, and did you check it (run the tests \
-or the code) where you can? Then think of 2 or 3 edge cases the request implies but nobody spelled \
-out (empty input, a value that only shows up in one place, duplicates, the exact boundary of a \
-limit) and quickly try them, for example with python3 -c. If something is missing, untested or \
-breaks, fix it now. If everything is really done, reply with a short summary of what you changed.)"""
+or the code) where you can? Then try 2 or 3 inputs other than the example, within what the request \
+describes (empty input, duplicates, the exact boundary of a limit), for example with python3 -c; \
+don't change behaviour the request specifies.{services} If something is missing, untested or breaks, \
+fix it now. If everything is really done, reply with a short summary of what you changed.)"""
+
+# one-shot runs (benchmarks, purr -p): what failed on Terminal-Bench was mostly the spec, not the
+# code: a tuple where a list was asked for, one image tested where the grader used 50, a choice the
+# task left open settled by guessing instead of reading what the named library does
+ONE_SHOT_CHECK = """(purr: before you finish{time}: your files will be checked on inputs other than the \
+example. Read the request again word by word: 1. Every file it names exists at that exact path, with \
+the name, format and types it describes; read your output back the way the request describes it. \
+2. Measure every limit it states (size, time, score), leaving a margin on scores. 3. Run it exactly \
+the way the task says it will be run, on 2-3 inputs other than the example. 4. For each choice the \
+task left open, check how the given code or the named library does it (read it).{services}{nobody} \
+Fix what fails, then reply in at most 3 lines.)"""
+
+ONE_SHOT_SHORT_CHECK = (" Check now: 1. every file the request names exists at that exact path, with the "
+                        "name, format and types it describes; 2. every limit it states (size, time, score) is "
+                        "met, with a margin on scores.)")
+ONE_SHOT_STEPS = 150  # one-shot runs with a time limit: nobody can say "keep going", so a fixed cap
+ONE_SHOT_STEPS_FREE = 200  # without a time limit (at least this, or max_steps if that's higher)
+CHECK_STEPS = 10      # steps left for the final check once the cap is hit
+
+# one-shot runs on a bare machine (benchmarks): what's there and what isn't, in one line, so the
+# model doesn't spend five steps finding out gcc is missing or pip has no network
+PROBE = r"""
+miss=""
+for c in gcc g++ make cmake rustc cargo go java node npm git curl wget pip3 uv; do
+  command -v "$c" >/dev/null 2>&1 || miss="$miss $c"
+done
+py=$(python3 -c 'import sys; print("python %d.%d" % sys.version_info[:2])' 2>/dev/null || echo "no python3")
+pkgs=$(python3 - <<'EOF' 2>/dev/null
+import importlib.util as u
+names = ["numpy", "pandas", "scipy", "torch", "sklearn", "PIL", "cv2", "requests", "pytest"]
+print(" ".join(n for n in names if u.find_spec(n) is None))
+EOF
+)
+net=$(python3 -c 'import socket; socket.create_connection(("pypi.org", 443), 3); print("network ok")' 2>/dev/null || echo "no network")
+echo "$py; $net; missing commands:${miss:- none}; missing python packages: ${pkgs:-none}"
+"""
+PROJECT_FILES = ("pyproject.toml", "package.json", "Cargo.toml", "go.mod", "pom.xml", "CMakeLists.txt")
+
+ABS_PATH = re.compile(r"(?<![\w.~/])/(?:[\w.+-]+/)*[\w.+-]+")
+SYSTEM_DIRS = {"bin", "boot", "dev", "etc", "home", "lib", "lib64", "opt", "proc", "root", "run", "sbin",
+               "srv", "sys", "usr", "var"}  # named on their own, they don't open the whole folder
+INTERACTIVE = re.compile(r"\b(ssh|qemu|vm|repl|interactive|tmux|telnet|gdb)\b", re.I)
+
+NOBODY = (" Nobody will answer a question: decide from the task, the files and the tools' defaults, "
+          "make the files match, and finish without asking.")
+# a final reply that hands a choice back to someone who isn't there
+HEDGE = re.compile(r"say so|tell me if|if you'?d (rather|prefer|like)|if you (want|prefer|intended)|"
+                   r"say the word|shall i|want me to|judge?ment call", re.I)
 
 REFINE_MODES = ("auto", "on", "off")
 
@@ -264,7 +319,8 @@ LOG_DIR = STATE_DIR / "sessions"
 GLOBAL_NOTES = Path.home() / ".config/purr/AGENTS.md"
 NOTES_FILES = ["AGENTS.md"]
 NOTES_MAX = 20000
-RETRY_WAITS = [2, 5, 10]  # seconds between tries when the server hiccups
+RETRY_WAITS = [5, 15, 30]  # seconds between tries when an API server hiccups (a minute in all)
+RETRY_WAITS_LOCAL = [2]    # Ollama on this machine: one more try; it's up or it isn't
 REPEAT_NUDGE = 2  # same tool call this many times: tell the model to stop repeating
 
 
@@ -283,7 +339,6 @@ TASK_LINE = ("\n- task: send a helper to explore many files or the web and repor
 
 MCP_HINTS = [  # one short line each: the prompt goes with every request
     ({"outline", "find_symbol"}, "- {names}: outline a file, then read just the lines you need."),
-    ({"godot_class", "python_api"}, "- {names}: the real API here; check before using one you aren't sure of."),
 ]
 OVERVIEW_CHARS = 2000      # the overview in the system prompt, for big-context models
 OVERVIEW_CHARS_SMALL = 1200  # and for 64k-or-less ones (about 300 tokens)
@@ -302,7 +357,24 @@ def _mcp_lines(names):
     return "\n".join(lines)
 
 
-def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=(), overview=""):
+ASK_LINE = "- If the request is unclear, ask one short question instead of guessing."
+# one-shot runs (purr -p, benchmarks): nobody reads a question, so settle it yourself. Seen on
+# Terminal-Bench: purr assumed one reading, ended with "say so and I'll rerun", and failed the task;
+# another normalised images from memory where the given code did it differently.
+ONE_SHOT_LINE = (
+    "- Nobody answers during this run: decide unclear points from the task, the files and the tools' "
+    "defaults; never end with a question; use -y/--yes (no stdin).\n"
+    "- Where the task leaves a choice open, prefer what the given code, data and named tools already do "
+    "(read their source) over your own additions.\n"
+    "- Hard requirements (exact paths, names, format, size/time/score limits) are part of done.\n"
+    "- Hidden tests will check your files on other inputs; they aren't on this machine. Scratch files go in /tmp.")
+# one-shot runs drop what only matters with a person watching: who purr is, the approvals
+IDENTITY_TAIL = SYSTEM[SYSTEM.index(" You are running inside purr"):SYSTEM.index("\n\nEnvironment")]
+APPROVE_LINE = "\n- The user approves every edit and command. If they say no, stop and wait for them."
+FOLDER_LINE = "(use paths relative to it, like src/app.py, not full paths)"
+
+
+def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=(), overview="", one_shot=False):
     """hidden: tools this model isn't offered, so the prompt doesn't mention them either.
     mode: code (all tools), ask (look only), chat or create (no tools, their own prompt).
     mcp_tools: names of the MCP servers' tools; overview: the project overview to start from."""
@@ -323,6 +395,13 @@ def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=()
     if extra:
         cut = text.index("\n\nHow to work")
         text = text[:cut] + "\n" + extra + text[cut:]
+    if one_shot:
+        text = text.replace(ASK_LINE, ONE_SHOT_LINE).replace(APPROVE_LINE, "")
+        text = text.replace(IDENTITY_TAIL.format(model=model_id, provider=provider), "")
+        text = text.replace(FOLDER_LINE, "(use the exact absolute path when the task gives one)")
+        purr_dir = Path(__file__).resolve().parent.parent
+        if Path.home() not in purr_dir.parents:  # installed somewhere like /opt/purr (a container)
+            text = text.replace("- System: Linux", f"- System: Linux ({purr_dir} is purr itself, not the task)")
     if overview:
         text += ("\n\nProject overview (purr made it from the files; when they disagree, the files win):\n"
                  + overview)
@@ -377,6 +456,16 @@ def calls_from_text(text):
         calls.append({"id": f"text_call_{n}", "name": name, "args": json.dumps(args)})
     cleaned = re.sub(r"</?tool_call>", "", TEXT_CALL.sub("", text)).strip()
     return calls, cleaned
+
+
+LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file does
+
+
+def _ends(text, head, tail):
+    """A long text as its start and end (where a request keeps its paths and its limits)."""
+    if len(text) <= head + tail:
+        return text
+    return text[:head] + " … " + text[-tail:]
 
 
 def _stable(raw):
@@ -624,10 +713,12 @@ class Agent:
         self.stop_flag = False  # the TUI sets this to stop an answer (plain mode uses ctrl+c)
         self.tools.code_checks = config.get("code_checks", True)
         self.tools.read_before_edit = config.get("read_before_edit", True)
+        self._hide_terminal = None  # one-shot runs on a small context: decided once from the task
         self.mode = "code"       # code, ask, learn, pair, plan, chat or create (MODES)
         self.mode_model = {}     # mode -> the model it had last (switch_mode)
         self.router = None       # /model free: picks free models and moves on when one is maxed out
         self.time_limit = None   # seconds for a turn (purr --time-limit): reminders at half and four fifths
+        self.one_shot = False    # nobody answers questions (purr -p, benchmarks): set_one_shot
         self._echo_all = False   # True once a provider refused trimmed thinking (_for_provider)
         # /refine: "auto" rewrites a short first message into a clear task (you approve it),
         # "on" every message, "off" none. purr bench measured +2 solved hard tasks from vague asks.
@@ -676,7 +767,12 @@ class Agent:
     @property
     def hidden_tools(self):
         """Tools this model isn't offered: the model's own limits, plus the web in private mode."""
-        return tuple(self.limits.hidden_tools) + (("fetch_url",) if self.private else ())
+        # terminal = true/false on a model decides; else one-shot runs on a small context decide
+        terminal = self.model.get("terminal")
+        hide_terminal = terminal is False or (terminal is None and bool(getattr(self, "_hide_terminal", None)))
+        return (tuple(self.limits.hidden_tools) + (("fetch_url",) if self.private else ())
+                + (() if self.model.get("vision") else ("look_at_image",))  # only models that can see
+                + (("terminal",) if hide_terminal else ()))
 
     @property
     def chosen_model(self):
@@ -1018,7 +1114,8 @@ class Agent:
         names = [s["function"]["name"] for s in self.mcp.schemas(read_only=self.helper or self.mode == "ask",
                                                                  taken=self.mcp_taken)] if tools else []
         text = system_prompt(self.root, self.model["id"], self.model["provider"], self.hidden_tools,
-                             self.mode, mcp_tools=names, overview=self.project_overview() if tools else "")
+                             self.mode, mcp_tools=names, overview=self.project_overview() if tools else "",
+                             one_shot=self.one_shot)
         return text + HELPER if self.helper else text
 
     def new(self):
@@ -1090,6 +1187,33 @@ class Agent:
 
     STANDARD = {"role", "content", "tool_calls", "tool_call_id", "name"}
 
+    def _with_images(self, msgs):
+        """Messages carrying images (look_at_image) as text + image parts, for a model that can see;
+        older images (beyond the latest few) and models that can't see get a line of text instead."""
+        if not any(m.get("images") for m in msgs):
+            return msgs
+        withs = [i for i, m in enumerate(msgs) if m.get("images")]
+        recent = set(withs[-IMAGES_KEEP:])
+        out = []
+        for i, m in enumerate(msgs):
+            if not m.get("images"):
+                out.append(m)
+                continue
+            m = {k: v for k, v in m.items() if k != "images"}
+            if self.model.get("vision") and i in recent:
+                m["content"] = [{"type": "text", "text": m["content"]}] + [
+                    {"type": "image_url", "image_url": {"url": url}} for url in msgs[i]["images"]]
+            else:
+                m["content"] += " (not shown again here)"
+            out.append(m)
+        return out
+
+    def set_one_shot(self, on=True):
+        """One-shot runs: the prompt says nobody will answer, so settle unclear points yourself."""
+        self.one_shot = on
+        if getattr(self, "messages", None):
+            self.messages[0] = {"role": "system", "content": self._system()}
+
     def _time_note(self):
         """With a time limit (purr --time-limit, benchmarks): say how much is left at half time and
         at four fifths, once each. A small model will happily explore until the clock runs out."""
@@ -1100,13 +1224,17 @@ class Agent:
             if gone >= share * self.time_limit and share not in self._time_said:
                 self._time_said.add(share)
                 left = max(1, round((self.time_limit - gone) / 60))
-                self.messages.append({"role": "user", "content": text.format(left=left)})
+                text = text.format(left=left)
+                if share == TIME_NOTES[-1][0] and self.one_shot and not self._checked:
+                    text = text[:-2] + "." + ONE_SHOT_SHORT_CHECK
+                self.messages.append({"role": "user", "content": text})
                 self.view.note(f"⏱ about {left} min left", "warn")
 
     def _for_provider(self, msgs):
         """The chat with only the fields this provider understands: after the free router switches
         mid-chat, the history holds another provider's thinking (reasoning / reasoning_content),
         and strict APIs refuse fields they don't know."""
+        msgs = self._with_images(msgs)
         echo = self.provider.get("echo_reasoning")
         keep = self.STANDARD | ({echo} if echo else set())
         # the thinking of older replies goes too: only the last few keep theirs. A long turn
@@ -1161,9 +1289,10 @@ class Agent:
                     continue
                 if self._next_free(e):
                     continue
-                if not e.retry or attempt == len(RETRY_WAITS):
+                waits = RETRY_WAITS_LOCAL if self.model.get("provider") in LOCAL else RETRY_WAITS
+                if not e.retry or attempt == len(waits):
                     raise
-                wait = RETRY_WAITS[attempt]
+                wait = waits[attempt]
                 attempt += 1
                 self.view.note(f"the model server had a problem, trying again in {wait}s", "warn")
                 for _ in range(wait * 10):
@@ -1207,10 +1336,18 @@ class Agent:
     def context_used(self):
         used = 0
         if self.last_usage:
-            used = self.last_usage.get("prompt_tokens", 0) + self.last_usage.get("completion_tokens", 0)
+            used = self.last_usage.get("prompt_tokens", 0)
+            if getattr(self, "provider", None) and self.provider.get("echo_reasoning"):
+                # its thinking goes back with the reply; for the others the reply's thinking is
+                # dropped, and its text is in the guess below (counting every thinking token as
+                # context made a 64k model prune and compact far too early)
+                used += self.last_usage.get("completion_tokens", 0)
         # Ollama only counts the tokens it didn't have cached, so also guess (~4 characters a token)
         sent = self._for_provider(self.messages) if getattr(self, "provider", None) else self.messages
-        guess = len(json.dumps(sent)) // 4 + 1500  # what's sent: old thinking is trimmed off
+        text = json.dumps(sent)
+        images = text.count('"image_url"')
+        text = re.sub(r'data:image/[^"]+', "", text)  # an image costs ~1k tokens, not its base64
+        guess = len(text) // 4 + 1500 + 1000 * images  # what's sent: old thinking is trimmed off
         return max(used, guess)
 
     # ---- one turn: your message -> as many model calls + tools as it takes ----
@@ -1235,6 +1372,12 @@ class Agent:
         self._time_said = set()
         if self.time_limit and not self.helper:
             content += "\n\n" + TIME_INTRO.format(minutes=max(1, round(self.time_limit / 60)))
+            if len(self.messages) == 1:
+                content += self._probe()
+        self.tools.deadline = self._started + self.time_limit if self.time_limit and not self.helper else None
+        self._request = text  # kept word for word through a compaction
+        if self.one_shot and not self.helper:
+            self._one_shot_setup(text)
         self.messages.append({"role": "user", "content": content})
         self.tools.begin_turn()
         self._learn_nudged = bool(open_todos)  # pieces already out there: no need to leave new ones
@@ -1249,14 +1392,24 @@ class Agent:
         empty = 0      # empty answers nudged this turn
         cut = 0        # replies cut off at the output limit, nudged this turn
         self._checked = False  # the final check (below) runs at most once a turn
+        self._acted = False    # ran a command, a terminal or an MCP tool that changes things
+        self._background = False  # started something that should keep running (a terminal, cmd &)
+        self._hedged = False   # one-shot: told once that nobody will answer its question
+        cap = self._step_cap()
         try:
             while True:
                 steps += 1
-                if steps > self.config.get("max_steps", 40):
-                    ans, _ = self.view.ask(f"{steps - 1} steps so far. keep going?", allow_always=False)
-                    if ans != "y":
-                        break
-                    steps = 1
+                if steps > cap:
+                    if self.one_shot:  # nobody to ask: check the work once, then stop
+                        if not self._final_check():
+                            self.view.note(f"stopped after {steps - 1} steps (the step limit)", "warn")
+                            break
+                        cap = steps + CHECK_STEPS - 1  # this step and a few more for the check
+                    else:
+                        ans, _ = self.view.ask(f"{steps - 1} steps so far. keep going?", allow_always=False)
+                        if ans != "y":
+                            break
+                        steps = 1
                 ctx = self.model.get("context", 0)
                 if ctx and len(self.messages) > 4:
                     used = self.context_used()
@@ -1264,13 +1417,19 @@ class Agent:
                         self._prune_old_tools()
                         used = self.context_used()
                     if used > ctx * self.limits.compact_at:
-                        self.compact(auto=True)
+                        try:
+                            self.compact(auto=True)
+                        except ApiError as e:
+                            # the summary call failed (a full context, a server hiccup): free what
+                            # can be freed without a model and carry on, rather than end the run
+                            self.view.note(f"compacting failed ({e}), trimming old output instead", "warn")
+                            self._prune_old_tools(keep=1)
                 try:
                     if (self._helper_on("reminders") and self.mode == "code" and not self.helper
                             and steps > 1 and (steps - 1) % REMIND_EVERY == 0):
                         # small models lose the goal on long tasks: say it again now and then
                         self.messages.append({"role": "user", "content":
-                            f"(purr: a reminder of what the user asked, so you stay on track: {text[:800]})"})
+                            f"(purr: a reminder of what the user asked, so you stay on track: {_ends(text, 500, 300)})"})
                     self._time_note()
                     self.view.activity("thinking")
                     reply = self._call()
@@ -1344,10 +1503,17 @@ class Agent:
                             "(purr: your tool call came out as plain text, so it did not run. "
                             "Call the tool again.)"})
                         continue
-                    if self._final_check() or self._learn_check():
+                    if self._final_check(reply["text"]) or self._learn_check() or self._hedge(reply["text"]):
                         continue
                     break
-                if self._run_tools(reply["tool_calls"]):
+                stopped = self._run_tools(reply["tool_calls"])
+                if self.tools.pending_images:  # look_at_image: show the model what it asked to see
+                    shown = self.tools.pending_images
+                    self.tools.pending_images = []
+                    self.messages.append({"role": "user", "images": [url for _, url in shown], "content":
+                        "(purr: the image" + ("s" if len(shown) > 1 else "") + " you asked to look at: "
+                        + ", ".join(path for path, _ in shown) + ")"})
+                if stopped:
                     self.view.note("waiting for you", "info")
                     break
                 if self.mode == "pair" and not self.helper and any(
@@ -1368,7 +1534,7 @@ class Agent:
                 if all(c["name"] == "todo" for c in reply["tool_calls"]):
                     todo_only += 1
                     if reply["text"] and not self.tools.todos_left:
-                        if self._final_check() or self._learn_check():
+                        if self._final_check(reply["text"]) or self._learn_check() or self._hedge(reply["text"]):
                             continue
                         break  # it answered and everything is done: that's the end
                     if todo_only >= 3:
@@ -1395,19 +1561,82 @@ class Agent:
         self.turn_stats["summary"] = self._turn_summary()
         self.view.note(self.turn_stats["summary"], "stats")
 
-    def _final_check(self):
+    def _final_check(self, reply=""):
         """The model wants to stop after changing files: ask it once to go through the request
         point by point first. Small models often fix the first thing, see the old tests pass and
         say "done" with half the job left (purr bench showed it). Returns True when it asked."""
         changed = self.tools.undo_stack[-1] if self.tools.undo_stack else {}
-        if (self._checked or not changed or self.helper or self.mode != "code"
+        # a one-shot run that only used commands (a model trained, a VM set up) has work to check
+        # too; in a chat, "run the tests" doesn't need a second look
+        acted = self._acted and self.one_shot
+        if (self._checked or not (changed or acted) or self.helper or self.mode != "code"
                 or not self.config.get("final_check", True)):
             return False
         self._checked = True
         self.view.note("♡ checking the request once more before finishing")
-        check = FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT
+        services = " " + SERVICES if self._background else ""
+        if self.one_shot:
+            left = self._minutes_left()
+            check = ONE_SHOT_CHECK.format(time=f" (about {left} minutes left)" if left else "", services=services,
+                                          nobody=NOBODY if self._hedges(reply) else "")
+            self._hedged = self._hedged or self._hedges(reply)
+        else:
+            check = (FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT).format(services=services)
         self.messages.append({"role": "user", "content": self._test_report() + check})
         return True
+
+    def _one_shot_setup(self, text):
+        """What a task's text settles for a one-shot run: the paths it names outside the project
+        folder may be written (and /tmp for scratch), and a small model gets no terminal tool
+        unless the task is about something interactive (it spent steps on it for nothing)."""
+        named = {Path(m) for m in ABS_PATH.findall(text)}
+        self.tools.outside_ok = [Path("/tmp").resolve()] + sorted(
+            p for p in named if len(p.parts) > 2 or (len(p.parts) == 2 and p.parts[1] not in SYSTEM_DIRS))
+        if self._hide_terminal is None:
+            self._hide_terminal = self.limits.context <= 65_536 and not INTERACTIVE.search(text)
+
+    def _hedges(self, reply):
+        """One-shot: the final reply hands a choice back ("say so and I'll rerun") to nobody."""
+        return bool(self.one_shot and reply and HEDGE.search(reply[-300:]))
+
+    def _hedge(self, reply):
+        """The final check already ran and it still ends with a question: say once that nobody
+        will answer. Returns True when it said so."""
+        if self._hedged or not self._hedges(reply) or self.helper:
+            return False
+        self._hedged = True
+        self.tools.repairs.append("one-shot reply asked a question -> told nobody will answer")
+        self.messages.append({"role": "user", "content": "(purr:" + NOBODY + ")"})
+        return True
+
+    def _minutes_left(self):
+        if not self.time_limit or self.helper:
+            return None
+        return max(1, round((self.time_limit - (time.monotonic() - self._started)) / 60))
+
+    def _step_cap(self):
+        """Steps before purr asks to keep going. One-shot runs can't ask, so they get a fixed cap
+        (a time limit ends them anyway; without one, enough for a long task)."""
+        steps = self.config.get("max_steps", 40)
+        if self.one_shot and not self.helper:
+            return ONE_SHOT_STEPS if self.time_limit else max(steps, ONE_SHOT_STEPS_FREE)
+        return steps
+
+    def _probe(self):
+        """One-shot runs on a machine with no project files (benchmarks): one line on what's
+        installed, mostly what's missing. "" when not wanted or it fails."""
+        if not self.one_shot or self.mode != "code" or any((self.root / f).exists() for f in PROJECT_FILES):
+            return ""
+        purr_dir = str(Path(__file__).resolve().parent.parent)
+        path = ":".join(d for d in os.environ.get("PATH", "").split(":")
+                        if d and not d.startswith(purr_dir) and "/opt/purr" not in d)
+        try:
+            res = subprocess.run(["bash", "-c", PROBE], capture_output=True, text=True, timeout=8,
+                                 cwd=self.root, env={**os.environ, "PATH": path}, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        line = res.stdout.strip().splitlines()[-1:] if res.returncode == 0 else []
+        return f"\n(purr: this machine: {line[0][:300]})" if line else ""
 
     def _learn_check(self):
         """Learn mode: small models happily write the whole thing themselves. When a turn changed
@@ -1529,7 +1758,10 @@ class Agent:
             "THEY FAIL: if the failure comes from your changes or is part of the request, fix it "
             "first; if it is in code the request has nothing to do with, leave it and mention it "
             "in your answer")
-        return f"(purr, not the user, ran the tests itself: `{cmd}` → exit code {code}, {verdict})\n```\n{tail}\n```\n"
+        result = f"exit code {code}, {verdict}"
+        if code == -1:  # stopped, not failed: something hangs, or the suite is just slow
+            result = "timed out after 180s: check whether a test hangs (run one file at a time)"
+        return f"(purr, not the user, ran the tests itself: `{cmd}` → {result})\n```\n{tail}\n```\n"
 
     def on_my_gpu(self):
         """Speed only means something for local models: an API's depends on its load, routing, ..."""
@@ -1566,6 +1798,7 @@ class Agent:
                 else:
                     result = self.tools.call(c["name"], c["args"])
                     self._executed.append((c["name"], c["args"], result))
+                    self._note_action(c["name"], c["args"])
                 self.messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
                 done += 1
             return self.tools.halt
@@ -1576,6 +1809,15 @@ class Agent:
                                       "content": "cancelled: the user stopped it"})
             raise
 
+    def _note_action(self, name, args):
+        """Remember a turn that did things other than edit files, for the final check."""
+        mcp = getattr(self.tools, "mcp", None)
+        if name in ("run", "terminal") or (name not in TOOL_NAMES and mcp and not mcp.read_only(name)):
+            self._acted = True
+        command = str(_args(args).get("command") or "").strip()
+        if name == "terminal" or command.endswith("&") or command.startswith(("nohup ", "setsid ")):
+            self._background = True
+
     def _check_repeats(self):
         """A small model can get stuck making the same call and learning nothing.
         Count identical calls, nudge once, then stop the turn before it eats the
@@ -1584,7 +1826,8 @@ class Agent:
         for name, args, result in getattr(self, "_executed", []):
             if name == "todo":  # updating the task list over and over is normal
                 continue
-            key = (name, _stable(args))
+            # reading a file again after an edit is new information, not a loop
+            key = (name, _stable(args), self.tools.edit_gen if name in LOOKS else 0)
             failed = _looks_failed(result)
             rec = self._repeats.get(key)
             if rec and rec["result"] == result:
@@ -1604,20 +1847,31 @@ class Agent:
         if worst["n"] >= REPEAT_NUDGE and not worst["warned"]:
             worst["warned"] = True
             what = "keeps failing" if worst["failed"] else "returns the same thing"
+            tail = ("try a different approach; nobody will answer a question" if self.one_shot else
+                    "try a different approach or different arguments, or stop and tell the user what is wrong")
             return (f"(purr: you have now called `{worst_name}` with the same arguments "
-                    f"{worst['n']} times and it {what}. Don't repeat it. Read the result, "
-                    f"try a different approach or different arguments, or stop and tell the "
-                    f"user what is wrong.)")
+                    f"{worst['n']} times and it {what}. Don't repeat it. Read the result, {tail}.)")
         return None
 
-    def _prune_old_tools(self):
+    def _prune_old_tools(self, keep=None):
         """Free room cheaply by eliding old tool output, keeping the newest results whole.
         Cheaper than a full compaction: no model call, and it keeps the messages."""
-        tools = [m for m in self.messages if m.get("role") == "tool"]
-        older = tools[:max(0, len(tools) - self.limits.keep_recent_tools)]
+        keep = self.limits.keep_recent_tools if keep is None else keep
         # the stub names the call it came from, so the model knows what to redo if it needs it
         calls = {c["id"]: c["function"] for m in self.messages if m.get("role") == "assistant"
                  for c in m.get("tool_calls") or []}
+        tools = [m for m in self.messages if m.get("role") == "tool"]
+        # only real output counts toward the ones kept: ten "task list saved" don't protect anything
+        cut, big = 0, 0
+        for i in range(len(tools) - 1, -1, -1):
+            content = tools[i].get("content") or ""
+            if (len(content) > 400 and not content.startswith("[old output of")
+                    and calls.get(tools[i].get("tool_call_id"), {}).get("name") != "todo"):
+                big += 1
+                if big > keep:
+                    cut = i + 1
+                    break
+        older = tools[:cut]
         freed = 0
         for m in older:
             content = m.get("content") or ""
@@ -1630,6 +1884,7 @@ class Agent:
             freed += len(content) - len(m["content"])
         if freed:
             self.last_usage = None  # the old count is stale; use the fresh size guess
+            self._repeats = {}  # a call whose output was just removed may well be needed again
             self.view.note(f"trimmed old tool output to save room ({ui.short(freed)} characters)", "info")
         return freed
 
@@ -1689,7 +1944,15 @@ class Agent:
             return None
         head = "(purr: the chat got long, so it was replaced by this summary.)\n\n" + summary
         if auto:
-            # in the middle of a turn: carry straight on
+            # in the middle of a turn: carry straight on. The request goes along word for word: a
+            # summary loses the exact paths, names and limits that the result is checked against
+            request = getattr(self, "_request", "")
+            if request:
+                n = 3000 if self.limits.context > 65536 else 2000
+                head += "\n\nWhat the user asked for, word for word:\n" + _ends(request, n * 2 // 3, n // 3)
+            todos = [t["text"] for t in self.tools.todo_list if t["status"] != "done"]
+            if todos:
+                head += "\n\nStill open on your task list: " + "; ".join(todos)
             self.messages = [self.messages[0], {"role": "user", "content": head +
                              "\n\nCarry on with the work from where you left off."}]
         else:

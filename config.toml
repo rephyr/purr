@@ -140,12 +140,14 @@ id = "gpt-oss-32k"
 context = 32768
 
 [models.qwen3_6-32k]
+vision = true  # can look at images (look_at_image)
 provider = "ollama"
 id = "qwen3.6-iq2-32k"
 context = 32768
 body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
 
 [models.qwen3_6-64k]
+vision = true  # can look at images (look_at_image)
 provider = "ollama"
 id = "qwen3.6-iq2-64k"
 context = 65536
@@ -153,6 +155,7 @@ body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
 
 # Qwen3.6 35B-A3B at IQ3_XXS (13.2 GB): the middle ground, better than IQ2, still (almost) all on the GPU
 [models.qwen3_6-iq3]
+vision = true  # can look at images (look_at_image)
 provider = "ollama"
 id = "qwen3.6-iq3-32k"
 context = 32768
@@ -166,6 +169,7 @@ context = 32768
 
 # Qwen3.6 35B-A3B at Q4: smarter than the IQ2 ones, but 22 GB, so part of it runs on the CPU (slower)
 [models.qwen3_6-q4]
+vision = true  # can look at images (look_at_image)
 provider = "ollama"
 id = "qwen3.6-q4-32k"
 context = 32768
@@ -173,6 +177,7 @@ body = { temperature = 0.6, top_p = 0.95, top_k = 20, presence_penalty = 1.5 }
 
 # Qwen3.5 9.7B (Q4, 64k already set in Ollama): small enough to sit fully on the GPU
 [models.qwen3_5-code]
+vision = true  # can look at images (look_at_image)
 provider = "ollama"
 id = "qwen3.5-code"
 context = 65536
@@ -180,12 +185,14 @@ body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
 
 # Gemma 4 abliterated (huihui_ai, Q4, fewer refusals): 12B fits fully on the GPU, 26B MoE is 17 GB
 [models.gemma4-abl-12b]
+vision = true  # can look at images (look_at_image)
 provider = "ollama"
 id = "gemma-4-abliterated-32k:12b"
 context = 32768
 body = { temperature = 1.0, top_p = 0.95, top_k = 64 }
 
 [models.gemma4-abl-26b]
+vision = true  # can look at images (look_at_image)
 provider = "ollama"
 id = "gemma-4-abliterated-32k:26b"
 context = 32768
@@ -231,6 +238,7 @@ price = { hit = 0.01, miss = 0.10, out = 0.50 }
 body = { max_tokens = 16384 }
 
 [models.sonnet]
+vision = true  # can look at images (look_at_image)
 provider = "openrouter"
 id = "anthropic/claude-sonnet-5.5"
 context = 200000  # really 1M, but at $2 per 1M it's cheaper to compact early
@@ -313,6 +321,7 @@ body = { max_tokens = 16384, provider = { sort = "throughput" } }
 
 # Google Gemma 4 31B
 [models.gemma4-31b-free]
+vision = true  # can look at images (look_at_image)
 provider = "openrouter"
 id = "google/gemma-4-31b-it:free"
 context = 262144
@@ -385,6 +394,7 @@ body = { max_tokens = 8192 }
 
 # Gemini 3.8 Flash
 [models.gemini-flash]
+vision = true  # can look at images (look_at_image)
 provider = "gemini"
 id = "gemini-3.8-flash"
 context = 1048576
@@ -393,6 +403,7 @@ body = { max_tokens = 16384 }
 
 # Gemini 3.5 Flash-Lite
 [models.gemini-flash-lite]
+vision = true  # can look at images (look_at_image)
 provider = "gemini"
 id = "gemini-3.5-flash-lite"
 context = 1048576
@@ -401,6 +412,7 @@ body = { max_tokens = 16384 }
 
 # Gemini 3.1 Pro preview (may not be on the free tier)
 [models.gemini-pro]
+vision = true  # can look at images (look_at_image)
 provider = "gemini"
 id = "gemini-3.1-pro-preview"
 context = 1048576

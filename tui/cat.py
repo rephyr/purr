@@ -336,7 +336,7 @@ ACTIVITY = {
     "read_file": "exploring", "list_files": "exploring", "grep": "exploring",
     "fetch_url": "exploring", "task": "exploring",
     "edit_file": "building", "write_file": "building",
-    "run": "running", "todo": None, "refining": "thinking",
+    "run": "running", "todo": None, "refining": "thinking", "terminal": "running", "look_at_image": "exploring",
     # tools from purr's MCP servers (servers/)
     "project_overview": "exploring", "outline": "exploring", "find_symbol": "exploring",
     "godot_class": "exploring", "python_api": "exploring",

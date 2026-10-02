@@ -16,23 +16,29 @@ As close as we can get to the settings DeepSeek used to run its model through ot
 - **attempts:** 3 per task; pass@1 = the average share of attempts that passed (timeouts and
   errors count as fails, like on the leaderboards), ± the standard error over tasks
 - **purr:** as shipped (its MCP servers on), the exact commit recorded with every trial
-- **dataset:** `terminal-bench@2.0` from Harbor's registry. The reference scores below are on
-  Terminal-Bench 2.1, which has the same 89 tasks with fixes and isn't in the registry, so the
-  comparison is close but not exact.
+- **dataset:** Terminal-Bench 2.1 (`terminal-bench/terminal-bench-2-1` in Harbor's registry), the
+  version the reference scores below used. The first runs were on 2.0 (the same 89 tasks before
+  2.1's fixes), so they have their own tables: don't compare across the two.
 
 ## purr, version by version
 
-### Full runs: all 89 tasks, 3 attempts each
+### Terminal-Bench 2.1: full runs, all 89 tasks, 3 attempts each
 
 | purr | date | pass@1 | pass@3 | timeouts | errors | cost | tokens in / cached / out | median time |
 |---|---|---|---|---|---|---|---|---|
 | (none yet) |
 
-### Quick runs: the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each
+### Terminal-Bench 2.1: quick runs, the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each
 
-Cheap (well under $1 with DeepSeek V4.1 Flash) and quick, for seeing whether a purr version got better or worse. With 20
-tasks and one try each the margin is wide (see ±): compare quick runs with each other, not
-with the full runs or the leaderboards.
+Cheap (well under $1 with DeepSeek V4.1 Flash) and quick, for seeing whether a purr version got
+better or worse. With 20 tasks and one try each the margin is wide (see ±): compare quick runs
+with each other, not with the full runs or the leaderboards.
+
+| purr | date | pass@1 | timeouts | errors | cost | tokens in / cached / out | median time |
+|---|---|---|---|---|---|---|---|
+| (none yet) |
+
+### Terminal-Bench 2.0: quick runs, the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each
 
 | purr | date | pass@1 | timeouts | errors | cost | tokens in / cached / out | median time |
 |---|---|---|---|---|---|---|---|

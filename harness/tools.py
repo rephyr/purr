@@ -4,6 +4,7 @@ Each tool = a schema (what the model sees) + a Python function (what actually ha
 Edits, writes and commands ask you first.
 """
 
+import atexit
 import difflib
 import fnmatch
 import json
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from . import checks
 from .limits import Limits
+from .terminal import Terminals
 
 
 MAX_OUTPUT = 12000  # fallback: characters a tool result may send back to the model
@@ -64,8 +66,23 @@ SCHEMAS = [
         "command": {"type": "string"},
         "timeout": {"type": "integer", "description": "Seconds. Default 120."},
     }, ["command"]),
-    _schema("todo", "Keep a short task list for work with several steps (not for questions or chat). "
-            "Send the WHOLE list every time; the user sees it. Mark one item 'doing' while you work on it.", {
+    _schema("terminal", "A terminal session for interactive programs (VM console, ssh, REPL) or a server to "
+            "watch; run is for commands that finish. Actions start/send/read/stop/list. wait_for: regex to "
+            "wait for, like login:. keys: e.g. Enter, C-c.", {
+        "action": {"type": "string", "enum": ["start", "send", "read", "stop", "list"]},
+        "name": {"type": "string", "description": "The session's name. Default 'main'."},
+        "command": {"type": "string", "description": "start: the program to run (default: a shell)."},
+        "text": {"type": "string", "description": "send: what to type."},
+        "keys": {"type": "array", "items": {"type": "string"},
+                 "description": "send: keys to press after the text (default Enter): Enter, Tab, Up, Down, C-c, C-d, Escape..."},
+        "wait": {"type": "number", "description": "Seconds to wait for output. Default 2."},
+        "wait_for": {"type": "string", "description": "A regex: wait (up to wait seconds) until it shows up."},
+    }, ["action"]),
+    _schema("look_at_image", "Look at an image file (png, jpg, gif, webp): it's shown to you right after.", {
+        "path": {"type": "string"},
+    }, ["path"]),
+    _schema("todo", "A short task list for work with several steps. Send the whole list each time; "
+            "one item 'doing'.", {
         "items": {"type": "array", "items": {"type": "object", "properties": {
             "text": {"type": "string"},
             "status": {"type": "string", "enum": ["pending", "doing", "done"]},
@@ -84,7 +101,8 @@ TOOL_ALIASES = {"search": "grep", "grep_search": "grep", "ripgrep": "grep", "fin
                 "ls": "list_files", "list": "list_files", "glob": "list_files", "list_dir": "list_files",
                 "edit": "edit_file", "str_replace": "edit_file", "replace": "edit_file",
                 "write": "write_file", "create_file": "write_file",
-                "bash": "run", "shell": "run", "exec": "run", "run_command": "run", "terminal": "run"}
+                "bash": "run", "shell": "run", "exec": "run", "run_command": "run",
+                "view_image": "look_at_image", "read_image": "look_at_image", "tmux": "terminal"}
 ARG_ALIASES = {"file_path": "path", "filePath": "path", "filename": "path", "file": "path",
                "old_string": "old_text", "oldString": "old_text", "old_str": "old_text",
                "new_string": "new_text", "newString": "new_text", "new_str": "new_text",
@@ -122,7 +140,8 @@ def clip(s, limit=MAX_OUTPUT):
     if len(s) <= limit:
         return s
     half = limit // 2
-    return s[:half] + f"\n... [{len(s) - limit} characters cut] ...\n" + s[-half:]
+    return (s[:half] + f"\n... [{len(s) - limit} chars cut; save the output to a file and look at parts "
+            "with grep or sed -n] ...\n" + s[-half:])
 
 
 def _lead(line):
@@ -187,6 +206,13 @@ class Tools:
         self.halt = False        # a plain "no": stop and let the user say what to do next
         self.undo_stack = []     # one {path: text before, or None if it didn't exist} per turn
         self.spawn = None        # set by the agent: runs a helper for the task tool
+        self.terminals = Terminals(self.root)  # sessions for interactive programs (terminal tool)
+        atexit.register(self.terminals.close_local)  # purr's own (non-tmux) sessions end with it
+        self.pending_images = []  # (path, data URL) look_at_image read: the agent shows them next
+        self.outside_ok = []     # one-shot runs: folders and files outside the project it may write
+        self.deadline = None     # time.monotonic() when a time-limited run ends: run's timeout stops there
+        self.edit_gen = 0        # goes up with every edit: re-reading a file after one isn't a repeat
+        self.todo_list = []      # the last task list (a compaction keeps its open items)
 
     def _path(self, p):
         p = Path(p).expanduser()
@@ -213,15 +239,21 @@ class Tools:
         p = self._path(path).resolve()
         if p == self.root or self.root in p.parents:
             return None
-        return (f"error: {path} is outside the project folder ({self.root}). Only change files inside "
-                "it, and use paths relative to it (like src/app.py).")
+        # a task that names /app/out.txt or says "scratch files in /tmp" means it
+        if any(p == ok or ok in p.parents for ok in self.outside_ok):
+            return None
+        return (f"error: {path} is outside the project folder ({self.root}). Use paths inside it (like "
+                "src/app.py); if you really mean that path, use run.")
 
     def summary(self, name, args):
         """One short line for the screen."""
         key = {"read_file": "path", "list_files": "path", "grep": "pattern", "edit_file": "path",
                "write_file": "path", "run": "command", "fetch_url": "url", "task": "prompt",
-               "outline": "path", "find_symbol": "name",
+               "outline": "path", "find_symbol": "name", "look_at_image": "path",
                "godot_class": "name", "python_api": "name"}.get(name)
+        if name == "terminal":
+            what = args.get("command") or args.get("text") or " ".join(args.get("keys") or [])
+            return f"terminal {args.get('action', '')} {args.get('name', 'main')} {str(what)[:80]}".strip()
         if name == "godot_class" and args.get("member"):
             return f"{name} {args.get('name', '')}.{args['member']}"
         val = str(args.get(key, "")) if key else ""
@@ -315,6 +347,7 @@ class Tools:
 
     def _remember(self, p):
         """Keep a file's old text the first time this turn changes it, for /undo."""
+        self.edit_gen += 1
         if not self.undo_stack:
             self.begin_turn()
         changes = self.undo_stack[-1]
@@ -359,11 +392,18 @@ class Tools:
         self.seen.add(p.resolve())
         offset = max(1, int(offset))
         limit = self.limits.read_lines if limit is None else int(limit)
-        chunk = lines[offset - 1: offset - 1 + limit]
-        body = "\n".join(f"{n:>5}\t{line[:500]}" for n, line in enumerate(chunk, offset))
-        end = offset + len(chunk) - 1
+        room = self.limits.tool_output - 200  # whole lines only: clip() would cut out the middle
+        out, size = [], 0
+        for n, line in enumerate(lines[offset - 1: offset - 1 + limit], offset):
+            text = f"{n:>5}\t{line[:500]}" + (f"…[+{len(line) - 500} chars]" if len(line) > 500 else "")
+            if out and size + len(text) + 1 > room:
+                break
+            out.append(text)
+            size += len(text) + 1
+        body = "\n".join(out)
+        end = offset + len(out) - 1
         if end < len(lines):
-            body += f"\n[lines {offset}-{end} of {len(lines)}; use offset to read more]"
+            body += f"\n[lines {offset}-{end} of {len(lines)}; next: offset={end + 1}]"
         return body or "(empty file)"
 
     def t_list_files(self, path=".", glob=None):
@@ -556,6 +596,13 @@ class Tools:
         ok, reason = self._run_allowed(command)
         if not ok:
             return self._refused(reason)
+        cut = ""
+        if self.deadline:
+            import time
+            room = int(max(30, self.deadline - time.monotonic() - 60))
+            if int(timeout) > room:
+                timeout = room
+                cut = f"(purr: timeout cut to {room}s: that is all the time left)\n"
         output, code = run_shell(command, self.root, timeout)
         for line in output.splitlines()[-4:]:
             self.view.note(line[:160])
@@ -565,17 +612,59 @@ class Tools:
             output += (f"\n(purr: it was stopped after {timeout}s. If it needs longer, run it again with "
                        "a bigger timeout (run's timeout argument, in seconds), or start it in the background "
                        "with its output in a log (nohup <command> > run.log 2>&1 &) and check run.log.)")
-        return f"{output}\n[exit code {code}]"
+        return f"{cut}{output}\n[exit code {code}]"
+
+    def t_terminal(self, action, name="main", command=None, text=None, keys=None, wait=None,
+                   wait_for=None, lines=40):
+        t = self.terminals
+        try:
+            if action == "list":
+                return t.list()
+            if action == "read":
+                return t.read(name, wait or 0, wait_for, lines)
+            if action == "stop":
+                return t.stop(name)
+            if action not in ("start", "send"):
+                return "error: action is start, send, read, stop or list"
+            what = command if action == "start" else (text or " ".join(keys or []))
+            ok, reason = self._allowed("terminal", f"terminal {action} ({name}): {what or 'a shell'}")
+            if not ok:
+                return self._refused(reason)
+            if action == "start":
+                return t.start(name, command, 2 if wait is None else wait, wait_for, lines)
+            return t.send(name, text, keys, 2 if wait is None else wait, wait_for, lines)
+        except (ValueError, OSError, subprocess.SubprocessError) as e:
+            return f"error: {e}"
+
+    IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+                   ".webp": "image/webp"}
+
+    def t_look_at_image(self, path):
+        import base64
+        p = self._path(path)
+        if not p.is_file():
+            return self._no_such_file(path)
+        kind = self.IMAGE_TYPES.get(p.suffix.lower())
+        if not kind:
+            return f"error: {path} isn't an image look_at_image can show (png, jpg, gif, webp)"
+        if p.stat().st_size > 8_000_000:
+            return f"error: {path} is too big to show ({p.stat().st_size // 1_000_000} MB, the limit is 8)"
+        url = f"data:{kind};base64," + base64.b64encode(p.read_bytes()).decode()
+        self.pending_images.append((path, url))
+        return f"(the image {path} comes right after this)"
 
     def t_todo(self, items):
         clean = [{"text": str(i.get("text", "")), "status": i.get("status", "pending")}
                  for i in items if isinstance(i, dict)]
         self.view.todos(clean)
+        self.todo_list = clean
         self.todos_left = sum(i["status"] != "done" for i in clean)
         if not self.todos_left:
             return ("task list saved: everything is done. If the work is finished, give the user "
                     "your final reply now, without calling any tool.")
-        return f"task list saved ({self.todos_left} not done)"
+        nxt = next((i for i in clean if i["status"] == "doing"), None) or next(
+            i for i in clean if i["status"] != "done")
+        return f"task list saved; next: {nxt['text'][:80]}"
 
     def t_task(self, prompt):
         if not self.spawn:
@@ -584,13 +673,65 @@ class Tools:
 
 
 def run_shell(command, root, timeout=120):
-    """Run a bash command. Returns (output, exit code); exit code -1 means it timed out."""
+    """Run a bash command. Returns (output, exit code); exit code -1 means it timed out.
+    Output goes to a temporary file, not a pipe: a server started in the background (`cmd &`)
+    keeps a pipe open forever, which used to stall the call until the timeout and then kill the
+    server. Now the call returns when bash does, and the server keeps running. On a timeout the
+    command's whole process group is stopped."""
+    import tempfile
+    fd, ps_file = tempfile.mkstemp(prefix="purr-ps-")
+    os.close(fd)
+    os.unlink(ps_file)  # bash writes it only if the command got to its end
+    # what a pipe's earlier commands exited with ("make | tail" shows tail's 0). Not after a
+    # here-document: one missing its end marker would swallow the extra line.
+    script = command if "<<" in command else command + PIPE_TRAILER
     try:
-        res = subprocess.run(["bash", "-c", command], capture_output=True, text=True,
-                             timeout=int(timeout), cwd=root, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        return f"timed out after {timeout}s", -1
-    return (res.stdout + res.stderr).strip(), res.returncode
+        with tempfile.TemporaryFile() as out:
+            proc = subprocess.Popen(["bash", "-c", script], stdout=out, stderr=subprocess.STDOUT, cwd=root,
+                                    stdin=subprocess.DEVNULL, start_new_session=True,
+                                    env={**os.environ, "PURR_PS": ps_file})
+            try:
+                code = proc.wait(timeout=int(timeout))
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, 9)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+                partial = _read_output(out)
+                return f"timed out after {timeout}s" + (f"; its output so far:\n{partial[-4000:]}" if partial else ""), -1
+            text = _read_output(out)
+        return (text + _pipe_note(ps_file, code)).lstrip("\n"), code
+    finally:
+        if os.path.exists(ps_file):
+            os.unlink(ps_file)
+
+
+# appended to a command: the exit codes of its last pipeline, and its own exit code kept as it was
+PIPE_TRAILER = '\n__purr_ps="${PIPESTATUS[*]} $?"; echo "$__purr_ps" > "$PURR_PS"; exit "${__purr_ps##* }"'
+
+
+def _read_output(out):
+    """A command's output as text: bytes that aren't UTF-8 don't lose the rest, and a progress
+    bar's \r updates come out as just their last state."""
+    out.seek(0)
+    text = out.read().decode("utf-8", errors="replace")
+    if "\r" in text:
+        text = "\n".join(line.rstrip("\r").rsplit("\r", 1)[-1] for line in text.split("\n"))
+    return text.strip()
+
+
+def _pipe_note(ps_file, code):
+    """A pipe whose earlier command failed while the last one (tail, grep, tee) worked."""
+    try:
+        codes = [int(c) for c in Path(ps_file).read_text().split()][:-1]  # the last one is $?
+    except (OSError, ValueError):
+        return ""
+    bad = [c for c in codes[:-1] if c not in (0, 141)]  # 141: stopped by a closed pipe (head), fine
+    if code != 0 or not bad or len(codes) < 2:
+        return ""
+    return (f"\n(purr: an earlier command in the pipe exited {bad[0]}; the exit code shown is only "
+            "the last command's)")
 
 
 class _TextOnly(HTMLParser):
