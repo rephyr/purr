@@ -495,5 +495,37 @@ class SecondReaderTest(unittest.TestCase):
         self.assertFalse(any("second reader" in u for u in users(b)))
 
 
+class RoutineEffortTest(unittest.TestCase):
+    def after(self, tool, model="api", effort="low"):
+        a = agent(model)
+        if effort:
+            a.config = {**a.config, "routine_effort": effort}
+        a.messages += [{"role": "user", "content": "go"},
+                       {"role": "assistant", "content": None, "tool_calls": [
+                           {"id": "c1", "type": "function", "function": {"name": tool, "arguments": "{}"}}]},
+                       {"role": "tool", "tool_call_id": "c1", "content": "..."}]
+        return a._body(None, True)
+
+    def test_less_thinking_only_after_looking_around(self):
+        self.assertEqual(self.after("read_file")["reasoning"], {"effort": "low"})  # OpenRouter's shape
+        self.assertNotIn("reasoning", self.after("edit_file"))
+        self.assertNotIn("reasoning", self.after("run"))
+
+    def test_other_providers_and_off_by_default(self):
+        self.assertEqual(self.after("grep", model="small")["reasoning_effort"], "low")  # Ollama: OpenAI's shape
+        body = self.after("read_file", effort=None)
+        self.assertNotIn("reasoning", body)
+        self.assertNotIn("reasoning_effort", body)
+
+    def test_not_after_a_note_from_purr(self):
+        a = agent("api")
+        a.config = {**a.config, "routine_effort": "low"}
+        a.messages += [{"role": "assistant", "content": None, "tool_calls": [
+                           {"id": "c1", "type": "function", "function": {"name": "grep", "arguments": "{}"}}]},
+                       {"role": "tool", "tool_call_id": "c1", "content": "..."},
+                       {"role": "user", "content": "(purr: before you finish ...)"}]
+        self.assertNotIn("reasoning", a._body(None, True))
+
+
 if __name__ == "__main__":
     unittest.main()

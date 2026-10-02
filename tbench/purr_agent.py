@@ -19,6 +19,7 @@ Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the 
     edge_cases=true       the final check also tries edge cases (purr leaves it off for API models)
     time_limit=900        seconds purr is told it has (default: the task's own limit, less 10%)
     web=false             no fetch_url: leaderboard runs may not look at the benchmark's site or repo
+    routine_effort=low    less reasoning for steps that only follow reads and searches (saves output)
 """
 
 
@@ -123,7 +124,7 @@ class PurrAgent(BaseInstalledAgent):
 
     def __init__(self, *args, mcp: str | bool = True, hosts: str | None = None, temperature=None,
                  top_p=None, max_tokens=None, max_steps=200, edge_cases=None, time_limit=None, web=True,
-                 **kwargs):
+                 routine_effort=None, **kwargs):
         kwargs.setdefault("version", purr_version())
         super().__init__(*args, **kwargs)
         self.use_mcp = str(mcp).lower() not in ("false", "0", "no", "off")
@@ -134,6 +135,7 @@ class PurrAgent(BaseInstalledAgent):
         self.edge_cases = None if edge_cases is None else str(edge_cases).lower() in ("true", "1", "yes", "on")
         self.time_limit = float(time_limit) if time_limit else None
         self.web = str(web).lower() not in ("false", "0", "no", "off")
+        self.routine_effort = routine_effort
 
     @staticmethod
     def name() -> str:
@@ -178,6 +180,8 @@ class PurrAgent(BaseInstalledAgent):
                   if k not in ("models", "providers", "mode_models", "plan", "free", "mcp", "default_model")}
         if self.edge_cases is not None:
             config["edge_cases"] = self.edge_cases
+        if self.routine_effort:
+            config["routine_effort"] = self.routine_effort
         config.update({"default_model": "bench", "max_steps": self.max_steps, "providers": {provider: prov},
                        "models": {"bench": spec}})
         if self.use_mcp:

@@ -501,6 +501,7 @@ def calls_from_text(text):
 
 
 LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file does
+ROUTINE_TOOLS = (*LOOKS, "outline", "find_symbol", "todo")  # steps routine_effort may think less after
 
 
 def _ends(text, head, tail):
@@ -1225,7 +1226,26 @@ class Agent:
         body.update(self.model.get("body", {}))
         if self.mode == "create" and messages is None:  # a little more surprising
             body["temperature"] = min(1.2, (body.get("temperature") or 0.8) + 0.3)
+        effort = self.config.get("routine_effort")
+        if effort and tools and messages is None and self._routine_step():
+            # output (mostly thinking) is about half of an agent's cost; after only reading and
+            # searching, the next step rarely needs deep thought (off unless routine_effort is set)
+            if self.model.get("provider") == "openrouter" or "openrouter.ai" in self.provider.get("base_url", ""):
+                body["reasoning"] = {**(body.get("reasoning") or {}), "effort": effort}
+            else:
+                body["reasoning_effort"] = effort
         return body
+
+    def _routine_step(self):
+        """The last step only looked around (read, grep, list, outline): every tool call in the last
+        reply was one of those, and nothing came after their results (no check, no note)."""
+        i = len(self.messages) - 1
+        while i > 0 and self.messages[i].get("role") == "tool":
+            i -= 1
+        if i == len(self.messages) - 1 or self.messages[i].get("role") != "assistant":
+            return False
+        calls = [c["function"]["name"] for c in self.messages[i].get("tool_calls") or []]
+        return bool(calls) and all(name in ROUTINE_TOOLS for name in calls)
 
     STANDARD = {"role", "content", "tool_calls", "tool_call_id", "name"}
 
