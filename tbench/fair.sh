@@ -12,13 +12,32 @@
 #                               comparing purr versions with each other (tbench/quick-tasks.txt)
 set -eu
 cd "$(dirname "$0")/.."
+export PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2-1}"
+# a package dataset (org/name, like 2.1) names its tasks org/task: mteb-retrieve -> terminal-bench/mteb-retrieve
+case "$PURR_DATASET" in */*) ORG="${PURR_DATASET%%/*}/" ;; *) ORG="" ;; esac
 ATTEMPTS=3
 TASKS=""
 if [ "${1:-}" = "--quick" ]; then
     shift
     ATTEMPTS=1
-    TASKS=$(grep -v '^#' tbench/quick-tasks.txt | awk 'NF {printf "-i %s ", $1}')
+    TASKS=$(grep -v '^#' tbench/quick-tasks.txt | awk -v org="$ORG" 'NF {printf "-i %s%s ", org, $1}')
 fi
+# the same for tasks picked by hand (-i name)
+n=$#
+while [ "$n" -gt 0 ]; do
+    a="$1"
+    shift
+    n=$((n - 1))
+    if [ "$a" = "-i" ] && [ "$n" -gt 0 ]; then
+        t="$1"
+        shift
+        n=$((n - 1))
+        case "$t" in */*) ;; *) t="$ORG$t" ;; esac
+        set -- "$@" -i "$t"
+    else
+        set -- "$@" "$a"
+    fi
+done
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     echo "purr has uncommitted changes: commit first, so the results name the exact version" >&2
     [ "${PURR_ALLOW_DIRTY:-}" = 1 ] || exit 1
@@ -42,7 +61,6 @@ except urllib.error.HTTPError as e:
             "https://openrouter.ai/settings/privacy") if "training" in detail else ""
     sys.exit(f"DeepSeek's host on OpenRouter refused a test request ({e.code}): {detail}{hint}")
 PY
-export PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2-1}"
 export PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}"
 # shellcheck disable=SC2086  # $TASKS is a list of -i options
 exec tbench/run.sh -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS \

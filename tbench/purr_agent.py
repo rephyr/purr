@@ -181,9 +181,13 @@ class PurrAgent(BaseInstalledAgent):
         try:
             trial = json.loads((self.logs_dir.parent / "config.json").read_text())
             job = json.loads((self.logs_dir.parent.parent / "config.json").read_text())
-            name = Path(trial["task"]["path"]).name
-            found = sorted(Path.home().glob(f".cache/harbor/tasks/*/{name}/task.toml"),
-                           key=lambda p: p.stat().st_mtime)
+            task = trial["task"]
+            if task.get("path"):  # a registry dataset (terminal-bench@2.0): tasks/<id>/<name>/
+                found = Path.home().glob(f".cache/harbor/tasks/*/{Path(task['path']).name}/task.toml")
+            else:  # a package (Terminal-Bench 2.1): tasks/packages/<org>/<name>/<sha>/
+                sha = str(task.get("ref") or "").split(":")[-1] or "*"
+                found = Path.home().glob(f".cache/harbor/tasks/packages/{task['name']}/{sha}/task.toml")
+            found = sorted(found, key=lambda p: p.stat().st_mtime)
             seconds = tomllib.loads(found[-1].read_text())["agent"]["timeout_sec"]
             return 0.9 * seconds * float(job.get("agent_timeout_multiplier") or 1.0)
         except (OSError, ValueError, KeyError, IndexError, TypeError):
