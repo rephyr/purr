@@ -265,6 +265,24 @@ class TuiView:
         self._mood(*before)
         return box["result"]
 
+    def plan_review(self, tickets, folder):
+        self.flush()
+        done = threading.Event()
+        box = {}
+
+        def answered(result):
+            box["result"] = result
+            done.set()
+
+        before = self.mood
+        self._mood("waiting")
+        self._send(self.app.push_screen, PlanScreen(tickets, folder), answered)
+        while not done.wait(0.1):
+            if self.app.closing:
+                return "cancel"
+        self._mood(*before)
+        return box["result"] or "cancel"
+
 
 class AskScreen(ModalScreen):
     """y / a / n popup before edits and commands. Typing a reason = no, with the reason."""
@@ -341,6 +359,41 @@ class RefineScreen(ModalScreen):
             self.dismiss(self.original)
         else:
             self.dismiss(None)
+
+
+class PlanScreen(ModalScreen):
+    """The tickets, before any of them run: run them, reload after editing the files, or cancel."""
+
+    BINDINGS = [
+        Binding("ctrl+s", "choose('run')", "run them", priority=True),
+        Binding("ctrl+r", "choose('edit')", "reload", priority=True),
+        Binding("escape", "choose('cancel')", "cancel"),
+    ]
+
+    def __init__(self, tickets, folder):
+        super().__init__()
+        self.tickets, self.folder = tickets, folder
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="planbox"):
+            yield Static(Text(f"✦ the plan: {len(self.tickets)} tickets", style=f"bold {PINK}"),
+                         id="plantitle")
+            with VerticalScroll(id="planlist"):
+                for n, t in enumerate(self.tickets, 1):
+                    body = Text(no_wrap=False)
+                    body.append(f"{n}. {t['title']}\n", style=f"bold {TEXT}")
+                    body.append(t["body"] or "", style=DIM)
+                    yield Static(body, classes="planticket")
+            yield Static(Text(f"files: {self.folder}", style=DIM), id="planwhere")
+            hint = Text()
+            for key, what in (("ctrl+s", "run them"), ("ctrl+r", "read the files again after editing"),
+                              ("esc", "cancel, nothing runs")):
+                hint.append(key, style=f"bold {TEXT}")
+                hint.append(f" {what}   ", style=DIM)
+            yield Static(hint, id="planhint")
+
+    def action_choose(self, choice):
+        self.dismiss(choice)
 
 
 class PRScreen(ModalScreen):
@@ -1030,6 +1083,17 @@ class PurrApp(App):
             self.call_from_thread(self._turn_done, summary.lstrip("✓ "))
 
     @work(thread=True, exclusive=True)
+    def run_plan(self, start):
+        self.job = "plan"
+        try:
+            self.agent.run_plan(start)  # run the tickets already in .purr/tickets/
+        except Exception as e:
+            self.view.note(f"purr broke: {type(e).__name__}: {e}", "error")
+        finally:
+            summary = (getattr(self.agent, "turn_stats", None) or {}).get("summary", "")
+            self.call_from_thread(self._turn_done, summary.lstrip("✓ "))
+
+    @work(thread=True, exclusive=True)
     def run_shell(self, command):
         self.job = "shell"
         try:
@@ -1088,8 +1152,16 @@ class PurrApp(App):
         if isinstance(result, dict) and result.get("pr"):
             self.start_pr()
             return
+        if isinstance(result, dict) and result.get("plan_run"):
+            self.prompt.placeholder = self.MODE_HINT["plan"]
+            self.add_user(text)
+            self.busy = True
+            self.run_plan(result["plan_run"])
+            return
         if name == "mode" and arg in MODE_NAMES:
             self.prompt.placeholder = self.MODE_HINT[arg]
+        elif name == "plan":
+            self.prompt.placeholder = self.MODE_HINT["plan"]
         if result is None:
             self.exit()
             return
@@ -1252,8 +1324,10 @@ class PurrApp(App):
 
     # ---- modes: code, ask, chat, create ----
 
-    MODE_LOOK = {"code": ("✎", PINK), "ask": ("◈", LILAC), "chat": ("♡", PEACH), "create": ("✧", MINT)}
+    MODE_LOOK = {"code": ("✎", PINK), "ask": ("◈", LILAC), "plan": ("✦", CYAN),
+                 "chat": ("♡", PEACH), "create": ("✧", MINT)}
     MODE_HINT = {"code": 'ask anything…  "fix the failing test"', "ask": "ask about the code, nothing gets changed…",
+                 "plan": "describe the whole task; a big model makes tickets, a small one does them…",
                  "chat": "say hi ♡", "create": "let's dream something up ✧"}
 
     def action_next_mode(self):

@@ -24,7 +24,8 @@ COMMANDS = {
     "trust": ("", "allow edits and commands without asking (toggle)"),
     "theme": ("[name]", "change purr's colours"),
     "cat": ("[name <new name>]", "your cat: her stats, or give her a new name"),
-    "mode": ("[code|ask|chat|create]", "what purr may do: code, ask (look only), chat, create"),
+    "mode": ("[code|ask|plan|chat|create]", "what purr may do: code, ask (look only), plan, chat, create"),
+    "plan": ("[task | run [N]]", "a big model writes tickets, a small one does them one at a time"),
     "refine": ("[auto|on|off]", "rewrite your message into a clear task first (you approve it)"),
     "pr": ("", "commit the changes and open a GitHub pull request (you check it first)"),
     "quit": ("", "leave"),
@@ -69,6 +70,7 @@ def run(agent, text):
     None                        quit
     [(kind, line), ...]         lines to show (kind: info, warn, error, dim)
     {"send": prompt}            send this prompt to the model as your message
+    {"plan_run": n}             run the plan tickets from ticket n
     """
     name, arg = parse(text)
     templates = custom(agent.root)
@@ -131,6 +133,22 @@ def run(agent, text):
                 return [("error", e.args[0])]
             return [("info", f"mode: {arg}, {MODES[arg][1]}")]
         return [("info", ("♡ " if m == agent.mode else "  ") + f"{m:<7} {what}") for m, (_, what) in MODES.items()]
+    if name == "plan":
+        from .agent import MODES
+        agent.set_mode("plan")
+        if arg.startswith("run"):
+            rest = arg[3:].strip()
+            try:
+                start = int(rest) if rest else 1
+            except ValueError:
+                return [("error", f"'{rest}' is not a ticket number")]
+            if start < 1:
+                return [("error", "ticket numbers start at 1")]
+            return {"plan_run": start}
+        if arg:
+            return {"send": arg}
+        return [("info", "plan mode: " + MODES["plan"][1]
+                 + "   (/plan run [N] runs the tickets already written)")]
     if name == "refine":
         from .agent import REFINE_MODES
         if arg in REFINE_MODES:

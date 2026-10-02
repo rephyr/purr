@@ -68,10 +68,43 @@ few different directions rather than one, be specific and playful, build on what
 and ask a question back when it would help. In this mode you can't see or change any files. \
 Today is {date}."""
 
+PLAN = """You are planning work for a small local coding model. Look around the project with \
+your read tools first. Break the request below into tickets the model can do on its own, one at a \
+time and in order; together they must cover the whole request. Don't do the work yourself.
+
+Reply with only the tickets, each one exactly like this:
+
+## A short title
+Files: the exact paths it touches (one to three)
+Change: what to do, naming the functions or classes to add or change
+Done when: a command to run, or a fact that must be true
+
+Rules:
+- Each ticket touches one to three files and is small enough for the model to finish in one go.
+- Each ticket runs in a fresh chat and can't see the others, so it must be self-contained.
+- Order the tickets so each one builds on the last.
+- The project's tests must still pass after every ticket, so put a function and its first caller \
+in the same ticket.
+
+The request:
+{request}"""
+
+TICKET_WORK = """(purr: plan ticket {i}/{total}. Do this ticket only; don't work on later \
+tickets. When it's done, reply with a short summary of what you changed.)
+
+The whole plan is for: {request}
+
+Tickets (✓ = done):
+{titles}
+
+This ticket:
+{ticket}"""
+
 # mode -> (which tools, what it's for). The TUI's chip and /mode use this.
 MODES = {
     "code": ("all", "does the work: reads, edits, runs"),
     "ask": ("read", "looks at the project and explains, never changes anything"),
+    "plan": ("all", "a big model splits the task into tickets, then a small one works through them"),
     "chat": ("none", "just talking, no tools"),
     "create": ("none", "brainstorming and writing, no tools, a bit more random"),
 }
@@ -237,6 +270,107 @@ def _looks_failed(result):
     return bool(m and m.group(1) != "0")
 
 
+TICKET_SPLIT = re.compile(r"^##\s+(.+?)\s*$", re.M)
+FILE_TITLE = re.compile(r"^#\s+(.+?)\s*$", re.M)
+
+
+def parse_tickets(text):
+    """The planner's reply -> [(title, body)]. Only "## " starts a ticket; a leading "# Plan"
+    or intro before the first one is dropped, and "###" subheadings (Files, Done when, ...) stay
+    inside the ticket they belong to. If it wrote no "## " headings, the whole reply is one ticket."""
+    text = text or ""
+    heads = list(TICKET_SPLIT.finditer(text))
+    tickets = []
+    for i, m in enumerate(heads):
+        title = m.group(1).strip().strip("*#:").strip()
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        if title:
+            tickets.append((title, text[m.end():end].strip()))
+    if not tickets:
+        stripped = text.strip()
+        if stripped:
+            lines = stripped.splitlines()
+            title = lines[0].lstrip("#*- ").strip() or "ticket"
+            tickets.append((title, "\n".join(lines[1:]).strip() or stripped))
+    return tickets
+
+
+def ticket_body(text):
+    """A ticket file without its "# title" line (the title is shown on its own)."""
+    return FILE_TITLE.sub("", text or "", count=1).strip()
+
+
+FAILED_TEST = re.compile(r"^(?:FAILED|ERROR) (\S+)|^(?:FAIL|ERROR): (.+?)\s*$", re.M)
+
+
+def failed_tests(output):
+    """The failing test names in pytest or unittest output (empty when it names none)."""
+    return {a or b for a, b in FAILED_TEST.findall(output or "")}
+
+
+def ticket_title(text, fallback="ticket"):
+    """The "# title" line of a ticket file (for the progress line and the record)."""
+    m = FILE_TITLE.search(text or "")
+    return m.group(1).strip() if m else fallback
+
+
+def slug(title):
+    """A ticket title -> a short, safe file name."""
+    name = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return name[:40].rstrip("-") or "ticket"
+
+
+def one_line(text, limit=600):
+    """A request squeezed onto one line, for the executor's small context."""
+    return " ".join((text or "").split())[:limit]
+
+
+def ensure_purr_gitignore(root):
+    """.purr/.gitignore with "*", so tickets are never committed in any project."""
+    purr = Path(root) / ".purr"
+    purr.mkdir(parents=True, exist_ok=True)
+    ignore = purr / ".gitignore"
+    if not ignore.exists():
+        ignore.write_text("*\n")
+
+
+def archive_tickets(root):
+    """Move the current .purr/tickets/*.md to .purr/tickets/old/<timestamp>/ (not deleted).
+    Returns that folder, or None when there was no earlier plan."""
+    folder = Path(root) / ".purr/tickets"
+    old = list(folder.glob("*.md"))
+    if not old:
+        return None
+    dest = folder / "old" / datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    dest.mkdir(parents=True, exist_ok=True)
+    for p in old:
+        p.replace(dest / p.name)
+    return dest
+
+
+def write_tickets(root, tickets):
+    """Write a plan to .purr/tickets/NN-slug.md. An earlier plan is archived (not deleted).
+    Returns the paths, in order."""
+    folder = Path(root) / ".purr/tickets"
+    folder.mkdir(parents=True, exist_ok=True)
+    ensure_purr_gitignore(root)
+    archive_tickets(root)
+    paths = []
+    for i, (title, body) in enumerate(tickets, 1):
+        path = folder / f"{i:02d}-{slug(title)}.md"
+        path.write_text(f"# {title}\n\n{body}\n")
+        paths.append(path)
+    return paths
+
+
+def read_tickets(root):
+    """The tickets on disk, sorted by file name, read fresh: [(path, text), ...]."""
+    folder = Path(root) / ".purr/tickets"
+    if not folder.is_dir():
+        return []
+    return [(p, p.read_text(errors="replace")) for p in sorted(folder.glob("*.md"))]
+
+
 _OPENCODE_KEYS = {}
 
 
@@ -298,6 +432,9 @@ class SubView:
     def ask(self, question, allow_always=True):
         return "n", ""
 
+    def plan_review(self, tickets, folder):
+        return "run"  # a helper never plans, but a view needs this to exist
+
     def activity(self, what, detail=""):
         if what != "thinking":
             self.view.activity(what, detail)
@@ -325,7 +462,7 @@ class Agent:
         self.stop_flag = False  # the TUI sets this to stop an answer (plain mode uses ctrl+c)
         self.tools.code_checks = config.get("code_checks", True)
         self.tools.read_before_edit = config.get("read_before_edit", True)
-        self.mode = "code"       # code, ask, chat or create (MODES)
+        self.mode = "code"       # code, ask, plan, chat or create (MODES)
         # /refine: "auto" rewrites a short first message into a clear task (you approve it),
         # "on" every message, "off" none. purr bench measured +2 solved hard tasks from vague asks.
         # Unset, it follows the model (auto for local models, off for API ones); /refine or
@@ -397,6 +534,222 @@ class Agent:
         self._count(reply["usage"])
         return reply["text"].strip()
 
+    # ---- plan mode: a big model writes tickets, a small one does them one at a time (MODES) ----
+
+    def plan_turn(self, text):
+        """Split the request into tickets (a big model, .purr/tickets/), let the user approve or
+        edit them, then hand each ticket to the executor (a small local model) one at a time. Each
+        ticket runs in a fresh agent, so the small model's context holds only the ticket in front
+        of it, not the whole task."""
+        self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+        self.title = self.title or " ".join(text.split())[:70]
+        plan = self.config.get("plan", {})
+        planner_name = plan.get("planner") or self.model_name
+        executor_name = plan.get("executor") or "qwen3_6-iq3"
+        self.view.note(f"planning with {planner_name}, then {executor_name} takes the tickets", "info")
+        self.messages.append({"role": "user", "content": text})
+        tickets = self._make_tickets(text, planner_name)
+        if self.stopping():
+            self.view.note("stopped while planning; no tickets written", "warn")
+            self._plan_done("stopped while planning", "■")
+            return
+        if not tickets:
+            self.view.note("the planner came back with no tickets, so there is nothing to do", "error")
+            self.messages.append({"role": "assistant", "content": "(purr: the planner wrote no tickets)"})
+            self._plan_done("0 done, 0 failed/not run", "✗")
+            return
+        write_tickets(self.root, tickets)
+        (Path(self.root) / ".purr/tickets/request.txt").write_text(text + "\n")
+        listing = "\n\n".join(f"## {title}\n{body}" for title, body in tickets)
+        self.messages.append({"role": "assistant",
+                              "content": f"Plan ({len(tickets)} tickets):\n\n{listing}"})
+        self.view.note(f"wrote {len(tickets)} tickets to .purr/tickets/", "info")
+        if not self._review_plan():
+            self.view.note("the tickets are ready; /plan run starts them when you are", "info")
+            self._plan_done(f"0 done, {len(tickets)} not run", "■")
+            return
+        self.run_tickets(1, text, executor_name)
+
+    def _make_tickets(self, text, planner_name):
+        """Ask the planner (a big model, read-only so it can look around) for the ticket list."""
+        try:
+            planner = Agent(self.config, self.root, planner_name, self.view, parent=self)
+        except KeyError as e:  # no key / no such model: plan with what we have rather than fail
+            self.view.note(f"can't use {planner_name} for planning ({e.args[0]}), "
+                           f"using {self.model_name}", "warn")
+            planner = Agent(self.config, self.root, self.model_name, self.view, parent=self)
+        planner.set_mode("ask")
+        planner.title = f"planning: {' '.join(text.split())[:60]}"
+        planner.turn(PLAN.format(request=text))
+        answers = [m.get("content") for m in planner.messages
+                   if m.get("role") == "assistant" and m.get("content")]
+        return parse_tickets(answers[-1] if answers else "")
+
+    def _review_plan(self):
+        """Show the tickets on disk and wait: run, cancel, or let the user edit them first.
+        Returns True to run, False to stop (the files stay either way)."""
+        while True:
+            tickets = [{"path": str(p), "title": ticket_title(text, p.stem), "body": ticket_body(text)}
+                       for p, text in read_tickets(self.root)]
+            if not tickets:
+                self.view.note("no tickets to run", "error")
+                return False
+            choice = self.view.plan_review(tickets, str(Path(self.root) / ".purr/tickets"))
+            if choice == "run":
+                return True
+            if choice == "cancel":
+                self.view.note("kept the tickets; nothing was run", "info")
+                return False
+            # "edit": the user changes the files, then we read them again
+
+    def run_plan(self, start=1):
+        """`/plan run [N]`: run the tickets already in .purr/tickets/ from ticket N, without
+        planning again. The files are read fresh, so any edits the user made count."""
+        self.stop_flag = False  # an Esc on an earlier answer mustn't stop this before it starts
+        self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+        self.title = self.title or "plan"
+        self.messages.append({"role": "user", "content": f"(purr: run the plan tickets from {start})"})
+        self.run_tickets(start, self._saved_request())
+
+    def run_tickets(self, start=1, request="", executor_name=None):
+        """Run the tickets in .purr/tickets/ from `start` (1-based), each in a fresh agent. Reads
+        every ticket file again right before it runs, so the user's edits count. The project's
+        tests are run after each ticket; the first failure stops the plan and is reported. Keeps a
+        record in the parent chat and saves it."""
+        executor_name = executor_name or self.config.get("plan", {}).get("executor") or "qwen3_6-iq3"
+        if not getattr(self, "turn_stats", None):
+            self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
+        tickets = read_tickets(self.root)
+        total = len(tickets)
+        if not tickets:
+            self.view.note("no tickets in .purr/tickets/; use /plan <task> to write some", "error")
+            return
+        if not 1 <= start <= total:
+            self.view.note(f"there is no ticket {start} (there are {total})", "error")
+            return
+        request = one_line(request or self._saved_request())
+        titles = [ticket_title(text, p.stem) for p, text in tickets]
+        attempted = total - (start - 1)
+        self.tools.begin_turn()  # one undo frame for the whole plan
+        cmd = checks.test_command(self.root)
+        if cmd and "pytest" in cmd:
+            cmd = re.sub(r"\s-x\b", "", cmd)  # run every test, so old failures don't hide new ones
+        baseline = self._test_baseline(cmd)
+        plan_stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
+        done, end = 0, None  # end: why the plan stopped early ("stopped", "failed", "error")
+        for idx in range(start - 1, total):
+            if self.stopping():
+                self.view.note("stopped before the next ticket", "warn")
+                end = "stopped"
+                break
+            path = tickets[idx][0]
+            text = path.read_text(errors="replace")  # re-read: the user may have edited it
+            title = ticket_title(text, path.stem)
+            self.view.note(f"♡ ticket {idx + 1}/{total}: {title}", "info")
+            try:
+                worker = Agent(self.config, self.root, executor_name, self.view, parent=self)
+            except KeyError as e:
+                self.view.note(f"can't hand out the tickets: {e.args[0]}", "error")
+                end = "error"
+                break
+            worker.tools.trust_all = self.tools.trust_all
+            worker.tools.always = self.tools.always            # shared: "always" carries between tickets
+            worker.tools.always_run = self.tools.always_run
+            worker.title = f"ticket {idx + 1}/{total}: {title}"
+            worker.log_path = LOG_DIR / f"plan_{plan_stamp}_ticket-{idx + 1:02d}.json"
+            worker.turn(TICKET_WORK.format(i=idx + 1, total=total, request=request,
+                                           titles=self._ticket_lines(titles, idx), ticket=text))
+            self._merge_undo(worker)
+            if self.stopping():  # stopped half way: not checked, not done
+                ok, line, end = False, f"■ ticket {idx + 1}/{total}: {title} (stopped, not checked)", "stopped"
+            else:
+                ok, line, baseline = self._ticket_result(idx + 1, total, title, cmd, baseline)
+                end = None if ok else "failed"
+            self.messages.append({"role": "assistant", "content": line})
+            self.save_log()
+            if not ok:
+                break
+            done += 1
+        left = attempted - done
+        if end == "stopped":
+            self._plan_done(f"{done} done, {left} stopped/not run", "■")
+        elif end == "failed":
+            self._plan_done(f"{done} done, 1 failed, {left - 1} not run", "✗")
+        elif end == "error":
+            self._plan_done(f"{done} done, {left} not run", "✗")
+        else:
+            self._plan_done(f"{done} done", "✓")
+
+    def _ticket_lines(self, titles, idx):
+        """The ticket list for the executor: ✓ for the ones already done, the current one next."""
+        return "\n".join(f"{'✓' if n < idx else '○'} {n + 1}. {title}"
+                         for n, title in enumerate(titles))
+
+    def _merge_undo(self, worker):
+        """Put a ticket's file changes on the plan's undo frame, so /undo after a plan puts back
+        everything the plan changed (all tickets as one undo)."""
+        if not worker.tools.undo_stack:
+            return
+        changes = worker.tools.undo_stack.pop()
+        for p, before in changes.items():
+            self.tools.undo_stack[-1].setdefault(p, before)  # keep the earliest text for /undo
+
+    def _test_baseline(self, cmd):
+        """Run the tests once before the first ticket, so a ticket is only blamed for failures it
+        added, not for ones the project already had. None when there's nothing to run."""
+        if not cmd:
+            return None
+        self.view.activity("run", cmd)
+        output, code = run_shell(cmd, self.root, timeout=180)
+        baseline = {"code": code, "failed": failed_tests(output)}
+        if code != 0:
+            known = f" ({len(baseline['failed'])} failing)" if baseline["failed"] else ""
+            self.view.note(f"the tests already fail before the plan{known}; tickets are only "
+                           "blamed for new failures", "warn")
+        return baseline
+
+    def _ticket_result(self, i, total, title, cmd, baseline):
+        """Run the project's tests after a ticket and compare them with the baseline (the run
+        before this ticket). Returns (ok, one-line record for the chat, the new baseline)."""
+        name = f"ticket {i}/{total}: {title}"
+        if not cmd:
+            return True, f"✓ {name} (not checked: no tests found)", None
+        self.view.activity("run", cmd)
+        output, code = run_shell(cmd, self.root, timeout=180)
+        now = {"code": code, "failed": failed_tests(output)}
+        if code == 0:
+            return True, f"✓ {name} (tests pass)", now
+        was_failing = baseline and baseline["code"] not in (0, -1)
+        if was_failing and code != -1:
+            if not (now["failed"] and baseline["failed"]):
+                # can't tell which tests fail, so can't tell if this ticket broke one
+                return True, f"✓ {name} (not checked: the tests already failed before the plan)", now
+            new = sorted(now["failed"] - baseline["failed"])
+            if not new:
+                return True, f"✓ {name} (no new test failures; {len(now['failed'])} failed before)", now
+            why = "broke " + ", ".join(new[:5]) + (f" and {len(new) - 5} more" if len(new) > 5 else "")
+        else:
+            why = "tests time out" if code == -1 else "tests fail"
+        tail = "\n".join(output.strip().splitlines()[-15:])
+        self.view.note(f"{name} left the tests failing ({cmd}):", "error")
+        for line in tail.splitlines():
+            self.view.note(line[:200], "error")
+        self.messages.append({"role": "assistant", "content": f"(purr ran `{cmd}`:\n{tail}\n)"})
+        if why == "tests fail":
+            why += ": " + (tail.splitlines()[-1] if tail else "no output")
+        return False, f"✗ {name} ({why})", baseline
+
+    def _saved_request(self):
+        path = Path(self.root) / ".purr/tickets/request.txt"
+        return path.read_text(errors="replace") if path.is_file() else ""
+
+    def _plan_done(self, summary, mark="✓"):
+        """mark: ✓ every ticket tried is done, ✗ one failed, ■ stopped or cancelled."""
+        line = f"{mark} plan · {summary}"
+        self.turn_stats["summary"] = line
+        self.view.note(line, "stats")
+        self.save_log()
+
     def _system(self):
         text = system_prompt(self.root, self.model["id"], self.model["provider"], self.limits.hidden_tools,
                              self.mode)
@@ -408,7 +761,7 @@ class Agent:
         self.session_out = 0
         self.last_usage = None
         self.title = ""
-        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
         self.log_path = None if self.helper else LOG_DIR / f"{stamp}.json"
 
     # ---- sessions ----
@@ -519,6 +872,8 @@ class Agent:
     def turn(self, text):
         self.stop_flag = False
         self.cut_off = None
+        if self.mode == "plan" and not self.helper:
+            return self.plan_turn(text)
         if not self.title:
             self.title = " ".join(text.split())[:70]
         self.messages.append({"role": "user", "content": self.expand(text)})
