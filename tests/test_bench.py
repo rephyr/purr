@@ -143,20 +143,34 @@ class PlayTest(unittest.TestCase):
 
     def test_publish_files_a_run_with_the_note(self):
         from unittest import mock
-        run = Path(tempfile.mkdtemp()) / "2026-10-02_120000"
-        run.mkdir()
-        row = {**bench.blank("purr", "qwen", {"name": "rename", "expected": 2}), "passed": 2, "solved": True,
-               "calls": 5, "hallucinations": 0, "out_tokens": 900, "seconds": 30.0}
-        (run / "results.json").write_text(json.dumps([row]))
-        (run / "meta.json").write_text(json.dumps({"purr": "0.3.1+abc1234", "date": "2026-10-02", "tasks": ["rename"],
-                                                   "vague": False, "runs": 1}))
+
+        def run(name, solved_by):
+            folder = Path(tempfile.mkdtemp()) / name
+            folder.mkdir()
+            rows = []
+            for harness in ("purr", "opencode"):
+                for task in ("rename", "lru-cache"):
+                    ok = (harness, task) in solved_by
+                    rows.append({**bench.blank(harness, "qwen", {"name": task, "expected": 2}), "passed": 2 if ok else 1,
+                                 "solved": ok, "calls": 5, "hallucinations": 0, "out_tokens": 900, "seconds": 30.0})
+            (folder / "results.json").write_text(json.dumps(rows))
+            (folder / "meta.json").write_text(json.dumps({"purr": "0.3.1+abc1234", "date": name[:10],
+                                                          "tasks": ["rename", "lru-cache"], "vague": False, "runs": 1}))
+            return folder
+
         out = Path(tempfile.mkdtemp())
         with mock.patch.object(bench, "PUBLISHED", out), mock.patch("sys.stdout"):
-            self.assertEqual(bench.publish(str(run)), 0)
+            self.assertEqual(bench.publish(str(run("2026-10-01_120000", {("purr", "rename")}))), 0)
+            self.assertEqual(bench.publish(str(run("2026-10-02_120000", {("purr", "rename"), ("purr", "lru-cache"),
+                                                                         ("opencode", "rename")}))), 0)
         readme = (out / "README.md").read_text()
         self.assertIn("Not an official benchmark", readme)
-        self.assertIn("purr 0.3.1+abc1234 · 1 tasks, full prompts", readme)
-        self.assertIn("| qwen | purr | 1/1 | 100% |", readme)
+        self.assertIn("## Latest: 2026-10-02", readme)
+        self.assertIn("**purr** solved 2 of 2 tasks · OpenCode solved 1 of 2 tasks", readme)
+        self.assertIn("| tasks solved | **2/2** | 1/2 |", readme)
+        self.assertIn("| tokens per task | 900 | 900 |", readme)  # a tie: nobody's bold
+        self.assertIn("| lru-cache | ✓ | ✗ 1/2 |", readme)
+        self.assertIn("<details><summary>2026-10-01", readme)  # the older run, folded
         self.assertTrue((out / "results" / "2026-10-02_120000.json").exists())
 
     def test_you_get_graded_and_join_the_table(self):

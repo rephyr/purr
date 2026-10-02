@@ -769,6 +769,101 @@ NOTE = """> **Not an official benchmark.** These are purr's own small tasks (`be
 > [Terminal-Bench](../terminal-bench/)."""
 
 
+HARNESS_NAMES = {"purr": "purr", "opencode": "OpenCode", "human": "you", "purr-nomcp": "purr (no MCP)",
+                 "purr-bare": "purr (bare)", "purr+refine": "purr + refine", "purr-nocheck": "purr (no final check)"}
+# each row of the side-by-side table: label, the number (None: doesn't apply), how to show it, higher is better
+MEASURES = [
+    ("tasks solved", lambda s: s["solved"] / max(s["runs"], 1), lambda s: f"{s['solved']}/{s['runs']}", True),
+    ("hidden tests passed", lambda s: s["passed"] / max(s["total"], 1),
+     lambda s: f"{100 * s['passed'] // max(s['total'], 1)}%", True),
+    ("time per task", lambda s: s["seconds"] / max(s["runs"], 1), lambda s: ui.duration(s["seconds"] / max(s["runs"], 1)), False),
+    ("tokens per task", lambda s: s["out"] / max(s["runs"], 1) if s["harness"] != "human" else None,
+     lambda s: ui.short(round(s["out"] / max(s["runs"], 1))), False),
+    ("tool errors", lambda s: s["tool_errors"] if s["harness"] != "human" else None, lambda s: str(s["tool_errors"]), False),
+    ("claimed done but wasn't", lambda s: s["false_claims"] if s["harness"] != "human" else None,
+     lambda s: str(s["false_claims"]), False),
+]
+
+
+def _label(s, many_models):
+    name = HARNESS_NAMES.get(s["harness"], s["harness"])
+    return name if many_models is False or s["harness"] == "human" else f"{name} · {s['model']}"
+
+
+def _model_name(key):
+    try:
+        import tomllib
+        spec = tomllib.loads((PUBLISHED.parent.parent / "config.toml").read_text())["models"].get(key, {})
+        return f"`{key}` ({spec['id']})" if spec.get("id") and spec["id"] != key else f"`{key}`"
+    except (OSError, ValueError, KeyError):
+        return f"`{key}`"
+
+
+def _run_section(p, heading):
+    """One published run: a headline, the side-by-side table (best in bold) and a task-by-task grid."""
+    m, summary, rows = p["meta"], [s for s in p["summary"] if s["runs"]], p["results"]
+    models = sorted({s["model"] for s in summary if s["harness"] != "human"})
+    many = len(models) > 1
+    prompts = "vague" if m.get("vague") else "full"
+    runs = m.get("runs", 1)
+    title = f"{m['date']} · {', '.join(models) or 'people'} · {len(m['tasks'])} tasks, {prompts} prompts"
+    ranked = sorted(summary, key=lambda s: -s["solved"] / max(s["runs"], 1))
+    unit = "tasks" if runs == 1 else "runs"
+    headline = " · ".join(f"{'**' + _label(s, many) + '**' if i == 0 else _label(s, many)} solved "
+                          f"{s['solved']} of {s['runs']} {unit}" for i, s in enumerate(ranked))
+    out = [f"{heading} {title}", "", headline, "",
+           f"purr {m['purr']}" + (f" · model {_model_name(models[0])}" if len(models) == 1 else "")
+           + (f" · {runs} runs per task" if runs > 1 else "") + " · **bold** = better", ""]
+    out += ["| | " + " | ".join(_label(s, many) for s in summary) + " |", "|---|" + "---|" * len(summary)]
+    for label, number, show, higher in MEASURES:
+        values = [number(s) for s in summary]
+        real = [v for v in values if v is not None]
+        best = (max(real) if higher else min(real)) if len(real) > 1 and len(set(real)) > 1 else None
+        cells = ["—" if v is None else (f"**{show(s)}**" if v == best else show(s)) for s, v in zip(summary, values)]
+        out.append(f"| {label} | " + " | ".join(cells) + " |")
+    out += ["", "**Task by task**", "", "| task | " + " | ".join(_label(s, many) for s in summary) + " |",
+            "|---|" + "---|" * len(summary)]
+    for task in m["tasks"]:
+        cells = []
+        for s in summary:
+            mine = [r for r in rows if r["task"] == task and r["harness"] == s["harness"] and r["model"] == s["model"]]
+            if not mine:
+                cells.append("—")
+            elif len(mine) == 1:
+                r = mine[0]
+                cells.append("✓" if r["solved"] else ("⏱ timed out" if r.get("timeout") else f"✗ {r['passed']}/{r['total']}"))
+            else:
+                won = sum(1 for r in mine if r["solved"])
+                cells.append(f"{'✓' if won else '✗'} {won}/{len(mine)}")
+        out.append(f"| {task} | " + " | ".join(cells) + " |")
+    out += ["", "✓ every hidden test passed · ✗ 9/10: 9 of the 10 hidden tests passed"
+            + (" · with several runs: how many of them solved it" if runs > 1 else ""), ""]
+    return out
+
+
+def rebuild_readme():
+    """benchmarks/purr-bench/README.md from every published run: the latest in full, the rest folded."""
+    published = []
+    for f in sorted((PUBLISHED / "results").glob("*.json"), reverse=True):
+        try:
+            published.append(json.loads(f.read_text()))
+        except (OSError, ValueError):
+            continue
+    lines = ["# purr bench", "", NOTE, ""]
+    if not published:
+        lines.append("Nothing published yet: `purr bench`, then `purr bench --publish`.")
+    else:
+        lines += _run_section(published[0], "## Latest:")
+        if len(published) > 1:
+            lines += ["## Earlier runs", ""]
+            for p in published[1:]:
+                section = _run_section(p, "###")
+                lines += [f"<details><summary>{section[0].removeprefix('### ')}</summary>", "", *section[1:], "</details>", ""]
+    lines += ["---", "", "Every run's full results are in [`results/`](results/). Run your own: `purr bench`, then",
+              "`purr bench --publish`; play it yourself with `purr bench --you`.", ""]
+    (PUBLISHED / "README.md").write_text("\n".join(lines))
+
+
 def publish(folder="latest"):
     """purr bench --publish [FOLDER]: copy a finished run's results into the repo and rebuild the
     README there (every published run, newest first)."""
@@ -799,29 +894,7 @@ def publish(folder="latest"):
     (PUBLISHED / "results").mkdir(parents=True, exist_ok=True)
     (PUBLISHED / "results" / f"{out.name}.json").write_text(
         json.dumps({"meta": meta, "summary": summarise(results), "results": keep}, indent=1) + "\n")
-    published = []
-    for f in sorted((PUBLISHED / "results").glob("*.json"), reverse=True):
-        try:
-            published.append(json.loads(f.read_text()))
-        except (OSError, ValueError):
-            continue
-    lines = ["# purr bench", "", NOTE, "", "How to read it: each run is one `purr bench` call. *prompts* says whether the",
-             "tasks got their full prompt or the short, vague one. *solved* counts runs where every hidden test",
-             "passed; *tests* is the share of hidden tests passed. `human` rows are people playing",
-             "`purr bench --you`.", ""]
-    for p in published:
-        m = p["meta"]
-        prompts = "vague" if m.get("vague") else "full"
-        lines += [f"### {m['date']} · purr {m['purr']} · {len(m['tasks'])} tasks, {prompts} prompts"
-                  + (f", {m['runs']} runs each" if m.get("runs", 1) > 1 else ""), "",
-                  "| model | harness | solved | tests | avg time | tokens | tool errors | hallucinations |",
-                  "|---|---|---|---|---|---|---|---|"]
-        for s in p["summary"]:
-            lines.append(f"| {s['model']} | {s['harness']} | {s['solved']}/{s['runs']} | "
-                         f"{100 * s['passed'] // max(s['total'], 1)}% | {ui.duration(s['seconds'] / max(s['runs'], 1))} | "
-                         f"{ui.short(s['out'])} | {s['tool_errors']} | {s['hallucinations']} |")
-        lines += ["", "Tasks: " + ", ".join(m["tasks"]), ""]
-    (PUBLISHED / "README.md").write_text("\n".join(lines))
+    rebuild_readme()
     ui.say(ui.MINT, f"  published {out.name} (purr {meta['purr']}) → {PUBLISHED / 'README.md'}")
     return 0
 
