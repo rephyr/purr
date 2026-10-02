@@ -5,6 +5,7 @@ screen through TuiView, which has the same methods as ui.PlainView.
 """
 
 import json
+import random
 import re
 import shutil
 import subprocess
@@ -595,6 +596,7 @@ class PurrApp(App):
         self.cat_label = ""
         self.cat_hold = 0.0     # a short reaction (proud, petted, ...) shows until then
         self.cat_pending = None # (mood, detail) to show once the reaction is over
+        self.idle_ticks = 0     # counts ticks spent napping, for the odd idle yawn
         self.night = themes.is_night()
         self.night_checked = time.monotonic()
         self.pet = self.load_pet()
@@ -649,6 +651,7 @@ class PurrApp(App):
         self.set_status("")
         self.prompt.focus()
         self.set_interval(0.12, self.tick)
+        self._show_cat("greeting", "")  # a little wave hello as she wakes up
 
     @property
     def prompt(self) -> PromptArea:
@@ -716,6 +719,12 @@ class PurrApp(App):
             self.set_cat(mood, detail)
         if self.cat_until and not self.busy and now > self.cat_until:
             self.set_cat(*self._idle())
+        if not self.busy and self.cat_mood == "sleeping" and not self.cat_hold and not self.cat_until:
+            self.idle_ticks += 1
+            if self.idle_ticks % 250 == 0:  # ~every 30s of napping she stirs
+                self._show_cat(random.choice(("yawning", "watching")), "")
+        else:
+            self.idle_ticks = 0
         if now - self.night_checked > 60:  # follows your desktop's day/night switch
             self.night_checked, night = now, themes.is_night()
             if night != self.night:
@@ -726,7 +735,9 @@ class PurrApp(App):
         self.draw_cat()
 
     # short reactions play for this long, then she goes back to what she was doing
-    HOLD = {"proud": 2.6, "sad": 2.6, "petted": 2.2, "waking": 1.4}
+    HOLD = {"proud": 2.6, "sad": 2.6, "petted": 2.2, "waking": 1.4, "greeting": 1.6,
+            "listening": 1.1, "yawning": 1.8, "watching": 3.0, "purring": 2.2,
+            "celebrating": 2.8, "startled": 1.4}
     WORK = {"thinking", "exploring", "building", "running", "talking", "tidying"}
 
     def _idle(self):
@@ -783,7 +794,8 @@ class PurrApp(App):
     def pet_cat(self):
         self.pet["pets"] = self.pet.get("pets", 0) + 1
         self.save_pet()
-        self._show_cat("petted", f"petted {self.pet['pets']} time{'s' if self.pet['pets'] != 1 else ''} ♡")
+        mood = random.choice(("petted", "purring"))
+        self._show_cat(mood, f"petted {self.pet['pets']} time{'s' if self.pet['pets'] != 1 else ''} ♡")
 
     # her name, how often she's been petted, tasks done together: ~/.local/state/purr/cat.json
     PET_FILE = STATE_DIR / "cat.json"
@@ -1210,11 +1222,16 @@ class PurrApp(App):
         if self.cat_mood == "oops":
             self.set_cat("oops", self.cat_detail)
         else:
+            milestone = False
             if summary:
                 self.last_stats = summary.split(" · ")
                 self.pet["tasks"] = self.pet.get("tasks", 0) + 1
                 self.save_pet()
-            self.set_cat("happy")
+                milestone = self.pet["tasks"] % 10 == 0  # every ten tasks, throw confetti
+            if milestone:
+                self.set_cat("celebrating", f"{self.pet['tasks']} tasks together!")
+            else:
+                self.set_cat("happy")
         self.tick()
 
     def run_command(self, text):
@@ -1401,6 +1418,7 @@ class PurrApp(App):
             self._menu_hide()
         elif self.busy:
             self.agent.stop_flag = True
+            self.set_cat("startled", "")
 
     # ---- copying: drag over any text to copy it; ctrl+c copies a selection too ----
 
@@ -1447,6 +1465,7 @@ class PurrApp(App):
             return
         if self.busy:
             self.agent.stop_flag = True
+            self.set_cat("startled", "")
         else:
             self.prompt.clear()
 
@@ -1511,6 +1530,8 @@ class PurrApp(App):
 
     def on_text_area_changed(self, event: TextArea.Changed):
         if event.text_area.id == "prompt":
+            if event.text_area.text.strip() and not self.busy:
+                self.set_cat("listening")  # head cocked while you write your message
             self._menu_update()
 
     def _menu_update(self):
