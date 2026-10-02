@@ -185,6 +185,11 @@ class ImageCleanerTest(unittest.TestCase):
 
 @unittest.skipIf(realbench_app is None, "needs textual (uv sync)")
 class WindowTest(unittest.IsolatedAsyncioTestCase):
+    def test_the_window_can_still_start(self):
+        # it once kept its run in self.run, which hid App.run: purr bench --real crashed at once
+        app = realbench_app.RealBenchApp({"models": {}, "providers": {}})
+        self.assertTrue(callable(app.run))
+
     async def test_from_setup_to_mochis_verdict(self):
         job = make_job()
         quick = realbench.PUBLISH.QUICK
@@ -222,7 +227,7 @@ class WindowTest(unittest.IsolatedAsyncioTestCase):
                 for i, task in enumerate(quick):
                     (job / f"{task}__w").exists() and __import__("shutil").rmtree(job / f"{task}__w")
                     graded(job, f"{task}__{i}", 1.0 if i % 4 else 0.0)
-                app.run.proc.returncode = 0
+                app.job_run.proc.returncode = 0
                 await pilot.pause(1.3)
                 self.assertIsNotNone(app.final)
                 self.assertEqual(app.final[0], "happy")  # the first quick run: the baseline
