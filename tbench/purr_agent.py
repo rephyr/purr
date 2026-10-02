@@ -113,10 +113,6 @@ class PurrAgent(BaseInstalledAgent):
     def get_version_command(self) -> str | None:
         return None
 
-    @property
-    def version(self) -> str | None:
-        return self._version
-
     # ---- the config purr gets in the container ----
 
     def purr_config(self):
@@ -161,7 +157,10 @@ class PurrAgent(BaseInstalledAgent):
                     shutil.copytree(src, pack / item, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
                 else:
                     shutil.copy2(src, pack / item)
-            (pack / "config.toml").write_text(to_toml(self.purr_config()))
+            config = to_toml(self.purr_config())
+            (pack / "config.toml").write_text(config)
+            self.logs_dir.mkdir(parents=True, exist_ok=True)
+            (self.logs_dir / "purr-config.toml").write_text(config)  # what this trial ran with, for the record
             await self.exec_as_root(environment, command=f"mkdir -p {REMOTE}")
             await environment.upload_dir(pack, REMOTE)
         await self.exec_as_root(environment, command=(
