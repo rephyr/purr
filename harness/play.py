@@ -40,8 +40,11 @@ def failed_tests(task, work):
 
 
 def visible_tests(work):
-    """Run the task's own tests (the ones in its folder) and show the last lines."""
-    r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."],
+    """Run the task's own tests (in tests/ or next to the code) and show the last lines."""
+    if not any(p for p in work.rglob("test_*.py") if "_bench_check" not in p.parts):
+        ui.say(ui.DIM, "    this task has no visible tests: the hidden ones decide")
+        return
+    r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", ".", "-t", ".", "-p", "test_*.py"],
                        cwd=work, capture_output=True, text=True, timeout=120)
     tail = (r.stderr or r.stdout).strip().splitlines()[-12:]
     ui.out(ui.DIM + "\n".join("    " + line for line in tail) + ui.RESET)
@@ -64,6 +67,24 @@ def run_program(task, work):
         subprocess.run(cmd, cwd=work, timeout=300)
     except (OSError, subprocess.SubprocessError) as e:
         ui.say(ui.ROSE, f"    couldn't run it: {e}")
+
+
+VSCODE = {  # your copy only (the models never see it): run and test from the task's own folder
+    "python.testing.unittestEnabled": True,
+    "python.testing.pytestEnabled": False,
+    "python.testing.unittestArgs": ["-v", "-s", ".", "-t", ".", "-p", "test_*.py"],
+    "terminal.integrated.env.linux": {"PYTHONPATH": "${workspaceFolder}"},
+    "terminal.integrated.env.osx": {"PYTHONPATH": "${workspaceFolder}"},
+    "python.analysis.extraPaths": ["${workspaceFolder}"],
+}
+
+
+def vscode_settings(work):
+    """So VS Code's run button and Testing panel find the task's own packages (a test run from
+    inside tests/ can't see `cafe` one folder up otherwise)."""
+    folder = work / ".vscode"
+    folder.mkdir(exist_ok=True)
+    (folder / "settings.json").write_text(json.dumps(VSCODE, indent=2) + "\n")
 
 
 def ask(prompt):
@@ -100,6 +121,7 @@ def play(args):
     for n, task in enumerate(tasks, 1):
         work = out_dir / "you" / f"{time.strftime('%H%M%S')}_{task['name']}" / task["name"]
         shutil.copytree(task["dir"] / "files", work)
+        vscode_settings(work)
         ui.out(f"  {ui.LILAC}[{n}/{len(tasks)}] {task['name']}{ui.RESET}  {ui.DIM}{task.get('level', '')} · "
                f"{task.get('kind', '')}{ui.RESET}")
         ui.out(f"  {ui.PINK}♡{ui.RESET} {task['prompt']}")
