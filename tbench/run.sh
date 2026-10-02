@@ -8,6 +8,9 @@
 #   PURR_MODEL=<provider>/<id> tbench/run.sh  another model (default: DeepSeek V4.1 Flash on OpenRouter)
 #   PURR_DATASET=terminal-bench@2.0 ...       another dataset (default: Terminal-Bench 4.0)
 #   tbench/fair.sh                            the published, fair run (see benchmarks/terminal-bench/)
+#   tbench/run.sh resume <job folder>         run a finished job's trials that broke on Harbor/Docker
+#                                             (RuntimeError: a container that wouldn't start, an image
+#                                             pull refused) again, in the same job folder
 #
 # Everything after run.sh goes straight to `harbor run`. Results land in
 # ~/.local/state/purr/tbench/<date>/ (each trial's agent/purr.txt and purr-state/ hold purr's own log).
@@ -25,5 +28,8 @@ env, key = p.get('api_key_env'), provider_key(p)
 if env and not key: sys.exit(f'no key for $PROVIDER: purr --key $PROVIDER')
 print(f'export {env}={key!r}' if env else '')")"
 export PYTHONPATH="$PURR${PYTHONPATH:+:$PYTHONPATH}"
+if [ "${1:-}" = "resume" ]; then
+    exec harbor jobs resume -p "$2" -f RuntimeError
+fi
 exec harbor run -d "${PURR_DATASET:-terminal-bench/terminal-bench@4.0.0}" -e docker \
     -a tbench.purr_agent:PurrAgent -m "$MODEL" -o "$HOME/.local/state/purr/tbench" "$@"

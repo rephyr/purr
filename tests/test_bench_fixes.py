@@ -92,10 +92,33 @@ class FinalCheckTest(unittest.TestCase):
         scripted(a, [reply("", tool=("write_file", {"path": "out.json", "content": "[]"})), reply("done"), reply("ok")])
         a.turn("write out.json")
         check = next(u for u in users(a) if "before you finish" in u)
-        self.assertIn("inputs other than the example", check)
+        self.assertIn("a wrong reading would give a different answer", check)
         self.assertIn("minutes left", check)
+        self.assertIn("You created these files: out.json", check)  # leftovers break real tests
         self.assertNotIn("keep running", check)  # nothing was started
         self.assertNotIn("Nobody will answer", check)
+
+    def test_plenty_of_time_left_gets_one_more_look(self):
+        a = one_shot(time_limit=5400)
+        scripted(a, [reply("", tool=("write_file", {"path": "a.py", "content": "x = 1\n"})), reply("done")])
+        a.turn("make a.py")
+        looks = [u for u in users(a) if "one line per requirement" in u]
+        self.assertEqual(len(looks), 1)  # once, after the check
+        self.assertIn("of 90 minutes left", looks[0])
+
+    def test_little_time_left_just_finishes(self):
+        a = one_shot(time_limit=5400)
+        a._started = agent_module.time.monotonic() - 3000  # 50 of 90 minutes gone
+        a._checked, a._evidence = True, False
+        self.assertFalse(a._evidence_pass())
+        b = one_shot()  # no time limit: no second look either
+        b._checked, b._evidence = True, False
+        self.assertFalse(b._evidence_pass())
+
+    def test_the_requests_notation_wins(self):
+        prompt = agent_module.system_prompt("/app", "m", "x", one_shot=True)
+        self.assertIn("exact wording and notation", prompt)
+        self.assertIn("beat the code's habits", agent_module.ONE_SHOT_CHECK)
 
     def test_a_question_at_the_end_is_answered_with_nobody(self):
         a = one_shot()
@@ -302,6 +325,13 @@ class EndTest(unittest.TestCase):
         self.assertTrue(any("before you finish" in u for u in users(a)))  # checked once at the cap
         self.assertEqual(calls["n"], 4 + agent_module.CHECK_STEPS)
 
+    def test_a_benchmarks_own_step_limit_wins(self):
+        a = one_shot(time_limit=5400)
+        a.config = {**a.config, "max_steps": 500}  # fair.sh: the same as DeepSeek's harnesses
+        self.assertEqual(a._step_cap(), 500)
+        a.config = {**a.config, "max_steps": 40}
+        self.assertEqual(a._step_cap(), agent_module.ONE_SHOT_STEPS)
+
     def stream(self, *lines):
         resp = mock.MagicMock()
         resp.__enter__.return_value = resp
@@ -383,6 +413,16 @@ class PublishTest(unittest.TestCase):
         self.assertNotIn("2.0: full runs", page)  # no full 2.0 run: no empty table for it
         self.assertIn("2.1: one-try runs", page)
         self.assertNotIn("DeepSWE 1.1 (113", page)  # the other benchmark's references go on its own page
+
+    def test_a_stopped_run_gets_its_own_table_with_its_note(self):
+        base = {"date": "2026-10-02", "pass@1": 56.2, "stderr": 7.2, "pass@k": 56.2, "timeouts": 0, "errors": 0,
+                "trials": 54, "tasks": 48, "cost_usd": 7.0, "tokens_in": 1, "tokens_cached": 1, "tokens_out": 1,
+                "median_agent_minutes": 14.0, "purr": "0.4.0", "dataset": "datacurve/deep-swe-1-1"}
+        page = self.publish.readme([{**base, "profile": "stopped", "note": "a step cap bug"}], "deepswe")
+        self.assertIn("stopped runs (not comparable)", page)
+        self.assertIn("| 0.4.0 | 2026-10-02 | 48 of 113 | 56.2% | $7.0 | a step cap bug |", page)
+        one = page.split("one-try runs")[1].split("###")[0]
+        self.assertIn("(none yet)", one)  # not in the real tables
 
     def test_deepswe_has_its_own_page(self):
         quick = [{"task": t} for t in self.publish.BENCHES["DeepSWE 1.1"]["quick"]]

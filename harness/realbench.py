@@ -142,7 +142,8 @@ class Run:
 # ---- reading the job folder ----
 
 STATES = {"setup": "setting up", "working": "purr is working", "grading": "grading",
-          "passed": "passed", "failed": "failed", "error": "error", "timeout": "out of time"}
+          "passed": "passed", "failed": "failed", "error": "error", "timeout": "out of time",
+          "cancelled": "cancelled"}
 
 
 def trial(path):
@@ -164,7 +165,9 @@ def trial(path):
             t["reward"] = reward
             t["cost"] = (d.get("agent_result") or {}).get("cost_usd")
             t["seconds"] = _seconds(d.get("agent_execution") or {})
-            if ex == "AgentTimeoutError":
+            if ex == "CancelledError":  # the run was stopped: never graded, so not a fail either
+                t["state"] = "cancelled"
+            elif ex == "AgentTimeoutError":
                 t["state"] = "passed" if (reward or 0) >= 1 else "timeout"
             elif ex and reward is None:
                 t["state"], t["error"] = "error", ex

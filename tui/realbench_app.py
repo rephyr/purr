@@ -62,6 +62,8 @@ RadioSet > RadioButton.-selected { background: $hover; }
 #count { width: auto; margin-left: 2; }
 #tally { height: 1; margin: 1 0; }
 #middle { height: 1fr; }
+#leftside { width: 66; height: 1fr; }
+#bigscore { height: 9; border: round $line-hi; background: $panel; content-align: center middle; }
 #trials { width: 66; height: 1fr; border: round $line; background: $panel; scrollbar-size-horizontal: 0; }
 #trials:focus { border: round $pink; }
 #liveside { width: 1fr; height: 1fr; margin-left: 1; }
@@ -79,10 +81,10 @@ RadioSet > RadioButton.-selected { background: $hover; }
 """
 
 ICON = {"setup": ("◌", DIM), "grading": ("⚖", LILAC), "passed": ("✓", MINT), "failed": ("✗", ROSE),
-        "error": ("⚠", PEACH), "timeout": ("⏱", ROSE)}
+        "error": ("⚠", PEACH), "timeout": ("⏱", ROSE), "cancelled": ("⊘", FAINT)}
 SPIN = "◐◓◑◒"
 STATE_COLOUR = {"setup": DIM, "working": PINK, "grading": LILAC, "passed": MINT, "failed": ROSE,
-                "error": PEACH, "timeout": ROSE}
+                "error": PEACH, "timeout": ROSE, "cancelled": FAINT}
 FINISHED = ("passed", "failed", "error", "timeout")
 
 # a 5-line font for the score, 3 columns a glyph (. is 1): plain blocks read best in every terminal
@@ -91,18 +93,20 @@ BIG = {"0": ["███", "█ █", "█ █", "█ █", "███"], "1": ["
        "4": ["█ █", "█ █", "███", "  █", "  █"], "5": ["███", "█  ", "███", "  █", "███"],
        "6": ["███", "█  ", "███", "█ █", "███"], "7": ["███", "  █", "  █", "  █", "  █"],
        "8": ["███", "█ █", "███", "█ █", "███"], "9": ["███", "█ █", "███", "  █", "███"],
-       ".": [" ", " ", " ", " ", "█"], "%": ["█ █", "  █", " █ ", "█  ", "█ █"]}
+       ".": [" ", " ", " ", " ", "█"], "-": ["   ", "   ", "███", "   ", "   "],
+       "%": ["██  █", "██ █ ", "  █  ", " █ ██", "█  ██"]}
 
 
 def big(text, phase=0.0):
     """The score in big letters, pink fading to lilac from top to bottom."""
     shades = [PINK, "#e9a6dc", "#dfa4e4", "#d3a3ea", LILAC]
-    out = Text(justify="center")
+    out = Text(no_wrap=True, overflow="crop")
     for r in range(5):
+        # every row the same width, trailing spaces kept: rows centred one by one would shift apart
         out.append("  ".join(BIG.get(ch, ["   "] * 5)[r] for ch in text), style=f"bold {shades[r]}")
         if r < 4:
             out.append("\n")
-    return out
+    return Align.center(out)
 
 
 def bar(pct, width=34, colour=LILAC, lo=0.0):
@@ -149,7 +153,7 @@ class RealBenchApp(App):
         except (OSError, ValueError):
             self.pet = {"name": config.get("cat_name", "Mochi")}
         self.name_ = self.pet.get("name", "Mochi")
-        self.run = None
+        self.job_run = None
         self.trials, self.rows = [], {}
         self.selected, self.follow = None, True
         self.live_pos, self.live_buf, self.live_lines = 0, "", []
@@ -193,7 +197,9 @@ class RealBenchApp(App):
                 yield Static("", id="count")
             yield Static("", id="tally")
             with Horizontal(id="middle"):
-                yield DataTable(id="trials", cursor_type="row", zebra_stripes=False)
+                with Vertical(id="leftside"):
+                    yield Static("", id="bigscore")
+                    yield DataTable(id="trials", cursor_type="row", zebra_stripes=False)
                 with Vertical(id="liveside"):
                     yield Static("", id="livehead")
                     yield RichLog(id="live", wrap=True, markup=False, highlight=False, max_lines=4000, min_width=20)
@@ -269,13 +275,13 @@ class RealBenchApp(App):
         self.edge_cases = self.query_one("#edge", Switch).value
         suite, size = self.choice["suite"], self.choice["size"]
         self.total = realbench.trials_in(suite, size)
-        self.run = realbench.Run(suite, size, self.jobs, self.edge_cases)
+        self.job_run = realbench.Run(suite, size, self.jobs, self.edge_cases)
         try:
-            self.run.start()
+            self.job_run.start()
         except OSError as e:
             self.notify(f"couldn't start fair.sh: {e}", severity="error")
             return
-        threading.Thread(target=self.run.read_output, daemon=True).start()
+        threading.Thread(target=self.job_run.read_output, daemon=True).start()
         self.query_one("#setup").add_class("hide")
         self.query_one("#run").add_class("show")
         bench = realbench.SUITES[suite]["bench"]
@@ -289,15 +295,15 @@ class RealBenchApp(App):
     # ---- while it runs ----
 
     def poll(self):
-        if not self.run or not self.screen.query("#trials"):  # closing: the widgets are gone
+        if not self.job_run or not self.screen.query("#trials"):  # closing: the widgets are gone
             return
-        self.run.find_job()
-        self.trials = realbench.scan(self.run.job)
+        self.job_run.find_job()
+        self.trials = realbench.scan(self.job_run.job)
         self.draw_trials()
         self.draw_live()
-        if self.run.lines:
-            self.query_one("#runner", Static).update(Text("harbor ▸ " + self.run.lines[-1][-160:], style="#6f6580"))
-        if self.run.done and self.final is None:
+        if self.job_run.lines:
+            self.query_one("#runner", Static).update(Text("harbor ▸ " + self.job_run.lines[-1][-160:], style="#6f6580"))
+        if self.job_run.done and self.final is None:
             self.finish()
 
     def draw_trials(self):
@@ -321,7 +327,7 @@ class RealBenchApp(App):
         self.query_one("#bar", ProgressBar).update(progress=done)
         pct, se = realbench.score(self.trials)
         spent = sum(t["cost"] or 0 for t in self.trials)
-        elapsed = ui.duration(time.time() - self.run.started)
+        elapsed = ui.duration(time.time() - self.job_run.started)
         self.query_one("#count", Static).update(Text(f"{done}/{self.total}  ·  {elapsed}", style=PINK))
         tally = Text()
         for key, label in (("passed", "passed"), ("failed", "failed"), ("timeout", "out of time"), ("error", "broke")):
@@ -338,6 +344,16 @@ class RealBenchApp(App):
             tally.append("  ·  ", style=FAINT)
         tally.append(f"${spent:.2f}", style=PEACH)
         self.query_one("#tally", Static).update(tally)
+        self.draw_bigscore(pct, se, done)
+
+    def draw_bigscore(self, pct, se, done):
+        """The score so far, big, above the tasks."""
+        if pct is None:
+            body = Group(big("--"), Align.center(Text("waiting for the first task to be graded ♡", style=DIM)))
+        else:
+            body = Group(big(f"{pct:.1f}%"), Align.center(Text(f"so far  ·  ± {se}  ·  {done} of {self.total} graded",
+                                                               style=DIM)))
+        self.query_one("#bigscore", Static).update(body)
 
     def cells(self, t):
         state = t["state"]
@@ -354,7 +370,7 @@ class RealBenchApp(App):
 
     def on_data_table_row_highlighted(self, event):
         name = event.row_key.value if event.row_key else None
-        if name and name != self.selected and self.run:  # following moves the cursor after watch(): same name
+        if name and name != self.selected and self.job_run:  # following moves the cursor after watch(): same name
             if self.selected is not None:
                 self.follow = False  # you picked one: stay on it (f follows again)
             self.watch(name)
@@ -422,33 +438,33 @@ class RealBenchApp(App):
     # ---- the end ----
 
     def finish(self):
-        self.trials = realbench.scan(self.run.job)
+        self.trials = realbench.scan(self.job_run.job)
         self.draw_trials()
         done = sum(t["state"] in FINISHED for t in self.trials)
         pct, se = realbench.score(self.trials)
-        self.final = realbench.verdict(self.run.suite, self.run.size, pct, done, self.total,
-                                       stopped=self.run.stopping, name=self.name_)
+        self.final = realbench.verdict(self.job_run.suite, self.job_run.size, pct, done, self.total,
+                                       stopped=self.job_run.stopping, name=self.name_)
         mood, headline, detail = self.final
         self.mood(mood, detail, hold=10**9, label=headline)
         self.query_one("#results_body", Static).update(self.results_page(pct, se, done))
         self.query_one("#run").add_class("results")
-        ok = self.run.proc.returncode == 0 and done == self.total and not self.run.stopping
+        ok = self.job_run.proc.returncode == 0 and done == self.total and not self.job_run.stopping
         hint = "p publishes it to the repo · " if ok else ""
         self.query_one("#runhint", Static).update(Text(
             f"{hint}r live view / results · o opens the job folder · q quits", style=DIM))
 
     def results_page(self, pct, se, done):
-        suite, size = self.run.suite, self.run.size
+        suite, size = self.job_run.suite, self.job_run.size
         bench = realbench.SUITES[suite]["bench"]
         parts = [Text(justify="center")]
         parts[0].append_text(cat.shimmer(f"₊˚✧ {bench} · {size} ✧˚₊", 0.2))
         if pct is None:
             why = Text("\nnothing got graded. the last lines from fair.sh / Harbor:\n\n", style=DIM)
-            for line in self.run.lines[-14:]:
+            for line in self.job_run.lines[-14:]:
                 why.append(f"  {line}\n", style=ROSE if "error" in line.lower() or "refus" in line.lower() else TEXT)
             return Group(parts[0], why)
         spent = sum(t["cost"] or 0 for t in self.trials)
-        took = ui.duration(time.time() - self.run.started)
+        took = ui.duration(time.time() - self.job_run.started)
         counts = Text()
         for key, label in (("passed", "passed"), ("failed", "failed"), ("timeout", "out of time"), ("error", "broke")):
             n = sum(t["state"] == key for t in self.trials)
@@ -465,7 +481,7 @@ class RealBenchApp(App):
         return Group(*parts)
 
     def standings(self, pct):
-        suite, size = self.run.suite, self.run.size
+        suite, size = self.job_run.suite, self.job_run.size
         t = Table(box=box.ROUNDED, border_style="#4a3a5c", show_header=False, padding=(0, 1),
                   title=Text("♛ where purr lands" if size != "quick" else "♛ quick runs so far", style=f"bold {PINK}"),
                   title_justify="left")
@@ -516,10 +532,10 @@ class RealBenchApp(App):
     def action_publish(self):
         if self.final is None or self.published:
             return
-        if self.run.stopping or self.run.proc.returncode != 0:
+        if self.job_run.stopping or self.job_run.proc.returncode != 0:
             self.notify("only a whole run can be published ♡", severity="warning")
             return
-        res = subprocess.run(["python3", str(realbench.ROOT / "tbench" / "publish.py"), str(self.run.job)],
+        res = subprocess.run(["python3", str(realbench.ROOT / "tbench" / "publish.py"), str(self.job_run.job)],
                              capture_output=True, text=True, cwd=realbench.ROOT)
         out = (res.stdout + res.stderr).strip().splitlines()
         if res.returncode == 0:
@@ -530,8 +546,8 @@ class RealBenchApp(App):
             self.notify(out[-1] if out else "publishing failed", severity="error", timeout=10)
 
     def action_open_job(self):
-        if self.run and self.run.job:
-            subprocess.Popen(["xdg-open", str(self.run.job)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if self.job_run and self.job_run.job:
+            subprocess.Popen(["xdg-open", str(self.job_run.job)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # ---- Mochi ----
 
@@ -546,7 +562,7 @@ class RealBenchApp(App):
         if not self.screen.query("#benchcat"):  # closing: the widgets are already gone
             return
         self.cat_tick += 1
-        if not self.run:
+        if not self.job_run:
             self.query_one("#title", Static).update(cat.shimmer("₊˚✧ real benchmarks ✧˚₊", self.cat_tick * 0.03))
             refs = realbench.references(self.choice["suite"])
             best = f"best published: {refs[0][1]:.1f}% ({refs[0][0]})" if refs else ""
@@ -554,7 +570,7 @@ class RealBenchApp(App):
                 "watching", self.cat_tick, best, (), label=f"{self.name_} wants to see how purr does",
                 night=self.night))
             return
-        stats = [ui.duration(time.time() - self.run.started)]
+        stats = [ui.duration(time.time() - self.job_run.started)]
         done = sum(t["state"] in FINISHED for t in self.trials)
         stats.append(f"{done}/{self.total} graded")
         pct, _ = realbench.score(self.trials)
@@ -578,16 +594,16 @@ class RealBenchApp(App):
     def action_stop_or_quit(self):
         if self.focused and isinstance(self.focused, Input):
             return
-        if self.run and not self.run.done and not self.run.stopping:
-            self.run.stop()
+        if self.job_run and not self.job_run.done and not self.job_run.stopping:
+            self.job_run.stop()
             self.mood("startled", "stopping: Harbor is cancelling the trials and cleaning up", hold=10**9)
             self.notify("stopping ♡ press q again to quit once it's done", timeout=5)
-        elif not self.run or self.run.done:
+        elif not self.job_run or self.job_run.done:
             self.exit()
 
     def action_quit_now(self):
-        if self.run:
-            self.run.stop()
+        if self.job_run:
+            self.job_run.stop()
         self.exit()
 
 
