@@ -6,6 +6,8 @@ pushes them to finish the whole job. It also works with the DeepSeek API and Ope
 it steps back (big models don't need the training wheels). The agent itself is plain Python;
 the full-screen mode uses [Textual](https://textual.textualize.io/) (`uv sync` installs it into `.venv`).
 
+![purr fixing a bug with Qwen3.6 on a local GPU (2x speed)](docs/demo.gif)
+
 ```
 purr                 # full-screen chat in the current folder
 purr ~/projects/x    # chat in another folder
