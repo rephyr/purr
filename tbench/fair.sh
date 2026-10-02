@@ -7,10 +7,11 @@
 # for the older 2.0, which gets its own tables). DeepSeek's host trains on prompts, so OpenRouter has
 # to allow "paid model training" (openrouter.ai/settings/privacy). Then: tbench/publish.py <job folder>.
 #
-#   tbench/fair.sh              the full run: all 89 tasks x 3 (~$6, 4-5 hours)
-#   tbench/fair.sh --one        all 89 tasks x 1 (~$2, about 2 hours): the same score, a wider margin
-#   tbench/fair.sh --quick      the quick set: the same 20 tasks x 1 (under $0.50, about an hour), for
-#                               comparing purr versions with each other (tbench/quick-tasks.txt)
+#   tbench/fair.sh              the full run: all 89 tasks x 3
+#   tbench/fair.sh --one        all 89 tasks x 1: the same score, a wider margin
+#   tbench/fair.sh --quick      the quick set: the same 20 tasks x 1, for comparing purr versions with
+#                               each other (tbench/quick-tasks.txt)
+#   (time and cost of each: `purr bench --real` shows the current estimates, harness/realbench.py)
 #   tbench/fair.sh --submit     for the Terminal-Bench 2.0 leaderboard (Harbor Hub): every task x 5,
 #                               purr's web tool off (no peeking at the benchmark); then tbench/submit.py
 #   tbench/fair.sh --deepswe [--one|--quick]

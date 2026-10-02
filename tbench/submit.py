@@ -26,8 +26,12 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import publish  # noqa: E402 - the benchmarks' names and sizes live there, once
+
 OUT = Path.home() / ".local" / "state" / "purr" / "tbench" / "submissions"
-TASKS = 89
+BENCH = "Terminal-Bench 2.0"
+TASKS = publish.BENCHES[BENCH]["tasks"]
 TRIES = 5
 OVERRIDES = ("override_timeout_sec", "max_timeout_sec", "override_cpus", "override_memory_mb",
              "override_storage_mb", "verifier_override_timeout_sec", "verifier_max_timeout_sec",
@@ -109,9 +113,8 @@ def check(job):
                 leaks.append(str(f.relative_to(job)))
     short = [t for t, n in per_task.items() if n < TRIES]
     rules = [
-        (name in ("terminal-bench/terminal-bench-2", "terminal-bench") and
-         (name != "terminal-bench" or str(dataset.get("version", "")).startswith("2.0")),
-         f"dataset is Terminal-Bench 2.0 ({name or '?'})"),
+        (publish.bench_name("@".join(str(x) for x in (name, dataset.get("version")) if x)) == BENCH,
+         f"dataset is {BENCH} ({name or '?'})"),
         (len(per_task) == TASKS, f"all {TASKS} tasks ran ({len(per_task)})"),
         (not short and per_task, f"at least {TRIES} tries every task" + (f" (short: {', '.join(sorted(short)[:5])})" if short else "")),
         (len(results) == len(trials), f"every trial has a result.json ({len(results)}/{len(trials)})"),

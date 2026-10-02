@@ -53,28 +53,57 @@ REFERENCE = [
 ]
 
 
+FINISHED = ("passed", "failed", "error", "timeout")  # graded (a cancelled try never was)
+
+
+def outcome(result):
+    """A trial's result.json, read once for everyone: state (passed, failed, timeout, error,
+    cancelled), reward, error (Harbor's exception, not the time limit), seconds, cost."""
+    ex = (result.get("exception_info") or {}).get("exception_type")
+    reward = ((result.get("verifier_result") or {}).get("rewards") or {}).get("reward")
+    run = result.get("agent_execution") or {}
+    seconds = None
+    if run.get("started_at") and run.get("finished_at"):
+        seconds = (datetime.datetime.fromisoformat(run["finished_at"].replace("Z", "+00:00"))
+                   - datetime.datetime.fromisoformat(run["started_at"].replace("Z", "+00:00"))).total_seconds()
+    if ex == "CancelledError":  # the run was stopped first: never graded, so not a fail either
+        state = "cancelled"
+    elif ex == "AgentTimeoutError":  # the task's own time limit: a fail, unless the files were right
+        state = "passed" if (reward or 0) >= 1 else "timeout"
+    elif ex and reward is None:  # broke before grading (Harbor, Docker): not purr's answer
+        state = "error"
+    else:
+        state = "passed" if (reward or 0) >= 1 else "failed"
+    return {"state": state, "reward": reward, "seconds": seconds,
+            "error": ex if ex not in (None, "AgentTimeoutError", "CancelledError") else None,
+            "cost": (result.get("agent_result") or {}).get("cost_usd")}
+
+
+def pass_at_1(by_task):
+    """{task: [1.0 or 0.0 per graded try]} -> (pass@1 %, its ± as the standard error over tasks)."""
+    shares = [sum(v) / len(v) for v in by_task.values() if v]
+    if not shares:
+        return None, None
+    se = statistics.stdev(shares) / math.sqrt(len(shares)) if len(shares) > 1 else 0.0
+    return round(100 * sum(shares) / len(shares), 1), round(100 * se, 1)
+
+
 def load_job(job):
     job = Path(job).expanduser().resolve()
     config = json.loads((job / "config.json").read_text())
     trials = []
     for f in sorted(job.glob("*/result.json")):
         t = json.loads(f.read_text())
-        reward = ((t.get("verifier_result") or {}).get("rewards") or {}).get("reward")
         agent = t.get("agent_result") or {}
-        ex = t.get("agent_execution") or {}
-        seconds = None
-        if ex.get("started_at") and ex.get("finished_at"):
-            seconds = (datetime.datetime.fromisoformat(ex["finished_at"].replace("Z", "+00:00"))
-                       - datetime.datetime.fromisoformat(ex["started_at"].replace("Z", "+00:00"))).total_seconds()
-        exception = (t.get("exception_info") or {}).get("exception_type")
+        o = outcome(t)
         trials.append({
             "task": t["task_name"].split("/")[-1], "trial": t["trial_name"],
-            "reward": reward, "timeout": exception == "AgentTimeoutError",
+            "reward": o["reward"], "timeout": o["state"] == "timeout",
             # a time limit is the task's own rule (a fail, like on the leaderboards); anything else
             # (a crash, the model server) is an error worth re-running
-            "error": exception if exception not in ("AgentTimeoutError", "CancelledError") else None,
-            "cancelled": exception == "CancelledError",  # the run was stopped first: never graded
-            "agent_seconds": round(seconds, 1) if seconds is not None else None,
+            "error": o["error"],
+            "cancelled": o["state"] == "cancelled",  # the run was stopped first: never graded
+            "agent_seconds": round(o["seconds"], 1) if o["seconds"] is not None else None,
             "cost_usd": agent.get("cost_usd"), "tokens_in": agent.get("n_input_tokens"),
             "tokens_cached": agent.get("n_cache_tokens"), "tokens_out": agent.get("n_output_tokens"),
             "version": (t.get("agent_info") or {}).get("version"),
@@ -96,11 +125,32 @@ QUICK = _quick("quick-tasks.txt")
 BENCHES = {
     "Terminal-Bench 2.1": {"dataset": "terminal-bench/terminal-bench-2-1", "tasks": 89, "quick": QUICK,
                            "page": "terminal-bench", "flag": ""},
-    "Terminal-Bench 2.0": {"dataset": "terminal-bench", "tasks": 89, "quick": QUICK, "page": "terminal-bench",
-                           "old": True, "flag": ""},
+    # the registry's 2.0, and the same 89 tasks as Harbor Hub's leaderboard package
+    "Terminal-Bench 2.0": {"dataset": "terminal-bench/terminal-bench-2", "tasks": 89, "quick": QUICK,
+                           "aliases": ("terminal-bench@2.0",), "page": "terminal-bench", "old": True, "flag": ""},
     "DeepSWE 1.1": {"dataset": "datacurve/deep-swe-1-1", "tasks": 113, "quick": _quick("quick-tasks-deepswe.txt"),
                     "quick_file": "quick-tasks-deepswe.txt", "page": "deepswe", "flag": "--deepswe "},
 }
+
+
+# what tbench/fair.sh runs with, the same as DeepSeek's harness comparison: a hosted run with other
+# settings would sit next to their scores without being comparable (local runs have their own table)
+FAIR = {"model": "openrouter/deepseek/deepseek-v4.1-flash", "hosts": "deepseek", "temperature": 1.0,
+        "top_p": 0.95, "max_tokens": 65536, "max_steps": 500}
+
+
+def unfair(summary):
+    """The fair settings this run didn't use: [] when it did (or it's a local run)."""
+    if is_local(summary):
+        return []
+    got = {"model": summary.get("model"), **(summary.get("settings") or {})}
+    wrong = []
+    for key, want in FAIR.items():
+        have = got.get(key)
+        same = have is not None and (float(have) == float(want) if isinstance(want, (int, float)) else str(have) == want)
+        if not same:
+            wrong.append(f"{key}={have} (fair: {want})")
+    return wrong
 
 
 def is_local(r):
@@ -111,24 +161,30 @@ def is_local(r):
 def bench_name(dataset):
     """ "Terminal-Bench 2.1", "Terminal-Bench 2.0", "DeepSWE 1.1", or None (a dataset we don't publish)."""
     name, _, version = str(dataset).partition("@")
-    if name == "terminal-bench/terminal-bench-2":  # the same 89 tasks as Harbor Hub's leaderboard package
-        return "Terminal-Bench 2.0"
-    if name == "terminal-bench" and not version.startswith("2.0"):
-        return None  # 4.0 and later have the same name
-    return next((b for b, c in BENCHES.items() if c["dataset"] == name), None)
+    for bench, conf in BENCHES.items():
+        for alias in (conf["dataset"], *conf.get("aliases", ())):
+            alias_name, _, alias_version = alias.partition("@")
+            # terminal-bench@4.0 shares the registry name with 2.0: the version decides
+            if name == alias_name and (not alias_version or version.startswith(alias_version)):
+                return bench
+    return None
 
 
 def profile(dataset, trials):
-    """ "full", "one", "quick", or None (not a run we publish)."""
-    tasks = {t["task"] for t in trials}
-    per_task = len(trials) / max(len(tasks), 1)
+    """ "full" (3 tries), "submit" (5, the leaderboard's), "one", "quick", or None (not a run we
+    publish). Tries cancelled by stopping the run were never graded, so they don't count."""
+    graded = [t for t in trials if not t.get("cancelled")]
+    tasks = {t["task"] for t in graded}
+    per_task = len(graded) / max(len(tasks), 1)
     bench = BENCHES.get(bench_name(dataset))
     if not bench:
         return None
     if tasks == set(bench["quick"]) and per_task == 1:
         return "quick"
-    if len(tasks) == bench["tasks"] and per_task >= 3 and per_task == int(per_task):
-        return "full"  # 3 tries, or the leaderboard's 5
+    if len(tasks) == bench["tasks"] and per_task == 3:
+        return "full"
+    if len(tasks) == bench["tasks"] and per_task == 5:
+        return "submit"
     if len(tasks) == bench["tasks"] and per_task == 1:
         return "one"
     return None
@@ -143,7 +199,7 @@ def summarise(config, trials):
             by_task[t["task"]].append(1.0 if (t["reward"] or 0) >= 1 else 0.0)
     shares = [sum(v) / len(v) for v in by_task.values()]
     n = len(shares)
-    se = statistics.stdev(shares) / math.sqrt(n) if n > 1 else 0.0
+    pct, se = pass_at_1(by_task)
     agent = (config.get("agents") or [{}])[0]
     versions = sorted({t["version"] for t in trials if t["version"]})
     total = lambda key: sum(t[key] or 0 for t in trials)  # noqa: E731
@@ -155,12 +211,13 @@ def summarise(config, trials):
         "dataset": "@".join(str(x) for x in ((config.get("datasets") or [{}])[0].get("name"),
                                               (config.get("datasets") or [{}])[0].get("version")) if x),
         "dataset_ref": (config.get("datasets") or [{}])[0].get("ref"),
-        "settings": {**(agent.get("kwargs") or {}), "attempts": round(len(trials) / max(n, 1)),
+        "settings": {**(agent.get("kwargs") or {}),
+                     "attempts": round(sum(not t.get("cancelled") for t in trials) / max(n, 1)),
                      "agent_timeout_multiplier": config.get("agent_timeout_multiplier", 1.0)},
         "tasks": n, "trials": len(trials), "errors": sum(1 for t in trials if t["error"]),
         "timeouts": sum(1 for t in trials if t.get("timeout")),
-        "pass@1": round(100 * sum(shares) / n, 1) if n else 0.0,
-        "stderr": round(100 * se, 1),
+        "pass@1": pct if n else 0.0,
+        "stderr": se if n else 0.0,
         "pass@k": round(100 * sum(1 for s in shares if s > 0) / n, 1) if n else 0.0,
         "cost_usd": round(total("cost_usd"), 2), "tokens_in": total("tokens_in"),
         "tokens_cached": total("tokens_cached"), "tokens_out": total("tokens_out"),
@@ -247,7 +304,7 @@ def readme(results, page="terminal-bench"):
         one = [row(r, full=False) for r in mine if r.get("profile") == "one"]
         quick = [row(r, full=False) for r in mine if r.get("profile") == "quick"]
         if main or full:
-            lines += [f"### {bench}: full runs, all {n} tasks, 3 or more attempts each (`tbench/fair.sh {flag}`)".replace(" `)", "`)"),
+            lines += [f"### {bench}: full runs, all {n} tasks, 3 attempts each (`tbench/fair.sh {flag}`)".replace(" `)", "`)"),
                       ""] + head
             lines += full or ["| (none yet) |"]
             lines += [""]
@@ -272,6 +329,10 @@ def readme(results, page="terminal-bench"):
             lines += [f"| {r['purr']} | {str(r['model']).split('/', 1)[1]} | {r.get('profile')} | {r['date']} | "
                       f"**{r['pass@1']}%** ± {r['stderr']} | {r.get('timeouts', 0)} | {r['errors']}/{r['trials']} | "
                       f"{r['median_agent_minutes']} min |" for r in local] + [""]
+        submits = [row(r, full=True) for r in mine if r.get("profile") == "submit"]
+        if submits:
+            lines += [f"### {bench}: leaderboard runs, all {n} tasks, 5 attempts each (`tbench/fair.sh --submit`)", ""]
+            lines += [h.replace("pass@3", "pass@5") for h in head] + submits + [""]
         stopped = [r for r in mine if r.get("profile") == "stopped"]
         if stopped:
             lines += [f"### {bench}: stopped runs (not comparable)", "",
@@ -327,6 +388,10 @@ def main(argv):
         print(f"not published: {summary['tasks']} tasks x {summary['settings']['attempts']} on {summary['dataset']} "
               "is not a full run (every task x 3, tbench/fair.sh), a one-try run (every task x 1, --one) or a "
               "quick one (the 20 in its quick-tasks file x 1, --quick)")
+        return 1
+    wrong = unfair(summary)
+    if wrong:
+        print("not published: not run with the fair settings (tbench/fair.sh): " + ", ".join(wrong))
         return 1
     page = BENCHES[bench_name(summary["dataset"])]["page"]
     out = ROOT / "benchmarks" / page

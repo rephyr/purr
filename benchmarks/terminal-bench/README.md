@@ -56,7 +56,7 @@ runs or the leaderboards.
 |---|---|---|---|---|---|---|---|
 | 0.3.1+3dde078 | 2026-10-02 | **75.0%** ± 9.9 | 0 | 1/20 | $0.43 | 18.5M / 17.8M / 457k | 1.7 min |
 
-## Other harnesses, same model (published, full runs)
+## Published scores to compare with (other harnesses, full runs)
 
 | harness | model | benchmark | pass@1 | source |
 |---|---|---|---|---|
@@ -69,5 +69,6 @@ runs or the leaderboards.
 | OpenCode | DeepSeek V4.1 Flash | Terminal-Bench 2.1 (89 tasks) | 85.0% | [link](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash) |
 | Codex | DeepSeek V4.1 Flash | Terminal-Bench 2.1 (89 tasks) | 84.1% | [link](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash) |
 | Ante | DeepSeek V4.1 Flash | Terminal-Bench 2.1 (89 tasks) | 83.9% (5 trials per task) | [link](https://antigma.ai/eval) |
+| Terminus-2 | Ornith-1.5-9B | Terminal-Bench 2.1 (89 tasks) | 47.0% (the makers' run: full weights, 128k context) | [link](https://huggingface.co/ornith-ai/Ornith-1.5-9B) |
 
 Each run's every trial is in `results/`.
