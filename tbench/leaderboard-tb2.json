@@ -1,0 +1,1001 @@
+{
+ "leaderboard": "terminal-bench/terminal-bench-2/2-0",
+ "source": "harbor hub leaderboard show terminal-bench/terminal-bench-2/2-0",
+ "as_of": "2026-10-02",
+ "entries": [
+  {
+   "rank": 1,
+   "agent": "NexAU-AHE",
+   "model": "GPT-5.5",
+   "date": "2026-04-23",
+   "score": 84.7
+  },
+  {
+   "rank": 2,
+   "agent": "LemonHarness",
+   "model": "Multiple",
+   "date": "2026-05-14",
+   "score": 84.5
+  },
+  {
+   "rank": 3,
+   "agent": "Capy",
+   "model": "GPT-5.5",
+   "date": "2026-04-23",
+   "score": 83.1
+  },
+  {
+   "rank": 4,
+   "agent": "Codex CLI",
+   "model": "GPT-5.5",
+   "date": "2026-04-23",
+   "score": 82.2
+  },
+  {
+   "rank": 5,
+   "agent": "Polaris",
+   "model": "Multiple",
+   "date": "2026-05-14",
+   "score": 82.2
+  },
+  {
+   "rank": 6,
+   "agent": "TongAgents",
+   "model": "Gemini 3.1 Pro",
+   "date": "2026-02-19",
+   "score": 80.2
+  },
+  {
+   "rank": 7,
+   "agent": "WOZCODE",
+   "model": "Claude Opus 4.7",
+   "date": "2026-04-16",
+   "score": 80.2
+  },
+  {
+   "rank": 8,
+   "agent": "LemonHarness",
+   "model": "Multiple",
+   "date": "2026-05-14",
+   "score": 79.9
+  },
+  {
+   "rank": 9,
+   "agent": "SageAgent",
+   "model": "GPT-5.3-Codex",
+   "date": "2026-02-05",
+   "score": 78.4
+  },
+  {
+   "rank": 10,
+   "agent": "Droid",
+   "model": "GPT-5.3-Codex",
+   "date": "2026-02-05",
+   "score": 77.3
+  },
+  {
+   "rank": 11,
+   "agent": "Meta-Harness",
+   "model": "Claude Opus 4.6",
+   "date": "2026-02-05",
+   "score": 76.4
+  },
+  {
+   "rank": 12,
+   "agent": "CodeBrain-1.5",
+   "model": "GPT-5.3-Codex",
+   "date": "2026-02-05",
+   "score": 75.8
+  },
+  {
+   "rank": 13,
+   "agent": "Codelia",
+   "model": "GPT-5.3-Codex",
+   "date": "2026-02-05",
+   "score": 75.7
+  },
+  {
+   "rank": 14,
+   "agent": "Capy",
+   "model": "Claude Opus 4.6",
+   "date": "2026-02-05",
+   "score": 75.3
+  },
+  {
+   "rank": 15,
+   "agent": "Simple Codex",
+   "model": "GPT-5.3-Codex",
+   "date": "2026-02-05",
+   "score": 75.1
+  },
+  {
+   "rank": 16,
+   "agent": "Terminus-KIRA",
+   "model": "Gemini 3.1 Pro",
+   "date": "2026-02-19",
+   "score": 74.8
+  },
+  {
+   "rank": 17,
+   "agent": "Terminus-KIRA",
+   "model": "Claude Opus 4.6",
+   "date": "2026-02-05",
+   "score": 74.7
+  },
+  {
+   "rank": 18,
+   "agent": "Mux",
+   "model": "GPT-5.3-Codex",
+   "date": "2026-02-05",
+   "score": 74.6
+  },
+  {
+   "rank": 19,
+   "agent": "MAYA-V2",
+   "model": "Claude 4.6 Opus",
+   "date": "2026-02-05",
+   "score": 72.1
+  },
+  {
+   "rank": 20,
+   "agent": "TongAgents",
+   "model": "Claude Opus 4.6",
+   "date": "2026-02-05",
+   "score": 71.9
+  },
+  {
+   "rank": 21,
+   "agent": "spoox-o-m",
+   "model": "GPT-5.3-Codex",
+   "date": "2026-02-05",
+   "score": 71.5
+  },
+  {
+   "rank": 22,
+   "agent": "Junie CLI",
+   "model": "Multiple",
+   "date": "2026-03-07",
+   "score": 71.0
+  },
+  {
+   "rank": 23,
+   "agent": "Droid",
+   "model": "Claude Opus 4.6",
+   "date": "2026-02-05",
+   "score": 69.9
+  },
+  {
+   "rank": 24,
+   "agent": "Ante",
+   "model": "Gemini 3 Pro",
+   "date": "2025-11-18",
+   "score": 69.4
+  },
+  {
+   "rank": 25,
+   "agent": "IndusAGI Coding Agent",
+   "model": "GPT-5.3-Codex",
+   "date": "2026-02-05",
+   "score": 69.1
+  },
+  {
+   "rank": 26,
+   "agent": "Crux",
+   "model": "Claude Opus 4.6",
+   "date": "2026-02-05",
+   "score": 66.9
+  },
+  {
+   "rank": 27,
+   "agent": "Deep Agents",
+   "model": "GPT-5.2-Codex",
+   "date": "2026-01-14",
+   "score": 66.5
+  },
+  {
+   "rank": 28,
+   "agent": "Mux",
+   "model": "Claude Opus 4.6",
+   "date": "2026-02-05",
+   "score": 66.5
+  },
+  {
+   "rank": 29,
+   "agent": "clnkr",
+   "model": "GPT-5.5",
+   "date": "2026-04-23",
+   "score": 66.1
+  },
+  {
+   "rank": 30,
+   "agent": "SageAgent",
+   "model": "Gemini 3 Pro",
+   "date": "2025-11-18",
+   "score": 65.2
+  },
+  {
+   "rank": 31,
+   "agent": "Droid",
+   "model": "GPT-5.2",
+   "date": "2025-12-11",
+   "score": 64.9
+  },
+  {
+   "rank": 32,
+   "agent": "Terminus 2",
+   "model": "GPT-5.3-Codex",
+   "date": "2026-02-05",
+   "score": 64.7
+  },
+  {
+   "rank": 33,
+   "agent": "Junie CLI",
+   "model": "Gemini 3 Flash",
+   "date": "2025-12-17",
+   "score": 64.3
+  },
+  {
+   "rank": 34,
+   "agent": "Droid",
+   "model": "Claude Opus 4.5",
+   "date": "2025-11-24",
+   "score": 63.1
+  },
+  {
+   "rank": 35,
+   "agent": "Codex CLI",
+   "model": "GPT-5.2",
+   "date": "2025-12-11",
+   "score": 62.9
+  },
+  {
+   "rank": 36,
+   "agent": "Terminus 2",
+   "model": "Claude Opus 4.6",
+   "date": "2026-02-05",
+   "score": 62.9
+  },
+  {
+   "rank": 37,
+   "agent": "CodeBrain-1.5",
+   "model": "Gemini 3 Pro",
+   "date": "2025-11-18",
+   "score": 62.2
+  },
+  {
+   "rank": 38,
+   "agent": "II-Agent",
+   "model": "Gemini 3 Pro",
+   "date": "2025-11-18",
+   "score": 61.8
+  },
+  {
+   "rank": 39,
+   "agent": "hookele",
+   "model": "GPT-5.1-Codex-Mini",
+   "date": "2025-11-12",
+   "score": 61.6
+  },
+  {
+   "rank": 40,
+   "agent": "Gemini CLI",
+   "model": "Gemini 3.1 Pro",
+   "date": "2026-02-19",
+   "score": 61.4
+  },
+  {
+   "rank": 41,
+   "agent": "Warp",
+   "model": "Multiple",
+   "date": "2025-12-12",
+   "score": 61.2
+  },
+  {
+   "rank": 42,
+   "agent": "Droid",
+   "model": "Gemini 3 Pro",
+   "date": "2025-11-18",
+   "score": 61.1
+  },
+  {
+   "rank": 43,
+   "agent": "Mux",
+   "model": "GPT-5.2",
+   "date": "2025-12-11",
+   "score": 60.7
+  },
+  {
+   "rank": 44,
+   "agent": "Codex CLI",
+   "model": "GPT-5.1-Codex-Max",
+   "date": "2025-11-19",
+   "score": 60.4
+  },
+  {
+   "rank": 45,
+   "agent": "Gemini CLI",
+   "model": "Gemini 3.1 Pro",
+   "date": "2026-02-19",
+   "score": 59.4
+  },
+  {
+   "rank": 46,
+   "agent": "Letta Code",
+   "model": "Claude Opus 4.5",
+   "date": "2025-11-24",
+   "score": 59.1
+  },
+  {
+   "rank": 47,
+   "agent": "Warp",
+   "model": "Multiple",
+   "date": "2025-11-20",
+   "score": 59.1
+  },
+  {
+   "rank": 48,
+   "agent": "Mux",
+   "model": "Claude Opus 4.5",
+   "date": "2025-11-24",
+   "score": 58.4
+  },
+  {
+   "rank": 49,
+   "agent": "Abacus AI Desktop",
+   "model": "Multiple",
+   "date": "2025-12-11",
+   "score": 58.4
+  },
+  {
+   "rank": 50,
+   "agent": "Claude Code",
+   "model": "Claude Opus 4.6",
+   "date": "2026-02-05",
+   "score": 58.0
+  },
+  {
+   "rank": 51,
+   "agent": "Crux",
+   "model": "GPT-5.1-Codex",
+   "date": "2025-11-12",
+   "score": 57.8
+  },
+  {
+   "rank": 52,
+   "agent": "Terminus 2",
+   "model": "Claude Opus 4.5",
+   "date": "2025-11-24",
+   "score": 57.8
+  },
+  {
+   "rank": 53,
+   "agent": "Grok CLI",
+   "model": "Grok 4.20 Reasoning",
+   "date": "2026-03-10",
+   "score": 57.3
+  },
+  {
+   "rank": 54,
+   "agent": "Terminus 2",
+   "model": "Gemini 3 Pro",
+   "date": "2025-11-18",
+   "score": 56.9
+  },
+  {
+   "rank": 55,
+   "agent": "Letta Code",
+   "model": "Gemini 3 Pro",
+   "date": "2025-11-18",
+   "score": 56.0
+  },
+  {
+   "rank": 56,
+   "agent": "Goose",
+   "model": "Claude Opus 4.5",
+   "date": "2025-11-24",
+   "score": 54.3
+  },
+  {
+   "rank": 57,
+   "agent": "Terminus 2",
+   "model": "GPT-5.2",
+   "date": "2025-12-11",
+   "score": 54.0
+  },
+  {
+   "rank": 58,
+   "agent": "Letta Code",
+   "model": "GPT-5.1-Codex",
+   "date": "2025-11-12",
+   "score": 53.5
+  },
+  {
+   "rank": 59,
+   "agent": "Simplai Agent",
+   "model": "Claude Sonnet 4.6",
+   "date": "2026-02-17",
+   "score": 53.4
+  },
+  {
+   "rank": 60,
+   "agent": "Terminus 2",
+   "model": "GLM 5",
+   "date": "2026-02-11",
+   "score": 52.4
+  },
+  {
+   "rank": 61,
+   "agent": "Claude Code",
+   "model": "Claude Opus 4.5",
+   "date": "2025-11-24",
+   "score": 52.1
+  },
+  {
+   "rank": 62,
+   "agent": "OpenHands",
+   "model": "Claude Opus 4.5",
+   "date": "2025-11-24",
+   "score": 51.9
+  },
+  {
+   "rank": 63,
+   "agent": "OpenCode",
+   "model": "Claude Opus 4.5",
+   "date": "2025-11-24",
+   "score": 51.7
+  },
+  {
+   "rank": 64,
+   "agent": "Terminus 2",
+   "model": "Gemini 3 Flash",
+   "date": "2025-12-17",
+   "score": 51.7
+  },
+  {
+   "rank": 65,
+   "agent": "Warp",
+   "model": "Multiple",
+   "date": "2025-11-11",
+   "score": 50.1
+  },
+  {
+   "rank": 66,
+   "agent": "Codex CLI",
+   "model": "GPT-5",
+   "date": "2025-08-07",
+   "score": 49.6
+  },
+  {
+   "rank": 67,
+   "agent": "Terminus 2",
+   "model": "GPT-5.1",
+   "date": "2025-11-12",
+   "score": 47.6
+  },
+  {
+   "rank": 68,
+   "agent": "Gemini CLI",
+   "model": "Gemini 3 Flash",
+   "date": "2025-12-17",
+   "score": 47.4
+  },
+  {
+   "rank": 69,
+   "agent": "CAMEL-AI",
+   "model": "Claude Sonnet 4.5",
+   "date": "2025-09-29",
+   "score": 46.5
+  },
+  {
+   "rank": 70,
+   "agent": "IndusAGI Coding Agent",
+   "model": "MiniMax M2.7",
+   "date": "2026-03-18",
+   "score": 45.1
+  },
+  {
+   "rank": 71,
+   "agent": "Codex CLI",
+   "model": "GPT-5-Codex",
+   "date": "2025-09-15",
+   "score": 44.3
+  },
+  {
+   "rank": 72,
+   "agent": "OpenHands",
+   "model": "GPT-5",
+   "date": "2025-08-07",
+   "score": 43.8
+  },
+  {
+   "rank": 73,
+   "agent": "Terminus 2",
+   "model": "GPT-5-Codex",
+   "date": "2025-09-15",
+   "score": 43.4
+  },
+  {
+   "rank": 74,
+   "agent": "Terminus 2",
+   "model": "Kimi K2.5",
+   "date": "2026-01-27",
+   "score": 43.2
+  },
+  {
+   "rank": 75,
+   "agent": "Goose",
+   "model": "Claude Sonnet 4.5",
+   "date": "2025-09-29",
+   "score": 43.1
+  },
+  {
+   "rank": 76,
+   "agent": "Crux",
+   "model": "GPT-5.1-Codex-Mini",
+   "date": "2025-11-12",
+   "score": 43.1
+  },
+  {
+   "rank": 77,
+   "agent": "Harness Agent",
+   "model": "MiniMax M2.7 Highspeed",
+   "date": "2026-03-18",
+   "score": 42.9
+  },
+  {
+   "rank": 78,
+   "agent": "Terminus 2",
+   "model": "Claude Sonnet 4.5",
+   "date": "2025-09-29",
+   "score": 42.8
+  },
+  {
+   "rank": 79,
+   "agent": "MAYA-V2",
+   "model": "Claude 4.5 Sonnet",
+   "date": "2025-09-29",
+   "score": 42.7
+  },
+  {
+   "rank": 80,
+   "agent": "cchuter",
+   "model": "minimax-m2.5",
+   "date": "2026-02-12",
+   "score": 42.7
+  },
+  {
+   "rank": 81,
+   "agent": "OpenHands",
+   "model": "Claude Sonnet 4.5",
+   "date": "2025-09-29",
+   "score": 42.6
+  },
+  {
+   "rank": 82,
+   "agent": "Mini-SWE-Agent",
+   "model": "Claude Sonnet 4.5",
+   "date": "2025-09-29",
+   "score": 42.5
+  },
+  {
+   "rank": 83,
+   "agent": "Terminus 2",
+   "model": "Minimax m2.5",
+   "date": "2026-02-12",
+   "score": 42.2
+  },
+  {
+   "rank": 84,
+   "agent": "Mini-SWE-Agent",
+   "model": "GPT-5-Codex",
+   "date": "2025-09-15",
+   "score": 41.3
+  },
+  {
+   "rank": 85,
+   "agent": "Claude Code",
+   "model": "Claude Sonnet 4.5",
+   "date": "2025-09-29",
+   "score": 40.1
+  },
+  {
+   "rank": 86,
+   "agent": "Terminus 2",
+   "model": "DeepSeek-V3.2",
+   "date": "2025-12-01",
+   "score": 39.6
+  },
+  {
+   "rank": 87,
+   "agent": "Terminus 2",
+   "model": "Claude Opus 4.1",
+   "date": "2025-08-05",
+   "score": 38.0
+  },
+  {
+   "rank": 88,
+   "agent": "OpenHands",
+   "model": "Claude Opus 4.1",
+   "date": "2025-08-05",
+   "score": 36.9
+  },
+  {
+   "rank": 89,
+   "agent": "Terminus 2",
+   "model": "GPT-5.1-Codex",
+   "date": "2025-11-12",
+   "score": 36.9
+  },
+  {
+   "rank": 90,
+   "agent": "Crux",
+   "model": "MiniMax M2.1",
+   "date": "2025-12-23",
+   "score": 36.6
+  },
+  {
+   "rank": 91,
+   "agent": "Terminus 2",
+   "model": "Kimi K2 Thinking",
+   "date": "2025-11-06",
+   "score": 35.7
+  },
+  {
+   "rank": 92,
+   "agent": "Goose",
+   "model": "Claude Haiku 4.5",
+   "date": "2025-10-15",
+   "score": 35.5
+  },
+  {
+   "rank": 93,
+   "agent": "Terminus 2",
+   "model": "GPT-5",
+   "date": "2025-08-07",
+   "score": 35.2
+  },
+  {
+   "rank": 94,
+   "agent": "Mini-SWE-Agent",
+   "model": "Claude Opus 4.1",
+   "date": "2025-08-05",
+   "score": 35.1
+  },
+  {
+   "rank": 95,
+   "agent": "Claude Code",
+   "model": "Claude Opus 4.1",
+   "date": "2025-08-05",
+   "score": 34.8
+  },
+  {
+   "rank": 96,
+   "agent": "spoox-o-m",
+   "model": "GPT-5-Mini",
+   "date": "2025-08-07",
+   "score": 34.8
+  },
+  {
+   "rank": 97,
+   "agent": "Mini-SWE-Agent",
+   "model": "GPT-5",
+   "date": "2025-08-07",
+   "score": 33.9
+  },
+  {
+   "rank": 98,
+   "agent": "Terminus 2",
+   "model": "GLM 4.7",
+   "date": "2025-12-22",
+   "score": 33.4
+  },
+  {
+   "rank": 99,
+   "agent": "Crux",
+   "model": "GLM 4.7",
+   "date": "2025-12-22",
+   "score": 33.3
+  },
+  {
+   "rank": 100,
+   "agent": "Terminus 2",
+   "model": "Gemini 2.5 Pro",
+   "date": "2025-06-17",
+   "score": 32.6
+  },
+  {
+   "rank": 101,
+   "agent": "Codex CLI",
+   "model": "GPT-5-Mini",
+   "date": "2025-08-07",
+   "score": 31.9
+  },
+  {
+   "rank": 102,
+   "agent": "Terminus 2",
+   "model": "MiniMax M2",
+   "date": "2025-10-27",
+   "score": 30.0
+  },
+  {
+   "rank": 103,
+   "agent": "Mini-SWE-Agent",
+   "model": "Claude Haiku 4.5",
+   "date": "2025-10-15",
+   "score": 29.8
+  },
+  {
+   "rank": 104,
+   "agent": "Terminus 2",
+   "model": "MiniMax M2.1",
+   "date": "2025-12-23",
+   "score": 29.2
+  },
+  {
+   "rank": 105,
+   "agent": "OpenHands",
+   "model": "GPT-5-Mini",
+   "date": "2025-08-07",
+   "score": 29.2
+  },
+  {
+   "rank": 106,
+   "agent": "Terminus 2",
+   "model": "Claude Haiku 4.5",
+   "date": "2025-10-15",
+   "score": 28.3
+  },
+  {
+   "rank": 107,
+   "agent": "Terminus 2",
+   "model": "Kimi K2 Instruct",
+   "date": "2025-07-11",
+   "score": 27.8
+  },
+  {
+   "rank": 108,
+   "agent": "Claude Code",
+   "model": "Claude Haiku 4.5",
+   "date": "2025-10-15",
+   "score": 27.5
+  },
+  {
+   "rank": 109,
+   "agent": "OpenHands",
+   "model": "Grok 4",
+   "date": "2025-07-09",
+   "score": 27.2
+  },
+  {
+   "rank": 110,
+   "agent": "Dakou Agent",
+   "model": "Qwen 3 Coder 480B",
+   "date": "2025-07-22",
+   "score": 27.2
+  },
+  {
+   "rank": 111,
+   "agent": "OpenHands",
+   "model": "Kimi K2 Instruct",
+   "date": "2025-07-11",
+   "score": 26.7
+  },
+  {
+   "rank": 112,
+   "agent": "Mini-SWE-Agent",
+   "model": "Gemini 2.5 Pro",
+   "date": "2025-06-17",
+   "score": 26.1
+  },
+  {
+   "rank": 113,
+   "agent": "Mini-SWE-Agent",
+   "model": "Grok Code Fast 1",
+   "date": "2025-08-28",
+   "score": 25.8
+  },
+  {
+   "rank": 114,
+   "agent": "Mini-SWE-Agent",
+   "model": "Grok 4",
+   "date": "2025-07-09",
+   "score": 25.4
+  },
+  {
+   "rank": 115,
+   "agent": "OpenHands",
+   "model": "Qwen 3 Coder 480B",
+   "date": "2025-07-22",
+   "score": 25.4
+  },
+  {
+   "rank": 116,
+   "agent": "little-coder",
+   "model": "Qwen3.6-35B-A3B",
+   "date": "2026-04-16",
+   "score": 24.6
+  },
+  {
+   "rank": 117,
+   "agent": "Terminus 2",
+   "model": "GLM 4.6",
+   "date": "2025-09-30",
+   "score": 24.5
+  },
+  {
+   "rank": 118,
+   "agent": "Terminus 2",
+   "model": "GPT-5-Mini",
+   "date": "2025-08-07",
+   "score": 24.0
+  },
+  {
+   "rank": 119,
+   "agent": "Terminus 2",
+   "model": "Qwen 3 Coder 480B",
+   "date": "2025-07-22",
+   "score": 23.9
+  },
+  {
+   "rank": 120,
+   "agent": "Terminus 2",
+   "model": "Grok 4",
+   "date": "2025-07-09",
+   "score": 23.1
+  },
+  {
+   "rank": 121,
+   "agent": "little-coder",
+   "model": "Qwen3.6-35B-A3B",
+   "date": "2026-04-16",
+   "score": 23.0
+  },
+  {
+   "rank": 122,
+   "agent": "Mini-SWE-Agent",
+   "model": "GPT-5-Mini",
+   "date": "2025-08-07",
+   "score": 22.2
+  },
+  {
+   "rank": 123,
+   "agent": "spoox-o-m",
+   "model": "GPT-5-Nano",
+   "date": "2025-08-07",
+   "score": 21.8
+  },
+  {
+   "rank": 124,
+   "agent": "Gemini CLI",
+   "model": "Gemini 2.5 Pro",
+   "date": "2025-06-17",
+   "score": 19.6
+  },
+  {
+   "rank": 125,
+   "agent": "Bash Agent",
+   "model": "TermiGen-32B",
+   "date": "2026-05-14",
+   "score": 19.3
+  },
+  {
+   "rank": 126,
+   "agent": "Terminus 2",
+   "model": "GPT-OSS-120B",
+   "date": "2025-08-05",
+   "score": 18.7
+  },
+  {
+   "rank": 127,
+   "agent": "Mini-SWE-Agent",
+   "model": "Gemini 2.5 Flash",
+   "date": "2025-06-17",
+   "score": 17.1
+  },
+  {
+   "rank": 128,
+   "agent": "Terminus 2",
+   "model": "AfterQuery-GPT-OSS-20B",
+   "date": "2026-03-31",
+   "score": 17.0
+  },
+  {
+   "rank": 129,
+   "agent": "Terminus 2",
+   "model": "Gemini 2.5 Flash",
+   "date": "2025-06-17",
+   "score": 16.9
+  },
+  {
+   "rank": 130,
+   "agent": "OpenHands",
+   "model": "Gemini 2.5 Pro",
+   "date": "2025-06-17",
+   "score": 16.4
+  },
+  {
+   "rank": 131,
+   "agent": "OpenHands",
+   "model": "Gemini 2.5 Flash",
+   "date": "2025-06-17",
+   "score": 16.4
+  },
+  {
+   "rank": 132,
+   "agent": "Gemini CLI",
+   "model": "Gemini 2.5 Flash",
+   "date": "2025-06-17",
+   "score": 15.4
+  },
+  {
+   "rank": 133,
+   "agent": "Terminus 2",
+   "model": "Grok Code Fast 1",
+   "date": "2025-08-28",
+   "score": 14.2
+  },
+  {
+   "rank": 134,
+   "agent": "Mini-SWE-Agent",
+   "model": "GPT-OSS-120B",
+   "date": "2025-08-05",
+   "score": 14.2
+  },
+  {
+   "rank": 135,
+   "agent": "OpenHands",
+   "model": "Claude Haiku 4.5",
+   "date": "2025-10-15",
+   "score": 13.9
+  },
+  {
+   "rank": 136,
+   "agent": "Codex CLI",
+   "model": "GPT-5-Nano",
+   "date": "2025-08-07",
+   "score": 11.5
+  },
+  {
+   "rank": 137,
+   "agent": "OpenHands",
+   "model": "GPT-5-Nano",
+   "date": "2025-08-07",
+   "score": 9.9
+  },
+  {
+   "rank": 138,
+   "agent": "little-coder",
+   "model": "Qwen3.5-9B",
+   "date": "2026-03-02",
+   "score": 9.2
+  },
+  {
+   "rank": 139,
+   "agent": "Terminus 2",
+   "model": "GPT-5-Nano",
+   "date": "2025-08-07",
+   "score": 7.9
+  },
+  {
+   "rank": 140,
+   "agent": "Mini-SWE-Agent",
+   "model": "GPT-5-Nano",
+   "date": "2025-08-07",
+   "score": 7.0
+  },
+  {
+   "rank": 141,
+   "agent": "Mini-SWE-Agent",
+   "model": "GPT-OSS-20B",
+   "date": "2025-08-05",
+   "score": 3.4
+  },
+  {
+   "rank": 142,
+   "agent": "Terminus 2",
+   "model": "GPT-OSS-20B",
+   "date": "2025-08-05",
+   "score": 3.1
+  }
+ ]
+}

@@ -35,16 +35,28 @@ PUBLISH = _publish()
 SUITES = {
     "terminal-bench": {"bench": "Terminal-Bench 2.1", "flag": [], "page": "terminal-bench",
                        "what": "89 tasks in a Linux terminal: servers, builds, ML, security, VMs"},
+    # the official leaderboard's own version (Harbor Hub), where purr can get an entry
+    "terminal-bench-2": {"bench": "Terminal-Bench 2.0", "flag": [], "page": "terminal-bench",
+                         "env": {"PURR_DATASET": "terminal-bench/terminal-bench-2"},
+                         "what": "the same 89 tasks, the version the public leaderboard (142 entries) uses"},
     "deepswe": {"bench": "DeepSWE 1.1", "flag": ["--deepswe"], "page": "deepswe",
                 "what": "113 features and fixes in real projects (TS, Go, Python, Rust, JS), offline"},
 }
 SIZES = {"quick": {"flag": ["--quick"], "what": "the quick 20, one try each", "attempts": 1},
          "one": {"flag": ["--one"], "what": "every task, one try each", "attempts": 1},
-         "full": {"flag": [], "what": "every task, three tries each", "attempts": 3}}
+         "full": {"flag": [], "what": "every task, three tries each", "attempts": 3},
+         # a leaderboard entry: 5 tries, purr's web tool off, then tbench/submit.py (Terminal-Bench 2.0)
+         "submit": {"flag": ["--submit"], "what": "every task ×5 (leaderboard)", "attempts": 5,
+                    "only": "terminal-bench-2"}}
 # (time, cost) with DeepSeek V4.1 Flash, from the runs so far; None: not measured yet
-ESTIMATES = {("terminal-bench", "quick"): ("about 1 hour", "under $0.50"),
-             ("terminal-bench", "one"): ("about 2 hours", "about $2"),
-             ("terminal-bench", "full"): ("4-5 hours", "about $6")}
+# purr 0.4.0 (its extra checks use more steps than 0.3.1's runs did), off-peak; weekday peak hours cost 2x
+ESTIMATES = {**{(s, "quick"): ("about 1 hour", "about $0.70") for s in ("terminal-bench", "terminal-bench-2")},
+             **{(s, "one"): ("about 2 hours", "about $3") for s in ("terminal-bench", "terminal-bench-2")},
+             **{(s, "full"): ("5-6 hours", "about $8") for s in ("terminal-bench", "terminal-bench-2")},
+             ("terminal-bench-2", "submit"): ("9-11 hours", "about $12-15"),
+             ("deepswe", "quick"): ("about 1 hour", "about $3"),
+             ("deepswe", "one"): ("4-5 hours", "about $18-23"),
+             ("deepswe", "full"): ("about 14 hours", "about $55-70")}
 
 
 def tasks_in(suite, size):
@@ -54,6 +66,21 @@ def tasks_in(suite, size):
 
 def trials_in(suite, size):
     return tasks_in(suite, size) * SIZES[size]["attempts"]
+
+
+def leaderboard():
+    """The Terminal-Bench 2.0 leaderboard as it stood (tbench/leaderboard-tb2.json): entries, as_of."""
+    try:
+        data = json.loads((ROOT / "tbench" / "leaderboard-tb2.json").read_text())
+    except (OSError, ValueError):
+        return [], None
+    return data.get("entries") or [], data.get("as_of")
+
+
+def place(pct):
+    """Where a score would land on that leaderboard: (rank, out of)."""
+    entries, _ = leaderboard()
+    return 1 + sum(e["score"] > pct for e in entries), len(entries) + 1
 
 
 def references(suite):
@@ -79,6 +106,8 @@ def previous(suite, size):
 
 def command(suite, size, edge_cases=False):
     cmd = [str(ROOT / "tbench" / "fair.sh"), *SUITES[suite]["flag"], *SIZES[size]["flag"]]
+    if size == "submit" and suite != SIZES["submit"]["only"]:
+        raise ValueError("a leaderboard entry is Terminal-Bench 2.0 only")
     return cmd + (["--ak", "edge_cases=true"] if edge_cases else [])
 
 
@@ -96,7 +125,8 @@ class Run:
         self.stopping = False
 
     def start(self):
-        env = {**os.environ, "PURR_JOBS": str(self.jobs), "PYTHONUNBUFFERED": "1", "NO_COLOR": "1"}
+        env = {**os.environ, **SUITES[self.suite].get("env", {}), "PURR_JOBS": str(self.jobs),
+               "PYTHONUNBUFFERED": "1", "NO_COLOR": "1"}
         self.proc = subprocess.Popen(self.cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      stdin=subprocess.DEVNULL, env=env, start_new_session=True)
         return self.proc
@@ -265,6 +295,16 @@ def verdict(suite, size, pct, finished, total, stopped=False, name="Mochi"):
                 "within the noise of 20 tasks"
         return "sad", f"{pct:.1f}%: down {-diff:.0f} points from purr {version}", \
             "worth reading which tasks broke"
+    if suite == "terminal-bench-2":  # the leaderboard is the comparison
+        rank, out_of = place(pct)
+        where = f"#{rank} of {out_of} on the Terminal-Bench 2.0 leaderboard"
+        if rank <= 10:
+            return "celebrating", f"{pct:.1f}%: {where}!", f"top ten ♡ {name} can't sit still"
+        if rank <= 30:
+            return "proud", f"{pct:.1f}%: {where}", "among the big names"
+        if rank <= out_of // 2:
+            return "happy", f"{pct:.1f}%: {where}", "the top half ♡"
+        return "purring", f"{pct:.1f}%: {where}", "the failed tasks say what to fix next"
     refs = references(suite)
     beaten = [h for h, s in refs if s < pct]
     if refs and len(beaten) == len(refs):
