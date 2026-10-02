@@ -233,7 +233,8 @@ fix it now. If everything is really done, reply with a short summary of what you
 # code's own output, the request's notation overruled by the code's habits (x() where it wrote x),
 # and a scratch test file left behind that broke the real ones
 ONE_SHOT_CHECK = """(purr: before you finish{time}: hidden tests will check your work on other inputs and \
-against the request's exact wording. Read it again sentence by sentence: 1. Every file, name and \
+against the request's exact wording. Go through your requirements list and the request again, \
+sentence by sentence: 1. Every file, name and \
 signature it gives exists exactly as written (path, name, x() or x, format, types). 2. For each rule \
 it states (if/unless/only/order/precedence/overrides), work out the expected result from the request \
 text first, then check it on an input where a wrong reading would give a different answer; test \
@@ -386,6 +387,9 @@ ONE_SHOT_LINE = (
     "- Follow the request's exact wording and notation (names, x() or x, types, order); where it leaves a "
     "choice open, prefer what the given code, data and named tools already do (read their source).\n"
     "- Hard requirements (exact paths, names, format, size/time/score limits) are part of done.\n"
+    # a requirement misread at the start stays misread ("all winning moves" became "a move")
+    "- First put the request's requirements in your todo list, one each, quoting the words that set "
+    "them (all, only, exactly, every, at least, unless); check them off with evidence as you go.\n"
     "- Hidden tests will check your files on other inputs; they aren't on this machine. Scratch files go in /tmp.")
 # one-shot runs drop what only matters with a person watching: who purr is, the approvals
 IDENTITY_TAIL = SYSTEM[SYSTEM.index(" You are running inside purr"):SYSTEM.index("\n\nEnvironment")]

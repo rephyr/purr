@@ -165,6 +165,13 @@ class PromptTest(unittest.TestCase):
         self.assertTrue(short.startswith("You are m, an AI model"))
         self.assertLess(len(short), len(normal) + 400)
 
+    def test_one_shot_runs_list_the_requirements_first(self):
+        short = agent_module.system_prompt("/app", "m", "x", one_shot=True)
+        self.assertIn("requirements in your todo list", short)
+        self.assertIn("all, only, exactly", short)
+        self.assertNotIn("requirements in your todo list", agent_module.system_prompt("/app", "m", "x"))
+        self.assertIn("your requirements list", agent_module.ONE_SHOT_CHECK)
+
     def test_every_mode_reads_instead_of_guessing_a_library(self):
         self.assertIn("how a library behaves", agent_module.system_prompt("/app", "m", "x"))
 
