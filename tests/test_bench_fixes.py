@@ -397,6 +397,45 @@ class PublishTest(unittest.TestCase):
         import publish
         self.publish = publish
 
+    def test_five_tries_is_a_leaderboard_run_and_cancelled_tries_dont_count(self):
+        every = [{"task": f"t{i}"} for i in range(89)]
+        ds = "terminal-bench/terminal-bench-2"
+        self.assertEqual(self.publish.profile(ds, every * 5), "submit")
+        self.assertIsNone(self.publish.profile(ds, every * 4))
+        cancelled = [{"task": "t0", "cancelled": True}] * 7
+        self.assertEqual(self.publish.profile(ds, every * 3 + cancelled), "full")
+
+    def test_dataset_names(self):
+        name = self.publish.bench_name
+        self.assertEqual(name("terminal-bench@2.0"), "Terminal-Bench 2.0")
+        self.assertEqual(name("terminal-bench/terminal-bench-2"), "Terminal-Bench 2.0")
+        self.assertIsNone(name("terminal-bench@4.0.0"))
+        self.assertIsNone(name("terminal-bench/terminal-bench"))  # the 4.0 package
+        self.assertEqual(name("terminal-bench/terminal-bench-2-1"), "Terminal-Bench 2.1")
+        self.assertEqual(name("datacurve/deep-swe-1-1"), "DeepSWE 1.1")
+
+    def test_only_fair_settings_are_published(self):
+        fair = {"model": "openrouter/deepseek/deepseek-v4.1-flash",
+                "settings": {"hosts": "deepseek", "temperature": 1.0, "top_p": 0.95, "max_tokens": 65536,
+                             "max_steps": 500, "web": "false", "attempts": 5}}
+        self.assertEqual(self.publish.unfair(fair), [])
+        loose = {**fair, "settings": {**fair["settings"], "max_steps": 200}}
+        self.assertEqual(self.publish.unfair(loose), ["max_steps=200 (fair: 500)"])
+        other = {**fair, "model": "openrouter/some/other-model"}
+        self.assertTrue(self.publish.unfair(other))
+        self.assertEqual(self.publish.unfair({"model": "ollama/ornith-9b-128k", "settings": {}}), [])  # local: own table
+
+    def test_one_reading_of_a_result(self):
+        o = self.publish.outcome
+        graded = {"verifier_result": {"rewards": {"reward": 1.0}}}
+        self.assertEqual(o(graded)["state"], "passed")
+        self.assertEqual(o({"exception_info": {"exception_type": "CancelledError"}})["state"], "cancelled")
+        self.assertEqual(o({"exception_info": {"exception_type": "AgentTimeoutError"},
+                            "verifier_result": {"rewards": {"reward": 0.0}}})["state"], "timeout")
+        broke = o({"exception_info": {"exception_type": "RuntimeError"}})
+        self.assertEqual((broke["state"], broke["error"]), ("error", "RuntimeError"))
+        self.assertEqual(self.publish.pass_at_1({"a": [1.0, 0.0], "b": [1.0]})[0], 75.0)
+
     def test_which_runs_are_published(self):
         quick = [{"task": t} for t in self.publish.QUICK]
         self.assertEqual(self.publish.profile("terminal-bench/terminal-bench-2-1", quick), "quick")

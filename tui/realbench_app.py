@@ -89,7 +89,7 @@ ICON = {"setup": ("◌", DIM), "grading": ("⚖", LILAC), "passed": ("✓", MINT
 SPIN = "◐◓◑◒"
 STATE_COLOUR = {"setup": DIM, "working": PINK, "grading": LILAC, "passed": MINT, "failed": ROSE,
                 "error": PEACH, "timeout": ROSE, "cancelled": FAINT}
-FINISHED = ("passed", "failed", "error", "timeout")
+FINISHED = realbench.FINISHED
 
 # a 5-line font for the score, 3 columns a glyph (. is 1): plain blocks read best in every terminal
 BIG = {"0": ["███", "█ █", "█ █", "█ █", "███"], "1": [" █ ", "██ ", " █ ", " █ ", "███"],

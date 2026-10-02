@@ -61,7 +61,7 @@ stop, and the note says why it stopped. Don't set these next to the reference sc
 |---|---|---|---|---|---|
 | 0.4.0+bd79ea4 | 2026-10-02 | 48 of 113 | 56.2% | $6.99 | Stopped by hand after 48 graded: a bug capped purr at 150 steps (+10 for its final check) despite max_steps=500, the same limit DeepSeek's harnesses had. 17 of the 48 hit the cap; 10 of those failed, 3 before they could commit (6 more were 1-3 tests short). Fixed in c5c1e5f. With the cap gone our guess is about 67%, with all 10 passing 77%, but that's a guess: the rerun is the real number. |
 
-## Other harnesses, same model (published, full runs)
+## Published scores to compare with (other harnesses, full runs)
 
 | harness | model | benchmark | pass@1 | source |
 |---|---|---|---|---|

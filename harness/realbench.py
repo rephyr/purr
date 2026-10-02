@@ -8,11 +8,9 @@ live log, the score, and what Mochi makes of it at the end. No textual here, so 
 
 import importlib.util
 import json
-import math
 import os
 import re
 import signal
-import statistics
 import subprocess
 import time
 from pathlib import Path
@@ -31,6 +29,7 @@ def _publish():
 
 
 PUBLISH = _publish()
+FINISHED = PUBLISH.FINISHED  # graded: the window counts these
 
 SUITES = {
     "terminal-bench": {"bench": "Terminal-Bench 2.1", "flag": [], "page": "terminal-bench",
@@ -38,7 +37,7 @@ SUITES = {
     # the official leaderboard's own version (Harbor Hub), where purr can get an entry
     "terminal-bench-2": {"bench": "Terminal-Bench 2.0", "flag": [], "page": "terminal-bench",
                          "env": {"PURR_DATASET": "terminal-bench/terminal-bench-2"},
-                         "what": "the same 89 tasks, the version the public leaderboard (142 entries) uses"},
+                         "what": "the same 89 tasks, the version the public leaderboard uses"},
     "deepswe": {"bench": "DeepSWE 1.1", "flag": ["--deepswe"], "page": "deepswe",
                 "what": "113 features and fixes in real projects (TS, Go, Python, Rust, JS), offline"},
 }
@@ -61,7 +60,7 @@ ESTIMATES = {**{(s, "quick"): ("about 1 hour", "about $0.70") for s in ("termina
 
 def tasks_in(suite, size):
     bench = PUBLISH.BENCHES[SUITES[suite]["bench"]]
-    return 20 if size == "quick" else bench["tasks"]
+    return len(bench["quick"]) if size == "quick" else bench["tasks"]
 
 
 def trials_in(suite, size):
@@ -190,19 +189,9 @@ def trial(path):
             d = None
         if d is not None:
             t["task"] = str(d.get("task_name", t["task"])).split("/")[-1]
-            ex = (d.get("exception_info") or {}).get("exception_type")
-            reward = ((d.get("verifier_result") or {}).get("rewards") or {}).get("reward")
-            t["reward"] = reward
-            t["cost"] = (d.get("agent_result") or {}).get("cost_usd")
-            t["seconds"] = _seconds(d.get("agent_execution") or {})
-            if ex == "CancelledError":  # the run was stopped: never graded, so not a fail either
-                t["state"] = "cancelled"
-            elif ex == "AgentTimeoutError":
-                t["state"] = "passed" if (reward or 0) >= 1 else "timeout"
-            elif ex and reward is None:
-                t["state"], t["error"] = "error", ex
-            else:
-                t["state"] = "passed" if (reward or 0) >= 1 else "failed"
+            o = PUBLISH.outcome(d)  # the same reading the published tables use
+            t.update(state=o["state"], reward=o["reward"], cost=o["cost"], seconds=o["seconds"],
+                     error=o["error"] if o["state"] == "error" else None)
             return t
     verifier = path / "verifier"
     if verifier.is_dir() and any(verifier.iterdir()):
@@ -218,14 +207,6 @@ def trial(path):
     return t
 
 
-def _seconds(ex):
-    import datetime
-    if not (ex.get("started_at") and ex.get("finished_at")):
-        return None
-    p = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))  # noqa: E731
-    return (p(ex["finished_at"]) - p(ex["started_at"])).total_seconds()
-
-
 def scan(job):
     if not job or not Path(job).is_dir():
         return []
@@ -238,13 +219,9 @@ def score(trials):
     timeouts fail) and its ± (standard error over tasks). None until something finished."""
     by_task = {}
     for t in trials:
-        if t["state"] in ("passed", "failed", "error", "timeout"):
+        if t["state"] in FINISHED:
             by_task.setdefault(t["task"], []).append(1.0 if t["state"] == "passed" else 0.0)
-    if not by_task:
-        return None, None
-    shares = [sum(v) / len(v) for v in by_task.values()]
-    se = statistics.stdev(shares) / math.sqrt(len(shares)) if len(shares) > 1 else 0.0
-    return round(100 * sum(shares) / len(shares), 1), round(100 * se, 1)
+    return PUBLISH.pass_at_1(by_task)
 
 
 def last_tool(lines):
