@@ -204,5 +204,30 @@ class ReminderTest(unittest.TestCase):
         self.assertIn("look at x very carefully", reminders[0]["content"])
 
 
+
+class CutOffTest(unittest.TestCase):
+    """A reply cut off at the output limit isn't the end of the turn."""
+
+    def test_a_cut_off_reply_carries_on(self):
+        a = agent()
+        a.tools.trust_all = True
+        cut = reply("Let me write the whole file here: def f(): ...")
+        cut["finish"] = "length"
+        calls = scripted(a, [cut, reply("", tool=("write_file", {"path": "f.py", "content": "def f():\n    return 1\n"})),
+                             reply("Done: f.py written."), reply("ok")])
+        a.turn("write f.py")
+        self.assertTrue((Path(a.root) / "f.py").exists())
+        self.assertIn("output limit", str(a.messages))
+        self.assertGreaterEqual(calls["n"], 3)
+
+    def test_at_most_twice(self):
+        a = agent()
+        cut = reply("still going ...")
+        cut["finish"] = "length"
+        calls = scripted(a, [cut])
+        a.turn("write a novel")
+        self.assertEqual(calls["n"], 3)  # the first try and two nudges, then it stops
+
+
 if __name__ == "__main__":
     unittest.main()

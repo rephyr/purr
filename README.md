@@ -301,6 +301,27 @@ you missed, and your row ("you / human") is added at the end of the latest bench
 task, **idle-catchup** (from desk-pets' idle core), is aimed at top models: exact catch-up where
 one big step must equal any split, ties at a buff's line, and float crumbs that add up to coins.
 
+## Real benchmarks: Terminal-Bench
+
+`tbench/` plugs purr into [Harbor](https://www.harborframework.com), the runner behind
+**Terminal-Bench** (and other benchmarks in its registry), so purr is graded on the same tasks as
+OpenCode, Claude Code, Codex and Aider on the public leaderboards. Each task runs in its own Docker
+container: the adapter (`tbench/purr_agent.py`) installs uv + Python 3.12 there, copies purr in
+(plain mode only), writes a config for the model Harbor picks (using purr's own provider settings
+and model details) and runs `purr -p <task> --yes` once.
+
+    uv tool install harbor                          # once
+    tbench/run.sh -i terminal-bench/html-js-filter  # one task
+    tbench/run.sh -l 10 -n 4                        # 10 tasks, 4 at a time (API models)
+    tbench/run.sh -l 10 --ak mcp=false              # without purr's MCP servers
+    PURR_MODEL=openrouter/<model id> tbench/run.sh  # default: DeepSeek V4.1 Flash on OpenRouter
+
+`run.sh` hands purr's saved OpenRouter key to Harbor and passes everything else to `harbor run`.
+Results land in `~/.local/state/purr/tbench/`, with purr's own log (`agent/purr.txt`) and saved
+chat (`agent/purr-state/`) per task. Terminal-Bench 4.0 is hard: 66 tasks, a median of 4 hours
+for a human expert, and 8 hours per task for agents (`--agent-timeout-multiplier 0.125` caps it
+at one).
+
 ## Tests
 
 `python3 -m unittest discover tests` (no model is called).

@@ -186,6 +186,10 @@ MODES = {
     "create": ("none", "brainstorming and writing, no tools, a bit more random"),
 }
 
+CUT_NUDGE = """(purr: your reply hit the output limit and was cut off, so nothing in it happened. \
+Carry on from where you were, but don't write code or long plans in your reply: put code straight \
+into the files with write_file or edit_file (a long file in a few parts), and keep your reply short.)"""
+
 EMPTY_NUDGE = """(purr: your reply was empty. Look at the last results you got: if anything looks \
 wrong, fix it now; if everything is done, give a short summary of what you changed.)"""
 
@@ -1188,6 +1192,7 @@ class Agent:
         self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
         todo_only = 0  # steps in a row that did nothing but update the task list
         empty = 0      # empty answers nudged this turn
+        cut = 0        # replies cut off at the output limit, nudged this turn
         self._checked = False  # the final check (below) runs at most once a turn
         try:
             while True:
@@ -1257,6 +1262,13 @@ class Agent:
 
                 if reply["finish"] == "length":
                     self.view.note("(the reply hit the output limit and was cut off)", "error")
+                    if not reply["tool_calls"] and cut < 2:
+                        # a cut-off reply isn't "done": it ran out of room mid-thought (seen writing
+                        # a whole file into its answer on Terminal-Bench). Have it carry on, in files.
+                        cut += 1
+                        self.tools.repairs.append("reply cut off at the output limit -> told to carry on in files")
+                        self.messages.append({"role": "user", "content": CUT_NUDGE})
+                        continue
                 if not reply["tool_calls"]:
                     # a completely empty answer isn't "done": the model stalled (seen right after
                     # it ran checks that showed bugs). Nudge it on, at most twice a turn.
