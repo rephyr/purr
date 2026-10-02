@@ -2,6 +2,7 @@
 """purr: a tiny coding agent for the terminal. Run `purr` in a project folder."""
 
 import argparse
+import json
 import os
 import sys
 import tomllib
@@ -165,7 +166,9 @@ def save_key(name, config):
     KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
     KEYS_FILE.touch(mode=0o600)
     KEYS_FILE.chmod(0o600)
-    KEYS_FILE.write_text("".join(f'{k} = "{v}"\n' for k, v in keys.items()))
+    # quoted the TOML way (json.dumps escapes " and \\ the same): one odd character used to make the
+    # whole file unreadable, and every saved key silently vanished with it
+    KEYS_FILE.write_text("".join(f"{k} = {json.dumps(v)}\n" for k, v in keys.items()))
     ui.say(ui.MINT, f"saved ♡ {name} models work now (/free check tests them)")
     return 0
 
