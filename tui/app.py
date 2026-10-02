@@ -49,6 +49,7 @@ TOOL_LOOK = {
     "grep": ("◈", "search", LILAC), "fetch_url": ("◈", "fetch", LILAC),
     "edit_file": ("✎", "edit", PINK), "write_file": ("✎", "write", PINK),
     "run": ("❯", "run", CYAN), "task": ("✦", "helper", PEACH),
+    "terminal": ("❯", "terminal", CYAN), "look_at_image": ("◈", "look", LILAC),
     # purr's MCP servers (servers/): finding your way around, and real API docs
     "project_overview": ("⌂", "overview", MINT), "outline": ("⌂", "outline", MINT), "find_symbol": ("⌂", "find", MINT),
     "godot_class": ("✧", "godot", PEACH), "python_api": ("✧", "api", PEACH),

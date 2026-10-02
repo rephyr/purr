@@ -136,7 +136,8 @@ class PurrAgent(BaseInstalledAgent):
     # ---- install and run ----
 
     async def install(self, environment: BaseEnvironment) -> None:
-        await self.ensure_system_dependencies(environment, ("curl", "ca_certificates", "ripgrep"))
+        # tmux: purr's terminal sessions survive it, so a VM or server a task needs stays up
+        await self.ensure_system_dependencies(environment, ("curl", "ca_certificates", "ripgrep", "tmux"))
         with tempfile.TemporaryDirectory() as tmp:
             pack = Path(tmp) / "purr"
             pack.mkdir()
