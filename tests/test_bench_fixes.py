@@ -456,5 +456,44 @@ class CompactFailureTest(unittest.TestCase):
         self.assertEqual(len(tries), 1)  # failed once, then left alone while the chat is short
 
 
+class SecondReaderTest(unittest.TestCase):
+    def run_with_review(self, verdict, **config):
+        a = one_shot()
+        a.config = {**a.config, **config}
+        seen = []
+        replies = iter([reply("", tool=("write_file", {"path": "moves.txt", "content": "e2e4\n"})),
+                        reply("Done."), reply("Done."), reply(verdict), reply("Fixed both moves."), reply("Done.")])
+
+        def fake_call(messages=None, tools=True, quiet=False):
+            seen.append(messages)
+            return next(replies, reply("Done."))
+        a._call = fake_call
+        a.turn("Write all the winning moves to moves.txt, one per line.")
+        return a, seen
+
+    def test_findings_go_back_once(self):
+        a, seen = self.run_with_review('"all the winning moves": only e2e4 is written; g2g4 also wins')
+        review_calls = [m for m in seen if m and "You review a code change" in m[0]["content"]]
+        self.assertEqual(len(review_calls), 1)
+        self.assertIn("+e2e4", review_calls[0][0]["content"])           # the diff
+        self.assertIn("all the winning moves", review_calls[0][0]["content"])  # the request
+        notes = [u for u in users(a) if "second reader" in u]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("g2g4 also wins", notes[0])
+
+    def test_all_met_means_no_note(self):
+        a, _ = self.run_with_review("ALL MET")
+        self.assertFalse(any("second reader" in u for u in users(a)))
+
+    def test_it_can_be_turned_off_and_chats_never_get_it(self):
+        a, seen = self.run_with_review("something", review=False)
+        self.assertFalse(any(m and "You review a code change" in m[0]["content"] for m in seen))
+        b = agent()
+        b.tools.trust_all = True
+        scripted(b, [reply("", tool=("write_file", {"path": "a.txt", "content": "x"})), reply("done"), reply("ok")])
+        b.turn("make a.txt")
+        self.assertFalse(any("second reader" in u for u in users(b)))
+
+
 if __name__ == "__main__":
     unittest.main()

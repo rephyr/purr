@@ -321,6 +321,25 @@ You are a helper for another agent: it gave you one research job. You can only r
 the web). Do the job, then reply with a clear, complete summary of what you found, with file paths \
 and line numbers. Your reply is all the other agent will see."""
 
+# the model that wrote a change reads its own assumptions back; a call with only the request and the
+# diff doesn't (DeepSWE: a spec's x() overruled by habit, a rule quoted and then built the other way)
+REVIEW = """You review a code change against the request it was made for. You did not write it. \
+Compare them point by point and list every requirement in the request that the change does not meet \
+or gets wrong (a name, a signature, a type, an order, a case it doesn't handle, "all" done as "one"), \
+quoting the request's words and saying where in the diff. Don't suggest style changes or anything the \
+request didn't ask for. If it meets every requirement, answer exactly: ALL MET
+
+The request:
+{request}
+
+The change (unified diff, cut where long):
+{diff}"""
+
+REVIEW_NOTE = """(purr: a second reader compared the request with your changes and says:
+{findings}
+Check each against the request and the code: fix what's really wrong, ignore what isn't, then \
+finish in at most 3 lines.)"""
+
 COMPACT = """Below is a conversation between a user and you (a coding agent). It is getting too long, \
 so write a summary that lets you carry on the work without the original. Include:
 - what the user wants (their goals and requests; quote important wording)
@@ -1420,6 +1439,7 @@ class Agent:
         self._hedged = False   # one-shot: told once that nobody will answer its question
         self._evidence = False  # one-shot: the second look (EVIDENCE_PASS) at most once
         self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
+        self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
         cap = self._step_cap()
         try:
             while True:
@@ -1533,7 +1553,7 @@ class Agent:
                             "(purr: your tool call came out as plain text, so it did not run. "
                             "Call the tool again.)"})
                         continue
-                    if (self._final_check(reply["text"]) or self._evidence_pass() or self._learn_check()
+                    if (self._final_check(reply["text"]) or self._evidence_pass() or self._review() or self._learn_check()
                             or self._hedge(reply["text"])):
                         continue
                     break
@@ -1565,7 +1585,7 @@ class Agent:
                 if all(c["name"] == "todo" for c in reply["tool_calls"]):
                     todo_only += 1
                     if reply["text"] and not self.tools.todos_left:
-                        if (self._final_check(reply["text"]) or self._evidence_pass() or self._learn_check()
+                        if (self._final_check(reply["text"]) or self._evidence_pass() or self._review() or self._learn_check()
                                 or self._hedge(reply["text"])):
                             continue
                         break  # it answered and everything is done: that's the end
@@ -1624,6 +1644,45 @@ class Agent:
             return ""
         names = [os.path.relpath(p, self.root) if self.root in p.parents else str(p) for p in new]
         return SCRATCH_NOTE.format(files=", ".join(sorted(names)[:15]) + (" …" if len(names) > 15 else ""))
+
+    def _change_diff(self, budget):
+        """The files this run changed, as a unified diff, at most `budget` characters."""
+        parts = []
+        for path, before in self.tools.session_changes().items():
+            try:
+                after = path.read_text(errors="replace") if path.exists() else ""
+            except OSError:
+                continue
+            name = os.path.relpath(path, self.root) if self.root in path.parents else str(path)
+            diff = "".join(difflib.unified_diff((before or "").splitlines(True), after.splitlines(True),
+                                                f"a/{name}", f"b/{name}", n=2))
+            parts.append(diff[:max(2000, budget // 4)])
+        return "".join(parts)[:budget]
+
+    def _review(self):
+        """Once, before a one-shot run finishes: a call that sees only the request and the diff.
+        Returns True when it found something to look at (the turn goes on)."""
+        if (not self.one_shot or self.helper or self.mode != "code" or getattr(self, "_reviewed", True)
+                or not self.config.get("review", True)):
+            return False
+        self._reviewed = True
+        budget = min(30_000, self.limits.context)  # characters: well inside even a 32k model
+        diff = self._change_diff(budget)
+        if not diff.strip():
+            return False
+        self.view.note("♡ a second reader compares the request with the changes")
+        try:
+            reply = self._call([{"role": "user", "content": REVIEW.format(
+                request=_ends(getattr(self, "_request", ""), 3000, 1000), diff=diff)}], tools=False, quiet=True)
+        except ApiError:
+            return False
+        self._count(reply.get("usage"))
+        findings = (reply.get("text") or "").strip()
+        if not findings or "ALL MET" in findings[:200]:
+            return False
+        self.tools.repairs.append("second reader found unmet requirements -> sent back to check")
+        self.messages.append({"role": "user", "content": REVIEW_NOTE.format(findings=findings[:3000])})
+        return True
 
     def _evidence_pass(self):
         """After the check, a one-shot run that wants to stop with more than half its time left gets

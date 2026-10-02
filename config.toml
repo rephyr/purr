@@ -13,6 +13,9 @@ co_author_github = "purr-harness"
 final_check = true
 # ...and runs the project's tests itself for that check, so the model sees the real result
 final_check_tests = true
+# one-shot runs (purr -p, benchmarks): before finishing, one call that sees only the request and the
+# diff lists what doesn't match the request (the model that wrote it reads its own assumptions back)
+review = true
 # After every edit: a syntax check and ruff's bug checks (undefined names, ...), and a guard
 # against rewrites that would delete code ("# ... rest unchanged").
 code_checks = true
