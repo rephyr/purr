@@ -50,8 +50,7 @@ TOOL_LOOK = {
     "edit_file": ("✎", "edit", PINK), "write_file": ("✎", "write", PINK),
     "run": ("❯", "run", CYAN), "task": ("✦", "helper", PEACH),
     # purr's MCP servers (servers/): finding your way around, and real API docs
-    "project_overview": ("⌂", "overview", MINT), "code_map": ("⌂", "map", MINT), "outline": ("⌂", "outline", MINT),
-    "find_symbol": ("⌂", "find", MINT), "related_files": ("⌂", "related", MINT),
+    "project_overview": ("⌂", "overview", MINT), "outline": ("⌂", "outline", MINT), "find_symbol": ("⌂", "find", MINT),
     "godot_class": ("✧", "godot", PEACH), "python_api": ("✧", "api", PEACH),
 }
 JUNK = (".pyc", ".o", ".so", ".class", ".import", ".uid")  # never worth attaching

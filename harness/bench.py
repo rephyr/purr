@@ -4,6 +4,7 @@
     purr bench -m qwen3-coder-32k      straight away, with this model (comma-separate more)
     purr bench -t rename,duration      only these tasks
     purr bench --level hard            only the hard tasks (or easy)
+    purr bench --you                   do the tasks yourself; your row joins the latest results
     purr bench --harness purr          only purr (or only opencode)
     purr bench --runs 3                every task three times (models aren't the same twice)
     purr bench --vague --harness purr,purr+refine,opencode
@@ -198,12 +199,15 @@ class BenchView:
     def activity(self, what, detail=""): pass
 
 
-def run_purr(config, model, task, work, log_dir, timeout, refine=False, final_check=True, extras=True):
-    name = "purr+refine" if refine else "purr-bare" if not extras else "purr" if final_check else "purr-nocheck"
+def run_purr(config, model, task, work, log_dir, timeout, refine=False, final_check=True, extras=True, mcp=True):
+    name = ("purr+refine" if refine else "purr-bare" if not extras else "purr-nomcp" if not mcp
+            else "purr" if final_check else "purr-nocheck")
     r = blank(name, model, task)
     # purr-bare: none of purr's helpers (final check, its test run, code checks, reminders)
     # purr and purr+refine use purr as it is (training wheels by model size); the others switch
     # things off on purpose
+    if not extras or not mcp:  # purr-nomcp: purr as it is, minus the MCP servers (and the overview)
+        config = {k: v for k, v in config.items() if k != "mcp"}
     if not extras:
         config = {**config, "final_check": False, "final_check_tests": False, "code_checks": False,
                   "reminders": False, "edge_cases": False, "read_before_edit": False}
@@ -412,7 +416,8 @@ def run_opencode(config, model, task, work, log_dir, timeout):
 HARNESSES = {"purr": run_purr, "opencode": run_opencode,
              "purr+refine": lambda *a: run_purr(*a, refine=True),
              "purr-nocheck": lambda *a: run_purr(*a, final_check=False),
-             "purr-bare": lambda *a: run_purr(*a, extras=False)}
+             "purr-bare": lambda *a: run_purr(*a, extras=False),
+             "purr-nomcp": lambda *a: run_purr(*a, mcp=False)}
 
 
 def warm_up(config, model):
@@ -555,7 +560,8 @@ def print_table(summary):
     ui.out("")
     for n, row in enumerate(rows):
         cells = [c.ljust(w) for c, w in zip(row, widths)]
-        colour = ui.LILAC if n == 0 else (ui.PINK if row[1].startswith("purr") else ui.RESET)
+        colour = (ui.LILAC if n == 0 else ui.MINT if row[1] == "human"
+                  else ui.PINK if row[1].startswith("purr") else ui.RESET)
         ui.out("  " + colour + "  ".join(cells) + ui.RESET)
 
 
@@ -729,6 +735,8 @@ def parse(argv):
     ap.add_argument("--watch", action="store_true",
                     help="show what each run is doing and thinking, live (in the window: w toggles it)")
     ap.add_argument("--plain", action="store_true", help="print lines instead of the full-screen window")
+    ap.add_argument("--you", action="store_true", help="do the tasks yourself, for fun (your row joins the latest results)")
+    ap.add_argument("--new", action="store_true", help="with --you: a results folder of your own")
     return ap.parse_args(argv)
 
 
@@ -746,6 +754,9 @@ def new_out_dir():
 
 def main(argv, config, window=False):
     args = parse(argv)
+    if args.you:  # you play: no models, nothing on the GPU
+        from .play import play
+        return play(args)
     if window and not args.plain:
         from tui.bench_app import BenchApp
         return BenchApp(config, args).run() or 0

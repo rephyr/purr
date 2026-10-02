@@ -338,8 +338,8 @@ ACTIVITY = {
     "edit_file": "building", "write_file": "building",
     "run": "running", "todo": None, "refining": "thinking",
     # tools from purr's MCP servers (servers/)
-    "project_overview": "exploring", "code_map": "exploring", "outline": "exploring", "find_symbol": "exploring",
-    "related_files": "exploring", "godot_class": "exploring", "python_api": "exploring",
+    "project_overview": "exploring", "outline": "exploring", "find_symbol": "exploring",
+    "godot_class": "exploring", "python_api": "exploring",
 }
 
 

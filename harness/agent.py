@@ -265,15 +265,12 @@ TASK_LINE = ("\n- task: send a helper to explore many files or the web and repor
              "so this chat stays small.")
 
 
-MCP_HINTS = [  # what to say about the tools purr's own MCP servers add (servers/)
-    ({"outline", "code_map", "find_symbol", "related_files"},
-     "- {names}: find your way around the code. Prefer outline, then read_file with offset/limit, over "
-     "reading whole files, and use find_symbol before changing something other code uses."),
-    ({"godot_class", "python_api"},
-     "- {names}: the real API for this project's versions. Check a method there before using it if "
-     "you aren't sure it exists."),
+MCP_HINTS = [  # one short line each: the prompt goes with every request
+    ({"outline", "find_symbol"}, "- {names}: outline a file, then read just the lines you need."),
+    ({"godot_class", "python_api"}, "- {names}: the real API here; check before using one you aren't sure of."),
 ]
-OVERVIEW_CHARS = 2000
+OVERVIEW_CHARS = 2000      # the overview in the system prompt, for big-context models
+OVERVIEW_CHARS_SMALL = 1200  # and for 64k-or-less ones (about 300 tokens)
 
 
 def _mcp_lines(names):
@@ -312,7 +309,7 @@ def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=()
         text = text[:cut] + "\n" + extra + text[cut:]
     if overview:
         text += ("\n\nProject overview (purr made it from the files; when they disagree, the files win):\n"
-                 + overview[:OVERVIEW_CHARS])
+                 + overview)
     text += _notes(GLOBAL_NOTES, "The user's notes for every project")
     for name in NOTES_FILES:
         text += _notes(Path(root) / name, f"Project notes ({name})")
@@ -986,12 +983,22 @@ class Agent:
         if self._overview is None:
             on = self.config.get("overview_in_prompt", True) and not self.helper
             self._overview = self.mcp.run_once("project_overview") if on else ""
-        return self._overview
+        cap = OVERVIEW_CHARS_SMALL if self.model.get("context", 0) <= 65_536 else OVERVIEW_CHARS
+        if len(self._overview) <= cap:
+            return self._overview
+        cut = self._overview.rfind("\n", 0, cap)
+        return self._overview[:cut if cut > 0 else cap] + "\n…"  # whole lines where it can
+
+    @property
+    def mcp_taken(self):
+        """Names an MCP tool may not use: purr's own tools, and project_overview once its answer is
+        in the system prompt (no need to send it twice)."""
+        return TOOL_NAMES | ({"project_overview"} if self.project_overview() else set())
 
     def _system(self):
         tools = MODES[self.mode][0] != "none"
         names = [s["function"]["name"] for s in self.mcp.schemas(read_only=self.helper or self.mode == "ask",
-                                                                 taken=TOOL_NAMES)] if tools else []
+                                                                 taken=self.mcp_taken)] if tools else []
         text = system_prompt(self.root, self.model["id"], self.model["provider"], self.hidden_tools,
                              self.mode, mcp_tools=names, overview=self.project_overview() if tools else "")
         return text + HELPER if self.helper else text
@@ -1052,7 +1059,7 @@ class Agent:
         if tools:
             read_only = self.helper or self.mode == "ask"
             body["tools"] = schemas(read_only=read_only, read_lines=self.limits.read_lines,
-                                    hidden=self.hidden_tools) + self.mcp.schemas(read_only, taken=TOOL_NAMES)
+                                    hidden=self.hidden_tools) + self.mcp.schemas(read_only, taken=self.mcp_taken)
         body.update(self.provider.get("body", {}))  # e.g. which OpenRouter hosts may answer
         body.update(self.model.get("body", {}))
         if self.mode == "create" and messages is None:  # a little more surprising

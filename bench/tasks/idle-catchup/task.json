@@ -1,0 +1,4 @@
+{"kind": "exact idle catch-up: event-driven time, ties, floats", "level": "hard",
+ "prompt": "pawtime's idle math is off. Catching up after the computer sleeps (one big advance()) gives different coins than playing live (many small ones), buffs seem to stay on too long, errands finish late, and loading a save loses progress. README.md has the rules. Make Pet.advance follow them exactly, so any split of the same time gives exactly the same coins, carry, food, mood, errands and events, and make save()/Pet.load() carry on exactly where they left off. Keep the public API. tests/test_pet.py has a failing test that shows the catch-up problem; run the tests at the end.",
+ "vague": "catch-up after sleep gives the wrong coins, fix the idle math",
+ "run": ["python3", "demo.py"]}

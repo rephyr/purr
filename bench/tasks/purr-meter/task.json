@@ -2,5 +2,5 @@
  "kind": "bug fix, 1 file",
  "level": "easy",
  "prompt": "The test fails. Find out why and fix it, then run the tests to check.",
- "vague": "tests broken pls fix"
-}
+ "vague": "tests broken pls fix",
+ "run": ["python3", "purr_meter.py"]}

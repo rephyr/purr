@@ -1,0 +1,14 @@
+{
+  "floor": 20,
+  "drain_per_second": {"food": 0.05, "mood": 0.02},
+  "buffs": [
+    {"id": "full_tummy", "stat": "food", "above": 60, "x": 1.5},
+    {"id": "happy", "stat": "mood", "above": 70, "x": 1.2}
+  ],
+  "income_per_second": 0.1,
+  "errands": {
+    "fetch_acorn": {"seconds": 45, "reward": 7},
+    "chase_butterfly": {"seconds": 120, "reward": 20},
+    "nap_in_sunbeam": {"seconds": 300, "reward": 33}
+  }
+}

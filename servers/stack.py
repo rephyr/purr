@@ -135,11 +135,10 @@ def _load(name, tag, local):
     return ET.parse(path).getroot() if path else None
 
 
-@server.tool("A Godot class from the Godot installed here: what it inherits, its properties, methods with "
-             "exact signatures, and signals. Give member to see one method/property/signal in detail "
-             "(it also looks in the parent classes). Use it instead of guessing Godot APIs.",
-             {"name": {"type": "string", "description": "the class, like CharacterBody2D or Tween"},
-              "member": {"type": "string", "description": "optional: one method, property or signal"}},
+@server.tool("The installed Godot's real API for a class: methods, properties, signals. member= for one "
+             "in detail. Check before using an API you aren't sure of.",
+             {"name": {"type": "string", "description": "class, like CharacterBody2D"},
+              "member": {"type": "string", "description": "optional method/property/signal"}},
              required=["name"], when=is_godot)
 def godot_class(name, member=""):
     exe, tag = godot_version()
@@ -298,10 +297,9 @@ def project_python():
     return shutil.which("python3") or sys.executable
 
 
-@server.tool("A Python library's function, class or module as installed in this project's environment "
-             "(its .venv if there is one): exact signature, docs and members, plus the package version. "
-             "Use it instead of guessing a library's API.",
-             {"name": {"type": "string", "description": "dotted name, like textual.widgets.TextArea or requests.get"}},
+@server.tool("A Python library's real signature and docs, as installed in this project. Check before "
+             "using an API you aren't sure of.",
+             {"name": {"type": "string", "description": "dotted name, like requests.get"}},
              required=["name"], when=is_python)
 def python_api(name):
     name = name.strip().removesuffix("()")

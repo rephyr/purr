@@ -3,6 +3,7 @@
 Run: python3 -m unittest discover tests
 """
 
+import json
 import os
 import shutil
 import sys
@@ -121,6 +122,27 @@ class OutsideTest(unittest.TestCase):
         work.mkdir()
         garbled = str(work.parent / "runs_that_dont_exist" / "work" / "menu.py")
         self.assertEqual(bench.outside({"path": garbled}, work), "made up")
+
+
+
+class PlayTest(unittest.TestCase):
+    """purr bench --you: you do a task, the hidden tests grade it, your row joins the table."""
+
+    def test_you_get_graded_and_join_the_table(self):
+        import io
+        from unittest import mock
+
+        from harness import bench, play
+        state = Path(tempfile.mkdtemp())
+        args = bench.parse(["--you", "-t", "idle-catchup", "--new"])
+        answers = iter(["n", ""])  # open it (in a stand-in editor), then done right away
+        with mock.patch.object(play, "BENCH_DIR", state), mock.patch.object(bench, "BENCH_DIR", state), \
+                mock.patch("builtins.input", lambda prompt="": next(answers)), \
+                mock.patch.dict(os.environ, {"EDITOR": "true"}), mock.patch("sys.stdout", io.StringIO()) as out:
+            self.assertEqual(play.play(args), 0)
+        results = json.loads(next(state.glob("*/results.json")).read_text())
+        self.assertEqual([(r["model"], r["harness"], r["solved"]) for r in results], [("you", "human", False)])
+        self.assertIn("crumbs add up to whole coins", out.getvalue())  # the failed hidden tests, by name
 
 
 if __name__ == "__main__":
