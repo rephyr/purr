@@ -301,6 +301,14 @@ you missed, and your row ("you / human") is added at the end of the latest bench
 task, **idle-catchup** (from desk-pets' idle core), is aimed at top models: exact catch-up where
 one big step must equal any split, ties at a buff's line, and float crumbs that add up to coins.
 
+## Published results
+
+- [`benchmarks/terminal-bench/`](benchmarks/terminal-bench/): Terminal-Bench, the official numbers
+  (full runs next to other harnesses on the same model, and cheap quick runs between versions).
+- [`benchmarks/purr-bench/`](benchmarks/purr-bench/): `purr bench` on purr's own small tasks.
+  **Not official**: just for debugging, iterating on and improving the harness. File a run with
+  `purr bench --publish` (the latest, or a folder).
+
 ## Real benchmarks: Terminal-Bench
 
 `tbench/` plugs purr into [Harbor](https://www.harborframework.com), the runner behind
@@ -315,6 +323,11 @@ and model details) and runs `purr -p <task> --yes` once.
     tbench/run.sh -l 10 -n 4                        # 10 tasks, 4 at a time (API models)
     tbench/run.sh -l 10 --ak mcp=false              # without purr's MCP servers
     PURR_MODEL=openrouter/<model id> tbench/run.sh  # default: DeepSeek V4.1 Flash on OpenRouter
+
+Each task's own time limit is passed on (less 10%, `purr --time-limit`): purr tells the model up
+front and reminds it at half and four-fifths time to get a working version in place, since an
+unfinished deliverable scores nothing. `--ak edge_cases=true` turns on the edge-case step of the
+final check, which purr leaves off for API models, to measure whether it helps here.
 
 `run.sh` hands purr's saved OpenRouter key to Harbor and passes everything else to `harbor run`.
 Results land in `~/.local/state/purr/tbench/`, with purr's own log (`agent/purr.txt`) and saved

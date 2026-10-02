@@ -220,6 +220,7 @@ def run_purr(config, model, task, work, log_dir, timeout, refine=False, final_ch
         r["error"] = e.args[0]
         return r
     agent.tools.trust_all = True
+    agent.time_limit = 0.9 * timeout  # like Terminal-Bench: purr hears its limit (less 10%) and gets reminders
     agent.log_path = log_dir / "purr-session.json"
     timer = threading.Timer(timeout, lambda: (r.__setitem__("timeout", True), setattr(agent, "stop_flag", True)))
     timer.start()
@@ -621,6 +622,11 @@ def run_all(config, models, tasks, harnesses, runs, timeout, out_dir, events):
     global live
     live = lambda kind, text: events("live", {"kind": kind, "text": text})  # noqa: E731
     total = len(models) * len(tasks) * len(harnesses) * runs
+    from . import full_version
+    (out_dir / "meta.json").write_text(json.dumps({  # what this run was, for --publish
+        "purr": full_version(), "date": datetime.date.today().isoformat(), "models": models,
+        "harnesses": harnesses, "tasks": [t["name"] for t in tasks], "vague": any(t.get("is_vague") for t in tasks),
+        "runs": runs, "timeout": timeout}, indent=1))
     results, n = [], 0
     for model in models:  # model by model, so a local model only loads once
         if STOP.is_set():
@@ -735,6 +741,8 @@ def parse(argv):
     ap.add_argument("--watch", action="store_true",
                     help="show what each run is doing and thinking, live (in the window: w toggles it)")
     ap.add_argument("--plain", action="store_true", help="print lines instead of the full-screen window")
+    ap.add_argument("--publish", nargs="?", const="latest", metavar="FOLDER",
+                    help="file a finished run (default: the latest) under benchmarks/purr-bench/ in the repo")
     ap.add_argument("--you", action="store_true", help="do the tasks yourself, for fun (your row joins the latest results)")
     ap.add_argument("--new", action="store_true", help="with --you: a results folder of your own")
     return ap.parse_args(argv)
@@ -752,8 +760,76 @@ def new_out_dir():
     return out
 
 
+PUBLISHED = Path(__file__).resolve().parent.parent / "benchmarks" / "purr-bench"
+
+NOTE = """> **Not an official benchmark.** These are purr's own small tasks (`bench/tasks/`), run with
+> `purr bench`, mostly on local models and often just once each, to debug, iterate on and improve
+> the harness. They're nowhere near official numbers: a task or two either way is noise, and the
+> tasks were written alongside purr. For official, comparable numbers see
+> [Terminal-Bench](../terminal-bench/)."""
+
+
+def publish(folder="latest"):
+    """purr bench --publish [FOLDER]: copy a finished run's results into the repo and rebuild the
+    README there (every published run, newest first)."""
+    if folder == "latest":
+        runs = sorted(BENCH_DIR.glob("*/results.json"), key=lambda p: p.stat().st_mtime) if BENCH_DIR.exists() else []
+        if not runs:
+            ui.say(ui.ROSE, "  no bench runs to publish")
+            return 1
+        out = runs[-1].parent
+    else:
+        out = Path(folder).expanduser().resolve()
+    try:
+        results = json.loads((out / "results.json").read_text())
+    except (OSError, ValueError):
+        ui.say(ui.ROSE, f"  no results.json in {out}")
+        return 1
+    meta = {}
+    if (out / "meta.json").exists():
+        meta = json.loads((out / "meta.json").read_text())
+    meta.setdefault("purr", "before 0.3")  # runs from before meta.json existed
+    meta.setdefault("date", out.name[:10])
+    meta.setdefault("tasks", sorted({r["task"] for r in results}))
+    if "vague" not in meta:  # older runs: a vague prompt is graded on fewer tests (no spec tests)
+        specs = {t["name"]: t for t in load_tasks()}
+        meta["vague"] = any(r["task"] in specs and r["total"] == specs[r["task"]]["expected_vague"]
+                            != specs[r["task"]]["expected"] for r in results)
+    keep = [{k: v for k, v in r.items() if k != "final_text"} for r in results]  # the rows, minus the long texts
+    (PUBLISHED / "results").mkdir(parents=True, exist_ok=True)
+    (PUBLISHED / "results" / f"{out.name}.json").write_text(
+        json.dumps({"meta": meta, "summary": summarise(results), "results": keep}, indent=1) + "\n")
+    published = []
+    for f in sorted((PUBLISHED / "results").glob("*.json"), reverse=True):
+        try:
+            published.append(json.loads(f.read_text()))
+        except (OSError, ValueError):
+            continue
+    lines = ["# purr bench", "", NOTE, "", "How to read it: each run is one `purr bench` call. *prompts* says whether the",
+             "tasks got their full prompt or the short, vague one. *solved* counts runs where every hidden test",
+             "passed; *tests* is the share of hidden tests passed. `human` rows are people playing",
+             "`purr bench --you`.", ""]
+    for p in published:
+        m = p["meta"]
+        prompts = "vague" if m.get("vague") else "full"
+        lines += [f"### {m['date']} · purr {m['purr']} · {len(m['tasks'])} tasks, {prompts} prompts"
+                  + (f", {m['runs']} runs each" if m.get("runs", 1) > 1 else ""), "",
+                  "| model | harness | solved | tests | avg time | tokens | tool errors | hallucinations |",
+                  "|---|---|---|---|---|---|---|---|"]
+        for s in p["summary"]:
+            lines.append(f"| {s['model']} | {s['harness']} | {s['solved']}/{s['runs']} | "
+                         f"{100 * s['passed'] // max(s['total'], 1)}% | {ui.duration(s['seconds'] / max(s['runs'], 1))} | "
+                         f"{ui.short(s['out'])} | {s['tool_errors']} | {s['hallucinations']} |")
+        lines += ["", "Tasks: " + ", ".join(m["tasks"]), ""]
+    (PUBLISHED / "README.md").write_text("\n".join(lines))
+    ui.say(ui.MINT, f"  published {out.name} (purr {meta['purr']}) → {PUBLISHED / 'README.md'}")
+    return 0
+
+
 def main(argv, config, window=False):
     args = parse(argv)
+    if args.publish:
+        return publish(args.publish)
     if args.you:  # you play: no models, nothing on the GPU
         from .play import play
         return play(args)

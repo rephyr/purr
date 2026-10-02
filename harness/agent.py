@@ -186,6 +186,18 @@ MODES = {
     "create": ("none", "brainstorming and writing, no tools, a bit more random"),
 }
 
+TIME_INTRO = """(purr: you have about {minutes} minutes for this. Get a working version of what's \
+asked for in place early, then improve it: when the time is up, only what's in the files counts.)"""
+
+TIME_NOTES = [  # (share of the time gone, what to say then)
+    (0.5, "(purr: about {left} minutes left. If what the task asks for doesn't exist or doesn't work "
+          "yet, make a working version now; polish only after that.)"),
+    (0.8, "(purr: only about {left} minutes left. Stop exploring: make sure what the task asks for "
+          "is in place and works, and check it.)"),
+]
+
+REASONING_KEEP = 2  # past replies whose thinking goes back to providers that want it (echo_reasoning)
+
 CUT_NUDGE = """(purr: your reply hit the output limit and was cut off, so nothing in it happened. \
 Carry on from where you were, but don't write code or long plans in your reply: put code straight \
 into the files with write_file or edit_file (a long file in a few parts), and keep your reply short.)"""
@@ -615,6 +627,8 @@ class Agent:
         self.mode = "code"       # code, ask, learn, pair, plan, chat or create (MODES)
         self.mode_model = {}     # mode -> the model it had last (switch_mode)
         self.router = None       # /model free: picks free models and moves on when one is maxed out
+        self.time_limit = None   # seconds for a turn (purr --time-limit): reminders at half and four fifths
+        self._echo_all = False   # True once a provider refused trimmed thinking (_for_provider)
         # /refine: "auto" rewrites a short first message into a clear task (you approve it),
         # "on" every message, "off" none. purr bench measured +2 solved hard tasks from vague asks.
         # Unset, it follows the model (auto for local models, off for API ones); /refine or
@@ -1076,14 +1090,38 @@ class Agent:
 
     STANDARD = {"role", "content", "tool_calls", "tool_call_id", "name"}
 
+    def _time_note(self):
+        """With a time limit (purr --time-limit, benchmarks): say how much is left at half time and
+        at four fifths, once each. A small model will happily explore until the clock runs out."""
+        if not self.time_limit or self.helper:
+            return
+        gone = time.monotonic() - self._started
+        for share, text in TIME_NOTES:
+            if gone >= share * self.time_limit and share not in self._time_said:
+                self._time_said.add(share)
+                left = max(1, round((self.time_limit - gone) / 60))
+                self.messages.append({"role": "user", "content": text.format(left=left)})
+                self.view.note(f"⏱ about {left} min left", "warn")
+
     def _for_provider(self, msgs):
         """The chat with only the fields this provider understands: after the free router switches
         mid-chat, the history holds another provider's thinking (reasoning / reasoning_content),
         and strict APIs refuse fields they don't know."""
-        keep = self.STANDARD | ({self.provider["echo_reasoning"]} if self.provider.get("echo_reasoning") else set())
-        if all(k in keep for m in msgs for k in m):
+        echo = self.provider.get("echo_reasoning")
+        keep = self.STANDARD | ({echo} if echo else set())
+        # the thinking of older replies goes too: only the last few keep theirs. A long turn
+        # otherwise sends every step's thinking back (170k characters on one Terminal-Bench task,
+        # against 4k of replies), filling the context ~40x faster. A provider that refuses this
+        # (see _call) gets all of it again.
+        recent = None  # None: every reply keeps its thinking
+        if echo and not self._echo_all:
+            withs = [i for i, m in enumerate(msgs) if m.get(echo)]
+            if len(withs) > REASONING_KEEP:
+                recent = set(withs[-REASONING_KEEP:])
+        if recent is None and all(k in keep for m in msgs for k in m):
             return msgs
-        return [{k: v for k, v in m.items() if k in keep} for m in msgs]
+        return [{k: v for k, v in m.items() if k in keep and (recent is None or k != echo or i in recent)}
+                for i, m in enumerate(msgs)]
 
     def _next_free(self, err):
         """The free router's model just got maxed out: rest it and move to the next one.
@@ -1117,6 +1155,10 @@ class Agent:
             try:
                 return stream_chat(self.provider["base_url"], self.key, body, on_text, on_think, self.stopping)
             except ApiError as e:
+                if not self._echo_all and getattr(e, "status", None) in (400, 422) and "reason" in str(e).lower():
+                    self._echo_all = True  # it wants every reply's thinking back after all
+                    self.tools.repairs.append("provider wanted all the thinking back -> sent it all")
+                    continue
                 if self._next_free(e):
                     continue
                 if not e.retry or attempt == len(RETRY_WAITS):
@@ -1167,7 +1209,8 @@ class Agent:
         if self.last_usage:
             used = self.last_usage.get("prompt_tokens", 0) + self.last_usage.get("completion_tokens", 0)
         # Ollama only counts the tokens it didn't have cached, so also guess (~4 characters a token)
-        guess = len(json.dumps(self.messages)) // 4 + 1500
+        sent = self._for_provider(self.messages) if getattr(self, "provider", None) else self.messages
+        guess = len(json.dumps(sent)) // 4 + 1500  # what's sent: old thinking is trimmed off
         return max(used, guess)
 
     # ---- one turn: your message -> as many model calls + tools as it takes ----
@@ -1188,6 +1231,10 @@ class Agent:
         open_todos = self.learn_todos() if self.mode == "learn" and not self.helper else []
         if open_todos:  # small models lose track of what they left for the user: say it every time
             content += f"\n\n(purr: {TODO_YOU} still in the code: {', '.join(open_todos)})"
+        self._started = time.monotonic()
+        self._time_said = set()
+        if self.time_limit and not self.helper:
+            content += "\n\n" + TIME_INTRO.format(minutes=max(1, round(self.time_limit / 60)))
         self.messages.append({"role": "user", "content": content})
         self.tools.begin_turn()
         self._learn_nudged = bool(open_todos)  # pieces already out there: no need to leave new ones
@@ -1224,6 +1271,7 @@ class Agent:
                         # small models lose the goal on long tasks: say it again now and then
                         self.messages.append({"role": "user", "content":
                             f"(purr: a reminder of what the user asked, so you stay on track: {text[:800]})"})
+                    self._time_note()
                     self.view.activity("thinking")
                     reply = self._call()
                 except ApiError as e:

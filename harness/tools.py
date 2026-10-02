@@ -559,6 +559,12 @@ class Tools:
         output, code = run_shell(command, self.root, timeout)
         for line in output.splitlines()[-4:]:
             self.view.note(line[:160])
+        if code == -1 and output.startswith("timed out"):
+            # builds and training runs often need longer than the default: say how, or the model
+            # tends to give up on the step or retry it the same way
+            output += (f"\n(purr: it was stopped after {timeout}s. If it needs longer, run it again with "
+                       "a bigger timeout (run's timeout argument, in seconds), or start it in the background "
+                       "with its output in a log (nohup <command> > run.log 2>&1 &) and check run.log.)")
         return f"{output}\n[exit code {code}]"
 
     def t_todo(self, items):

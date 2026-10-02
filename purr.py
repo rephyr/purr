@@ -191,6 +191,8 @@ def main():
                     help="carry on the last chat in this folder")
     ap.add_argument("--yes", action="store_true", help="allow edits and commands without asking")
     ap.add_argument("--key", metavar="PROVIDER", help="save an API key for a provider (asks for it, hidden)")
+    ap.add_argument("--time-limit", type=float, metavar="SECONDS",
+                    help="how long a task may take: purr says so, and reminds the model at half and 4/5 time")
     args = ap.parse_args()
     if args.key:
         return save_key(args.key, tomllib.loads((HERE / "config.toml").read_text()))
@@ -229,6 +231,7 @@ def main():
         ui.say(ui.ROSE, e.args[0])
         return 1
     agent.tools.trust_all = args.yes
+    agent.time_limit = args.time_limit
     if args.resume:
         sessions = list_sessions(agent.root)
         if sessions:

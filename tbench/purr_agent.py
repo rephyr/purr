@@ -16,13 +16,15 @@ Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the 
     top_p=0.95
     max_tokens=65536      the most a reply may write
     max_steps=500         model calls per turn before purr would stop
+    edge_cases=true       the final check also tries edge cases (purr leaves it off for API models)
+    time_limit=900        seconds purr is told it has (default: the task's own limit, less 10%)
 """
 
-import subprocess
 
 import json
 import shlex
 import shutil
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -32,25 +34,8 @@ from harbor.agents.model_connection import ModelConnectionSpec
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-try:  # purr's version, for the results (agent_info.version)
-    import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from harness import VERSION as PURR_VERSION
-except ImportError:
-    PURR_VERSION = "?"
-
-
-def purr_version():
-    """"0.3.0+abc1234" (the commit), with "-dirty" if purr has uncommitted changes."""
-    root = Path(__file__).resolve().parent.parent
-    try:
-        commit = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-                                capture_output=True, text=True, timeout=10).stdout.strip()
-        dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
-                               capture_output=True, text=True, timeout=10).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return PURR_VERSION
-    return f"{PURR_VERSION}+{commit}{'-dirty' if dirty else ''}" if commit else PURR_VERSION
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # purr's own code, for its version
+from harness import full_version as purr_version  # noqa: E402
 
 PURR = Path(__file__).resolve().parent.parent
 REMOTE = "/opt/purr"
@@ -97,7 +82,7 @@ class PurrAgent(BaseInstalledAgent):
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
 
     def __init__(self, *args, mcp: str | bool = True, hosts: str | None = None, temperature=None,
-                 top_p=None, max_tokens=None, max_steps=200, **kwargs):
+                 top_p=None, max_tokens=None, max_steps=200, edge_cases=None, time_limit=None, **kwargs):
         kwargs.setdefault("version", purr_version())
         super().__init__(*args, **kwargs)
         self.use_mcp = str(mcp).lower() not in ("false", "0", "no", "off")
@@ -105,6 +90,8 @@ class PurrAgent(BaseInstalledAgent):
         self.sampling = {k: float(v) for k, v in (("temperature", temperature), ("top_p", top_p)) if v is not None}
         self.max_tokens = int(max_tokens) if max_tokens else None
         self.max_steps = int(max_steps)
+        self.edge_cases = None if edge_cases is None else str(edge_cases).lower() in ("true", "1", "yes", "on")
+        self.time_limit = float(time_limit) if time_limit else None
 
     @staticmethod
     def name() -> str:
@@ -137,6 +124,8 @@ class PurrAgent(BaseInstalledAgent):
             prov["body"] = {"provider": {"only": self.hosts, "allow_fallbacks": False}}
         config = {k: v for k, v in mine.items()
                   if k not in ("models", "providers", "mode_models", "plan", "free", "mcp", "default_model")}
+        if self.edge_cases is not None:
+            config["edge_cases"] = self.edge_cases
         config.update({"default_model": "bench", "max_steps": self.max_steps, "providers": {provider: prov},
                        "models": {"bench": spec}})
         if self.use_mcp:
@@ -170,6 +159,22 @@ class PurrAgent(BaseInstalledAgent):
             f"ln -sf \"$(/opt/uv/uv python find 3.12)\" {PY}; chmod -R a+rX {REMOTE} /opt/uv; "
             f"{PY} -c 'import sys, tomllib; print(sys.version)'"))
 
+    def task_time_limit(self):
+        """The task's own agent time limit in seconds (its task.toml, times the job's multiplier), less
+        10% so purr wraps up before it's stopped. None if it can't be found: then no reminders."""
+        if self.time_limit:
+            return self.time_limit
+        try:
+            trial = json.loads((self.logs_dir.parent / "config.json").read_text())
+            job = json.loads((self.logs_dir.parent.parent / "config.json").read_text())
+            name = Path(trial["task"]["path"]).name
+            found = sorted(Path.home().glob(f".cache/harbor/tasks/*/{name}/task.toml"),
+                           key=lambda p: p.stat().st_mtime)
+            seconds = tomllib.loads(found[-1].read_text())["agent"]["timeout_sec"]
+            return 0.9 * seconds * float(job.get("agent_timeout_multiplier") or 1.0)
+        except (OSError, ValueError, KeyError, IndexError, TypeError):
+            return None
+
     @with_prompt_template
     async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
         access = self.model_connection
@@ -179,8 +184,10 @@ class PurrAgent(BaseInstalledAgent):
         if key_env and access.api_key:
             env[key_env] = access.api_key
         env["PURR_STATE"] = "/logs/agent/purr-state"  # its chats land in the trial's logs
+        limit = self.task_time_limit()
+        timed = f"--time-limit {int(limit)} " if limit else ""
         await self.exec_as_agent(environment, command=(
-            f"{PY} {REMOTE}/purr.py \"$PWD\" --plain --yes -p {shlex.quote(instruction)} "
+            f"{PY} {REMOTE}/purr.py \"$PWD\" --plain --yes {timed}-p {shlex.quote(instruction)} "
             "2>&1 </dev/null | stdbuf -oL tee /logs/agent/purr.txt"), env=env)
 
     def populate_context_post_run(self, context: AgentContext) -> None:
