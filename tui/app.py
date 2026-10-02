@@ -38,7 +38,7 @@ MINT = "#96dcaf"
 ROSE = "#f0829b"
 PEACH = "#ffb8c8"  # warnings and "paid": soft peach-pink, not yellow
 TEXT = "#e9dff2"
-VERSION = "0.2.0"
+from harness import VERSION  # noqa: E402
 ATTACHED = re.compile(r'\n\n<file path="[^"]*">\n.*?\n</file>', re.S)
 MENTION_AT_CURSOR = re.compile(r"(?:^|\s)@(\S*)$")
 CYAN = "#8fd8e8"

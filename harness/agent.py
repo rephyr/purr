@@ -1011,6 +1011,8 @@ class Agent:
         self.messages = [{"role": "system", "content": self._system()}]
         self.session_cost = 0.0
         self.session_out = 0
+        self.session_in = 0      # prompt tokens sent, and how many of them were cached
+        self.session_cached = 0
         self.last_usage = None
         self.title = ""
         stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
@@ -1025,7 +1027,8 @@ class Agent:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.log_path.write_text(json.dumps(
             {"model": self.chosen_model, "mode": self.mode, "folder": str(self.root), "title": self.title,
-             "cost": self.session_cost, "out": self.session_out, "messages": self.messages,
+             "cost": self.session_cost, "out": self.session_out, "in": self.session_in,
+             "cached": self.session_cached, "messages": self.messages,
              **({"cut_off_reply": self.cut_off} if getattr(self, "cut_off", None) else {})},
             indent=1, ensure_ascii=False))
 
@@ -1044,6 +1047,7 @@ class Agent:
         self.title = data.get("title", "")
         self.session_cost = data.get("cost", 0.0)
         self.session_out = data.get("out", 0)
+        self.session_in, self.session_cached = data.get("in", 0), data.get("cached", 0)
         self.last_usage = None
         self.log_path = Path(path)
 
@@ -1151,6 +1155,9 @@ class Agent:
         cost = self._price(usage)
         self.session_cost += cost
         self.session_out += usage.get("completion_tokens", 0)
+        self.session_in += usage.get("prompt_tokens", 0)
+        self.session_cached += (usage.get("prompt_cache_hit_tokens")
+                                or (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
         if self.parent:
             self.parent.session_cost += cost
         return cost

@@ -9,9 +9,16 @@ model Harbor picks: `-m openrouter/deepseek/deepseek-v4.1-flash` becomes purr's 
 "openrouter", model id "deepseek/deepseek-v4.1-flash", with the provider settings from purr's
 own config.toml. Then purr does the task in one go (`purr -p ... --yes`, plain mode).
 
-Agent kwargs (harbor run --ak key=value):
-    mcp=false      leave purr's MCP servers (servers/) out, to measure what they're worth
+Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the fair ones:
+    mcp=false             leave purr's MCP servers (servers/) out, to measure what they're worth
+    hosts=deepseek        OpenRouter: only these hosts serve the model, no fallback to others
+    temperature=1.0       sampling, sent with every request
+    top_p=0.95
+    max_tokens=65536      the most a reply may write
+    max_steps=500         model calls per turn before purr would stop
 """
+
+import subprocess
 
 import json
 import shlex
@@ -24,6 +31,26 @@ from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_templat
 from harbor.agents.model_connection import ModelConnectionSpec
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+
+try:  # purr's version, for the results (agent_info.version)
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from harness import VERSION as PURR_VERSION
+except ImportError:
+    PURR_VERSION = "?"
+
+
+def purr_version():
+    """"0.3.0+abc1234" (the commit), with "-dirty" if purr has uncommitted changes."""
+    root = Path(__file__).resolve().parent.parent
+    try:
+        commit = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+        dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+                               capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return PURR_VERSION
+    return f"{PURR_VERSION}+{commit}{'-dirty' if dirty else ''}" if commit else PURR_VERSION
 
 PURR = Path(__file__).resolve().parent.parent
 REMOTE = "/opt/purr"
@@ -69,9 +96,15 @@ class PurrAgent(BaseInstalledAgent):
 
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
 
-    def __init__(self, *args, mcp: str | bool = True, **kwargs):
+    def __init__(self, *args, mcp: str | bool = True, hosts: str | None = None, temperature=None,
+                 top_p=None, max_tokens=None, max_steps=200, **kwargs):
+        kwargs.setdefault("version", purr_version())
         super().__init__(*args, **kwargs)
         self.use_mcp = str(mcp).lower() not in ("false", "0", "no", "off")
+        self.hosts = [h.strip() for h in str(hosts).split(",") if h.strip()] if hosts else []
+        self.sampling = {k: float(v) for k, v in (("temperature", temperature), ("top_p", top_p)) if v is not None}
+        self.max_tokens = int(max_tokens) if max_tokens else None
+        self.max_steps = int(max_steps)
 
     @staticmethod
     def name() -> str:
@@ -79,6 +112,10 @@ class PurrAgent(BaseInstalledAgent):
 
     def get_version_command(self) -> str | None:
         return None
+
+    @property
+    def version(self) -> str | None:
+        return self._version
 
     # ---- the config purr gets in the container ----
 
@@ -94,10 +131,17 @@ class PurrAgent(BaseInstalledAgent):
                       if spec.get("provider") == provider and spec.get("id") == model_id), {})
         known.pop("router", None)
         spec = {"context": 131072, **known, "provider": provider, "id": model_id}
+        body = dict(spec.get("body") or {}, **self.sampling)
+        if self.max_tokens:
+            body["max_tokens"] = self.max_tokens
+        if body:
+            spec["body"] = body
         prov = {k: v for k, v in mine["providers"][provider].items() if k != "opencode_auth"}
+        if self.hosts:  # pinned hosts replace purr's usual "cheapest of these" routing, with no fallback
+            prov["body"] = {"provider": {"only": self.hosts, "allow_fallbacks": False}}
         config = {k: v for k, v in mine.items()
                   if k not in ("models", "providers", "mode_models", "plan", "free", "mcp", "default_model")}
-        config.update({"default_model": "bench", "max_steps": 200, "providers": {provider: prov},
+        config.update({"default_model": "bench", "max_steps": self.max_steps, "providers": {provider: prov},
                        "models": {"bench": spec}})
         if self.use_mcp:
             config["mcp"] = {name: {"command": [PY, f"{{purr}}/servers/{name}.py"]}
@@ -142,7 +186,7 @@ class PurrAgent(BaseInstalledAgent):
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Tokens and cost from purr's saved chat (in the trial's logs)."""
-        cost = out = 0
+        cost = out = tokens_in = cached = 0
         for f in (self.logs_dir / "purr-state" / "sessions").glob("*.json"):
             try:
                 data = json.loads(f.read_text())
@@ -150,5 +194,9 @@ class PurrAgent(BaseInstalledAgent):
                 continue
             cost += data.get("cost") or 0
             out += data.get("out") or 0
+            tokens_in += data.get("in") or 0
+            cached += data.get("cached") or 0
         context.cost_usd = round(cost, 6) if cost else None
         context.n_output_tokens = out or None
+        context.n_input_tokens = tokens_in or None
+        context.n_cache_tokens = cached or None
