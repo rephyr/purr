@@ -359,9 +359,21 @@ def key(r):
     return (r["date"], str(r["purr"]))
 
 
+# options that change how purr works, named in its row: a minimal run isn't purr's usual harness
+VARIANTS = {"minimal": "minimal", "keep_reasoning": "all thinking kept"}
+
+
+def label(r):
+    """The version, and the variant it ran as: 0.4.0+abc (minimal)."""
+    settings = r.get("settings") or {}
+    on = [name for key, name in VARIANTS.items()
+          if str(settings.get(key, "")).lower() not in ("", "false", "0", "no", "off", "none")]
+    return f"{r['purr']} ({', '.join(on)})" if on else str(r["purr"])
+
+
 def row(r, full):
     third = f" {r['pass@k']}% |" if full else ""
-    return (f"| {r['purr']} | {r['date']} | **{r['pass@1']}%** ± {r['stderr']} |{third} {r.get('timeouts', 0)} | "
+    return (f"| {label(r)} | {r['date']} | **{r['pass@1']}%** ± {r['stderr']} |{third} {r.get('timeouts', 0)} | "
             f"{r['errors']}/{r['trials']} | ${r['cost_usd']} | {short(r['tokens_in'])} / {short(r['tokens_cached'])} / "
             f"{short(r['tokens_out'])} | {r['median_agent_minutes']} min |")
 
