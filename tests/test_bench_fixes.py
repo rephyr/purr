@@ -165,6 +165,13 @@ class PromptTest(unittest.TestCase):
         self.assertTrue(short.startswith("You are m, an AI model"))
         self.assertLess(len(short), len(normal) + 400)
 
+    def test_one_shot_runs_list_the_requirements_first(self):
+        short = agent_module.system_prompt("/app", "m", "x", one_shot=True)
+        self.assertIn("requirements in your todo list", short)
+        self.assertIn("all, only, exactly", short)
+        self.assertNotIn("requirements in your todo list", agent_module.system_prompt("/app", "m", "x"))
+        self.assertIn("your requirements list", agent_module.ONE_SHOT_CHECK)
+
     def test_every_mode_reads_instead_of_guessing_a_library(self):
         self.assertIn("how a library behaves", agent_module.system_prompt("/app", "m", "x"))
 
@@ -447,6 +454,105 @@ class CompactFailureTest(unittest.TestCase):
         with mock.patch.object(a, "compact", side_effect=lambda auto=False: tries.append(1)):
             a.turn("go on")
         self.assertEqual(len(tries), 1)  # failed once, then left alone while the chat is short
+
+
+class SecondReaderTest(unittest.TestCase):
+    def run_with_review(self, verdict, **config):
+        a = one_shot()
+        a.config = {**a.config, **config}
+        seen = []
+        replies = iter([reply("", tool=("write_file", {"path": "moves.txt", "content": "e2e4\n"})),
+                        reply("Done."), reply("Done."), reply(verdict), reply("Fixed both moves."), reply("Done.")])
+
+        def fake_call(messages=None, tools=True, quiet=False):
+            seen.append(messages)
+            return next(replies, reply("Done."))
+        a._call = fake_call
+        a.turn("Write all the winning moves to moves.txt, one per line.")
+        return a, seen
+
+    def test_findings_go_back_once(self):
+        a, seen = self.run_with_review('"all the winning moves": only e2e4 is written; g2g4 also wins')
+        review_calls = [m for m in seen if m and "You review a code change" in m[0]["content"]]
+        self.assertEqual(len(review_calls), 1)
+        self.assertIn("+e2e4", review_calls[0][0]["content"])           # the diff
+        self.assertIn("all the winning moves", review_calls[0][0]["content"])  # the request
+        notes = [u for u in users(a) if "second reader" in u]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("g2g4 also wins", notes[0])
+
+    def test_all_met_means_no_note(self):
+        a, _ = self.run_with_review("ALL MET")
+        self.assertFalse(any("second reader" in u for u in users(a)))
+
+    def test_it_can_be_turned_off_and_chats_never_get_it(self):
+        a, seen = self.run_with_review("something", review=False)
+        self.assertFalse(any(m and "You review a code change" in m[0]["content"] for m in seen))
+        b = agent()
+        b.tools.trust_all = True
+        scripted(b, [reply("", tool=("write_file", {"path": "a.txt", "content": "x"})), reply("done"), reply("ok")])
+        b.turn("make a.txt")
+        self.assertFalse(any("second reader" in u for u in users(b)))
+
+
+class RoutineEffortTest(unittest.TestCase):
+    def after(self, tool, model="api", effort="low"):
+        a = agent(model)
+        if effort:
+            a.config = {**a.config, "routine_effort": effort}
+        a.messages += [{"role": "user", "content": "go"},
+                       {"role": "assistant", "content": None, "tool_calls": [
+                           {"id": "c1", "type": "function", "function": {"name": tool, "arguments": "{}"}}]},
+                       {"role": "tool", "tool_call_id": "c1", "content": "..."}]
+        return a._body(None, True)
+
+    def test_less_thinking_only_after_looking_around(self):
+        self.assertEqual(self.after("read_file")["reasoning"], {"effort": "low"})  # OpenRouter's shape
+        self.assertNotIn("reasoning", self.after("edit_file"))
+        self.assertNotIn("reasoning", self.after("run"))
+
+    def test_other_providers_and_off_by_default(self):
+        self.assertEqual(self.after("grep", model="small")["reasoning_effort"], "low")  # Ollama: OpenAI's shape
+        body = self.after("read_file", effort=None)
+        self.assertNotIn("reasoning", body)
+        self.assertNotIn("reasoning_effort", body)
+
+    def test_not_after_a_note_from_purr(self):
+        a = agent("api")
+        a.config = {**a.config, "routine_effort": "low"}
+        a.messages += [{"role": "assistant", "content": None, "tool_calls": [
+                           {"id": "c1", "type": "function", "function": {"name": "grep", "arguments": "{}"}}]},
+                       {"role": "tool", "tool_call_id": "c1", "content": "..."},
+                       {"role": "user", "content": "(purr: before you finish ...)"}]
+        self.assertNotIn("reasoning", a._body(None, True))
+
+
+class ParallelLookTest(unittest.TestCase):
+    def calls(self, *names):
+        return [{"id": f"c{i}", "name": n, "args": json.dumps({"path": "."} if n != "grep" else {"pattern": "x"})}
+                for i, n in enumerate(names)]
+
+    def test_several_reads_run_together_and_come_back_in_order(self):
+        a = agent()
+        a.messages = [a.messages[0]]
+        started = []
+
+        def slow_call(name, args):
+            started.append(name)
+            agent_module.time.sleep(0.2)
+            return f"result of {name}"
+        with mock.patch.object(a.tools, "call", side_effect=slow_call):
+            t0 = agent_module.time.monotonic()
+            a._run_tools(self.calls("list_files", "grep", "list_files", "grep"))
+            took = agent_module.time.monotonic() - t0
+        self.assertLess(took, 0.6)  # one by one would be 0.8 s
+        self.assertEqual([m["tool_call_id"] for m in a.messages[1:]], ["c0", "c1", "c2", "c3"])
+        self.assertEqual([m["content"] for m in a.messages[1:]][:2], ["result of list_files", "result of grep"])
+
+    def test_anything_that_changes_things_runs_in_order(self):
+        a = agent()
+        self.assertEqual(a._look_in_parallel(self.calls("read_file", "edit_file")), {})
+        self.assertEqual(a._look_in_parallel(self.calls("read_file")), {})
 
 
 if __name__ == "__main__":

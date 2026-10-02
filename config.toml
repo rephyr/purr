@@ -13,6 +13,12 @@ co_author_github = "purr-harness"
 final_check = true
 # ...and runs the project's tests itself for that check, so the model sees the real result
 final_check_tests = true
+# one-shot runs (purr -p, benchmarks): before finishing, one call that sees only the request and the
+# diff lists what doesn't match the request (the model that wrote it reads its own assumptions back)
+review = true
+# Less reasoning for steps that only follow reads and searches (output, mostly thinking, is about
+# half of an agent's cost). Off by default: measure it first (fair.sh --ak routine_effort=low).
+# routine_effort = "low"
 # After every edit: a syntax check and ruff's bug checks (undefined names, ...), and a guard
 # against rewrites that would delete code ("# ... rest unchanged").
 code_checks = true
