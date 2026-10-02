@@ -61,6 +61,24 @@ todo (a task list you see), task (a read-only helper with a fresh memory, for ex
 Commands in `[permissions] allow_run` (config.toml) run without asking; "always" on a command
 covers that kind of command only (`git status`, not all of git).
 
+## Beyond plain coding
+
+Terminal-Bench showed what a coding agent also needs (11 of its 89 tasks involve images, 9 involve
+interactive programs or servers):
+
+- **`terminal`**: a session you keep talking to, for interactive programs (a VM's console, ssh, a
+  REPL, a debugger) or a server you want to watch: start it, send text and keys (Enter, C-c, Up…),
+  read its screen, wait for a pattern (`wait_for: "login:"`). With tmux installed the sessions are
+  tmux sessions and outlive purr, so a VM or server a task needs stays up; without it they run in
+  purr's own process. `run` is still for commands that finish.
+- **Servers keep running:** `run` sends output to a temporary file instead of a pipe, so a
+  background server (`cmd &`) no longer stalls the call until its timeout (which then killed the
+  server). The final check asks the model to make sure anything that must keep running does, and
+  answers.
+- **`look_at_image`**: shows a png/jpg/gif/webp to models that can see (`vision = true` in
+  config.toml: Qwen3.6, Qwen3.5, Gemma 4, Gemini, Claude). Only the latest 3 images go back with
+  each request.
+
 ## How it works
 
 1. `harness/agent.py` sends the chat + the tool list to the model.

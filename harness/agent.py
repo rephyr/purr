@@ -197,6 +197,7 @@ TIME_NOTES = [  # (share of the time gone, what to say then)
 ]
 
 REASONING_KEEP = 2  # past replies whose thinking goes back to providers that want it (echo_reasoning)
+IMAGES_KEEP = 3     # images (look_at_image) sent again with every request: only the latest few
 
 CUT_NUDGE = """(purr: your reply hit the output limit and was cut off, so nothing in it happened. \
 Carry on from where you were, but don't write code or long plans in your reply: put code straight \
@@ -205,9 +206,13 @@ into the files with write_file or edit_file (a long file in a few parts), and ke
 EMPTY_NUDGE = """(purr: your reply was empty. Look at the last results you got: if anything looks \
 wrong, fix it now; if everything is done, give a short summary of what you changed.)"""
 
+SERVICES = """If the task needs something to keep running after you finish (a server, a VM, a \
+service), check it's running in the background (not tied to a command or session that ends) and \
+that it answers."""
+
 FINAL_CHECK_LIGHT = """(purr: before you finish, read the user's request again. Is every part done, \
-including any tests they asked for, and checked where you can? If not, do it now; otherwise reply with \
-a short summary of what you changed.)"""
+including any tests they asked for, and checked where you can? """ + SERVICES + """ If not, do it now; \
+otherwise reply with a short summary of what you changed.)"""
 
 REMIND_EVERY = 8  # model calls between reminders of the request (reminders = false turns them off)
 
@@ -215,8 +220,9 @@ FINAL_CHECK = """(purr: before you finish, read the user's request again and go 
 point. Is every part done, including any tests they asked for, and did you check it (run the tests \
 or the code) where you can? Then think of 2 or 3 edge cases the request implies but nobody spelled \
 out (empty input, a value that only shows up in one place, duplicates, the exact boundary of a \
-limit) and quickly try them, for example with python3 -c. If something is missing, untested or \
-breaks, fix it now. If everything is really done, reply with a short summary of what you changed.)"""
+limit) and quickly try them, for example with python3 -c. """ + SERVICES + """ If something is \
+missing, untested or breaks, fix it now. If everything is really done, reply with a short summary of \
+what you changed.)"""
 
 REFINE_MODES = ("auto", "on", "off")
 
@@ -676,7 +682,8 @@ class Agent:
     @property
     def hidden_tools(self):
         """Tools this model isn't offered: the model's own limits, plus the web in private mode."""
-        return tuple(self.limits.hidden_tools) + (("fetch_url",) if self.private else ())
+        return (tuple(self.limits.hidden_tools) + (("fetch_url",) if self.private else ())
+                + (() if self.model.get("vision") else ("look_at_image",)))  # only models that can see
 
     @property
     def chosen_model(self):
@@ -1090,6 +1097,27 @@ class Agent:
 
     STANDARD = {"role", "content", "tool_calls", "tool_call_id", "name"}
 
+    def _with_images(self, msgs):
+        """Messages carrying images (look_at_image) as text + image parts, for a model that can see;
+        older images (beyond the latest few) and models that can't see get a line of text instead."""
+        if not any(m.get("images") for m in msgs):
+            return msgs
+        withs = [i for i, m in enumerate(msgs) if m.get("images")]
+        recent = set(withs[-IMAGES_KEEP:])
+        out = []
+        for i, m in enumerate(msgs):
+            if not m.get("images"):
+                out.append(m)
+                continue
+            m = {k: v for k, v in m.items() if k != "images"}
+            if self.model.get("vision") and i in recent:
+                m["content"] = [{"type": "text", "text": m["content"]}] + [
+                    {"type": "image_url", "image_url": {"url": url}} for url in msgs[i]["images"]]
+            else:
+                m["content"] += " (not shown again here)"
+            out.append(m)
+        return out
+
     def _time_note(self):
         """With a time limit (purr --time-limit, benchmarks): say how much is left at half time and
         at four fifths, once each. A small model will happily explore until the clock runs out."""
@@ -1107,6 +1135,7 @@ class Agent:
         """The chat with only the fields this provider understands: after the free router switches
         mid-chat, the history holds another provider's thinking (reasoning / reasoning_content),
         and strict APIs refuse fields they don't know."""
+        msgs = self._with_images(msgs)
         echo = self.provider.get("echo_reasoning")
         keep = self.STANDARD | ({echo} if echo else set())
         # the thinking of older replies goes too: only the last few keep theirs. A long turn
@@ -1210,7 +1239,10 @@ class Agent:
             used = self.last_usage.get("prompt_tokens", 0) + self.last_usage.get("completion_tokens", 0)
         # Ollama only counts the tokens it didn't have cached, so also guess (~4 characters a token)
         sent = self._for_provider(self.messages) if getattr(self, "provider", None) else self.messages
-        guess = len(json.dumps(sent)) // 4 + 1500  # what's sent: old thinking is trimmed off
+        text = json.dumps(sent)
+        images = text.count('"image_url"')
+        text = re.sub(r'data:image/[^"]+', "", text)  # an image costs ~1k tokens, not its base64
+        guess = len(text) // 4 + 1500 + 1000 * images  # what's sent: old thinking is trimmed off
         return max(used, guess)
 
     # ---- one turn: your message -> as many model calls + tools as it takes ----
@@ -1347,7 +1379,14 @@ class Agent:
                     if self._final_check() or self._learn_check():
                         continue
                     break
-                if self._run_tools(reply["tool_calls"]):
+                stopped = self._run_tools(reply["tool_calls"])
+                if self.tools.pending_images:  # look_at_image: show the model what it asked to see
+                    shown = self.tools.pending_images
+                    self.tools.pending_images = []
+                    self.messages.append({"role": "user", "images": [url for _, url in shown], "content":
+                        "(purr: the image" + ("s" if len(shown) > 1 else "") + " you asked to look at: "
+                        + ", ".join(path for path, _ in shown) + ")"})
+                if stopped:
                     self.view.note("waiting for you", "info")
                     break
                 if self.mode == "pair" and not self.helper and any(

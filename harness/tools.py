@@ -4,6 +4,7 @@ Each tool = a schema (what the model sees) + a Python function (what actually ha
 Edits, writes and commands ask you first.
 """
 
+import atexit
 import difflib
 import fnmatch
 import json
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from . import checks
 from .limits import Limits
+from .terminal import Terminals
 
 
 MAX_OUTPUT = 12000  # fallback: characters a tool result may send back to the model
@@ -64,6 +66,23 @@ SCHEMAS = [
         "command": {"type": "string"},
         "timeout": {"type": "integer", "description": "Seconds. Default 120."},
     }, ["command"]),
+    _schema("terminal", "A terminal session you keep talking to, for interactive programs (a VM's console, "
+            "ssh, a REPL, a debugger) or a server you want to watch; `run` is for commands that finish. "
+            "start: runs command in a new session. send: types text and presses Enter (or the keys you "
+            "list). read: its latest screen. wait_for: a regex to wait for, like 'login:'. "
+            'Example: {"action": "send", "name": "vm", "text": "root", "wait_for": "#"}', {
+        "action": {"type": "string", "enum": ["start", "send", "read", "stop", "list"]},
+        "name": {"type": "string", "description": "The session's name. Default 'main'."},
+        "command": {"type": "string", "description": "start: the program to run (default: a shell)."},
+        "text": {"type": "string", "description": "send: what to type."},
+        "keys": {"type": "array", "items": {"type": "string"},
+                 "description": "send: keys to press after the text (default Enter): Enter, Tab, Up, Down, C-c, C-d, Escape..."},
+        "wait": {"type": "number", "description": "Seconds to wait for output. Default 2."},
+        "wait_for": {"type": "string", "description": "A regex: wait (up to wait seconds) until it shows up."},
+    }, ["action"]),
+    _schema("look_at_image", "Look at an image file (png, jpg, gif, webp): it's shown to you right after.", {
+        "path": {"type": "string"},
+    }, ["path"]),
     _schema("todo", "Keep a short task list for work with several steps (not for questions or chat). "
             "Send the WHOLE list every time; the user sees it. Mark one item 'doing' while you work on it.", {
         "items": {"type": "array", "items": {"type": "object", "properties": {
@@ -84,7 +103,8 @@ TOOL_ALIASES = {"search": "grep", "grep_search": "grep", "ripgrep": "grep", "fin
                 "ls": "list_files", "list": "list_files", "glob": "list_files", "list_dir": "list_files",
                 "edit": "edit_file", "str_replace": "edit_file", "replace": "edit_file",
                 "write": "write_file", "create_file": "write_file",
-                "bash": "run", "shell": "run", "exec": "run", "run_command": "run", "terminal": "run"}
+                "bash": "run", "shell": "run", "exec": "run", "run_command": "run",
+                "view_image": "look_at_image", "read_image": "look_at_image", "tmux": "terminal"}
 ARG_ALIASES = {"file_path": "path", "filePath": "path", "filename": "path", "file": "path",
                "old_string": "old_text", "oldString": "old_text", "old_str": "old_text",
                "new_string": "new_text", "newString": "new_text", "new_str": "new_text",
@@ -187,6 +207,9 @@ class Tools:
         self.halt = False        # a plain "no": stop and let the user say what to do next
         self.undo_stack = []     # one {path: text before, or None if it didn't exist} per turn
         self.spawn = None        # set by the agent: runs a helper for the task tool
+        self.terminals = Terminals(self.root)  # sessions for interactive programs (terminal tool)
+        atexit.register(self.terminals.close_local)  # purr's own (non-tmux) sessions end with it
+        self.pending_images = []  # (path, data URL) look_at_image read: the agent shows them next
 
     def _path(self, p):
         p = Path(p).expanduser()
@@ -220,8 +243,11 @@ class Tools:
         """One short line for the screen."""
         key = {"read_file": "path", "list_files": "path", "grep": "pattern", "edit_file": "path",
                "write_file": "path", "run": "command", "fetch_url": "url", "task": "prompt",
-               "outline": "path", "find_symbol": "name",
+               "outline": "path", "find_symbol": "name", "look_at_image": "path",
                "godot_class": "name", "python_api": "name"}.get(name)
+        if name == "terminal":
+            what = args.get("command") or args.get("text") or " ".join(args.get("keys") or [])
+            return f"terminal {args.get('action', '')} {args.get('name', 'main')} {str(what)[:80]}".strip()
         if name == "godot_class" and args.get("member"):
             return f"{name} {args.get('name', '')}.{args['member']}"
         val = str(args.get(key, "")) if key else ""
@@ -567,6 +593,45 @@ class Tools:
                        "with its output in a log (nohup <command> > run.log 2>&1 &) and check run.log.)")
         return f"{output}\n[exit code {code}]"
 
+    def t_terminal(self, action, name="main", command=None, text=None, keys=None, wait=None,
+                   wait_for=None, lines=40):
+        t = self.terminals
+        try:
+            if action == "list":
+                return t.list()
+            if action == "read":
+                return t.read(name, wait or 0, wait_for, lines)
+            if action == "stop":
+                return t.stop(name)
+            if action not in ("start", "send"):
+                return "error: action is start, send, read, stop or list"
+            what = command if action == "start" else (text or " ".join(keys or []))
+            ok, reason = self._allowed("terminal", f"terminal {action} ({name}): {what or 'a shell'}")
+            if not ok:
+                return self._refused(reason)
+            if action == "start":
+                return t.start(name, command, 2 if wait is None else wait, wait_for, lines)
+            return t.send(name, text, keys, 2 if wait is None else wait, wait_for, lines)
+        except (ValueError, OSError, subprocess.SubprocessError) as e:
+            return f"error: {e}"
+
+    IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+                   ".webp": "image/webp"}
+
+    def t_look_at_image(self, path):
+        import base64
+        p = self._path(path)
+        if not p.is_file():
+            return self._no_such_file(path)
+        kind = self.IMAGE_TYPES.get(p.suffix.lower())
+        if not kind:
+            return f"error: {path} isn't an image look_at_image can show (png, jpg, gif, webp)"
+        if p.stat().st_size > 8_000_000:
+            return f"error: {path} is too big to show ({p.stat().st_size // 1_000_000} MB, the limit is 8)"
+        url = f"data:{kind};base64," + base64.b64encode(p.read_bytes()).decode()
+        self.pending_images.append((path, url))
+        return f"(the image {path} comes right after this)"
+
     def t_todo(self, items):
         clean = [{"text": str(i.get("text", "")), "status": i.get("status", "pending")}
                  for i in items if isinstance(i, dict)]
@@ -584,13 +649,28 @@ class Tools:
 
 
 def run_shell(command, root, timeout=120):
-    """Run a bash command. Returns (output, exit code); exit code -1 means it timed out."""
-    try:
-        res = subprocess.run(["bash", "-c", command], capture_output=True, text=True,
-                             timeout=int(timeout), cwd=root, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        return f"timed out after {timeout}s", -1
-    return (res.stdout + res.stderr).strip(), res.returncode
+    """Run a bash command. Returns (output, exit code); exit code -1 means it timed out.
+    Output goes to a temporary file, not a pipe: a server started in the background (`cmd &`)
+    keeps a pipe open forever, which used to stall the call until the timeout and then kill the
+    server. Now the call returns when bash does, and the server keeps running. On a timeout the
+    command's whole process group is stopped."""
+    import tempfile
+    with tempfile.TemporaryFile(mode="w+") as out:
+        proc = subprocess.Popen(["bash", "-c", command], stdout=out, stderr=subprocess.STDOUT, cwd=root,
+                                stdin=subprocess.DEVNULL, start_new_session=True, text=True)
+        try:
+            code = proc.wait(timeout=int(timeout))
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, 9)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+            out.seek(0)
+            partial = out.read().strip()
+            return f"timed out after {timeout}s" + (f"; its output so far:\n{partial[-4000:]}" if partial else ""), -1
+        out.seek(0)
+        return out.read().strip(), code
 
 
 class _TextOnly(HTMLParser):
