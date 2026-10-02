@@ -110,7 +110,11 @@ def test_command(root):
     if py_tests:
         python = "python3"
         if _has_pytest():
-            return f"{python} -m pytest -q -x --tb=short"
+            # only tests/ when that's where the tests are: pytest at the root also collects test
+            # files that aren't the project's (fixtures, examples, purr's own bench tasks)
+            only = " tests" if (root / "tests").is_dir() and not list(root.glob("test_*.py")) \
+                and not list(root.glob("*_test.py")) else ""
+            return f"{python} -m pytest -q -x --tb=short{only}"
         return f"{python} -m unittest discover -s tests" if (root / "tests").is_dir() and not \
             list(root.glob("test_*.py")) else f"{python} -m unittest discover"
     package = root / "package.json"

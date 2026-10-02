@@ -578,7 +578,8 @@ class Agent:
                     reply["tool_calls"], reply["text"] = calls_from_text(reply["text"])
                     self.tools.repairs += ["tool call written as text -> real call"] * len(reply["tool_calls"])
 
-                msg = {"role": "assistant", "content": reply["text"] or None}
+                # content may only be null next to tool calls: Ollama refuses an empty reply's null
+                msg = {"role": "assistant", "content": reply["text"] or (None if reply["tool_calls"] else "")}
                 if reply["tool_calls"]:
                     msg["tool_calls"] = [
                         {"id": c["id"], "type": "function",
@@ -678,8 +679,11 @@ class Agent:
         output, code = run_shell(cmd, self.root, timeout=180)
         self.view.tool_result("run", {"command": cmd}, f"{output}\n[exit code {code}]")
         tail = "\n".join(output.strip().splitlines()[-40:])
-        verdict = "they pass" if code == 0 else "THEY FAIL: fix that first"
-        return f"(purr ran the tests itself: `{cmd}` → exit code {code}, {verdict})\n```\n{tail}\n```\n"
+        verdict = "they pass" if code == 0 else (
+            "THEY FAIL: if the failure comes from your changes or is part of the request, fix it "
+            "first; if it is in code the request has nothing to do with, leave it and mention it "
+            "in your answer")
+        return f"(purr, not the user, ran the tests itself: `{cmd}` → exit code {code}, {verdict})\n```\n{tail}\n```\n"
 
     def on_my_gpu(self):
         """Speed only means something for local models: an API's depends on its load, routing, ..."""
