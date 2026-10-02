@@ -437,5 +437,17 @@ class PublishTest(unittest.TestCase):
         self.assertNotIn("Terminal-Bench 2.1 (89", page)
 
 
+class CompactFailureTest(unittest.TestCase):
+    def test_a_failed_compaction_is_not_tried_every_step(self):
+        a = agent()
+        a.model = {**a.model, "context": 1000}
+        a.messages += [{"role": "user", "content": "x" * 5000}] * 5
+        scripted(a, [reply("", tool=("list_files", {"path": "."}))] * 3 + [reply("done")])
+        tries = []
+        with mock.patch.object(a, "compact", side_effect=lambda auto=False: tries.append(1)):
+            a.turn("go on")
+        self.assertEqual(len(tries), 1)  # failed once, then left alone while the chat is short
+
+
 if __name__ == "__main__":
     unittest.main()
