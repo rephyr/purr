@@ -31,10 +31,11 @@ class FakeView:
 
 
 CONFIG = {
-    "providers": {"ollama": {"base_url": "http://127.0.0.1:1/v1"}},
+    "providers": {"ollama": {"base_url": "http://127.0.0.1:1/v1"}, "openrouter": {"base_url": "http://127.0.0.1:1/v1"}},
     "models": {
         "small": {"provider": "ollama", "id": "small", "context": 32768},
         "big": {"provider": "ollama", "id": "big", "context": 1_000_000},
+        "api": {"provider": "openrouter", "id": "big/api", "context": 1_000_000},
         "tuned": {"provider": "ollama", "id": "tuned", "context": 32768,
                   "limits": {"tool_output": 9000, "nonsense": 1}},
     },
@@ -43,6 +44,12 @@ CONFIG = {
 
 def agent(model="small"):
     return Agent(CONFIG, tempfile.mkdtemp(), model, FakeView())
+
+
+def known(a):
+    """Mark every file in the agent's folder as read, like a model that looked first
+    (purr refuses edits to files it hasn't read)."""
+    a.tools.seen.update(p.resolve() for p in Path(a.root).rglob("*") if p.is_file())
 
 
 def guard(a, calls):
@@ -131,6 +138,61 @@ def reply(text="", *todo_statuses, tool=None):
             "finish": "tool_calls" if tool_calls else "stop", "gen_seconds": 0.0}
 
 
+class TextCallTest(unittest.TestCase):
+    def test_a_tool_call_written_as_text_is_rescued_and_counted(self):
+        a = agent()
+        Path(a.root, "x.py").write_text("x = 1\n")
+        calls = scripted(a, [reply("<function=read_file>\n<parameter=path>\nx.py\n</parameter>\n</function>"),
+                             reply("x is 1")])
+        a.turn("what is x?")
+        self.assertEqual(calls["n"], 2)
+        self.assertIn("tool call written as text -> real call", a.tools.repairs)
+
+
+class FinalCheckTest(unittest.TestCase):
+    def edit_then_done(self, a):
+        Path(a.root, "x.py").write_text("x = 1\n")
+        known(a)
+        a.tools.trust_all = True
+        return scripted(a, [reply("", tool=("edit_file", {"path": "x.py", "old_text": "x = 1", "new_text": "x = 2"})),
+                            reply("Done!"), reply("All parts done: x is 2 now."), reply("again?")])
+
+    def test_asks_once_after_changes(self):
+        a = agent()
+        calls = self.edit_then_done(a)
+        a.turn("set x to 2")
+        self.assertEqual(calls["n"], 3)  # edit, "Done!", then the answer to the check; not a 4th
+        self.assertEqual(sum("read the user's request again" in (m.get("content") or "") for m in a.messages), 1)
+
+    def test_can_be_turned_off(self):
+        a = agent()
+        a.config = {**a.config, "final_check": False}
+        calls = self.edit_then_done(a)
+        a.turn("set x to 2")
+        self.assertEqual(calls["n"], 2)
+
+    def test_no_check_when_nothing_changed(self):
+        a = agent()
+        calls = scripted(a, [reply("x is 1")])
+        a.turn("what is x?")
+        self.assertEqual(calls["n"], 1)
+
+
+class EmptyReplyTest(unittest.TestCase):
+    def test_an_empty_reply_gets_a_nudge_not_the_end(self):
+        a = agent()
+        calls = scripted(a, [reply(""), reply("All done: nothing needed changing.")])
+        a.turn("check x")
+        self.assertEqual(calls["n"], 2)
+        self.assertIn("empty reply -> nudged to continue", a.tools.repairs)
+
+    def test_at_most_twice(self):
+        a = agent()
+        calls = scripted(a, [reply("")] * 5)
+        a.turn("check x")
+        self.assertEqual(calls["n"], 3)
+
+
 class TodoLoopTest(unittest.TestCase):
     def test_chatty_todo_loop_ends(self):
         # what qwen3-coder did with "hello who are you": answer + todo, forever
@@ -173,6 +235,70 @@ class HiddenToolsTest(unittest.TestCase):
         a = agent("big")
         self.assertEqual(a.limits.hidden_tools, ())
         self.assertIn("fetch_url", a.messages[0]["content"])
+
+
+class RefineModeTest(unittest.TestCase):
+    def test_auto_refines_only_a_short_first_message(self):
+        a = agent()
+        self.assertEqual(a.refine_mode, "auto")
+        self.assertTrue(a.should_refine("tests broken pls fix"))
+        self.assertFalse(a.should_refine("yes"))  # a reply, not a task
+        self.assertFalse(a.should_refine(" ".join(["word"] * 30)))  # already detailed
+        self.assertFalse(a.should_refine("/mode chat"))
+        a.messages.append({"role": "user", "content": "fix the cache"})
+        self.assertFalse(a.should_refine("also add some tests"))  # a follow-up needs the chat
+
+    def test_on_off_and_other_modes(self):
+        a = agent()
+        a.refine_mode = "on"
+        self.assertTrue(a.should_refine("also add some tests please"))
+        a.refine_mode = "off"
+        self.assertFalse(a.should_refine("tests broken pls fix"))
+        a.refine_mode = "auto"
+        a.set_mode("chat")
+        self.assertFalse(a.should_refine("tests broken pls fix"))  # only code mode refines
+
+    def test_the_command(self):
+        from harness import commands
+        a = agent()
+        commands.run(a, "/refine off")
+        self.assertEqual(a.refine_mode, "off")
+        self.assertIn("refine off", commands.run(a, "/refine")[0][1])
+
+
+class TrainingWheelsTest(unittest.TestCase):
+    def test_local_models_get_them_api_models_dont(self):
+        local, api = agent("small"), agent("api")
+        self.assertEqual((local.limits.helpers, api.limits.helpers), ("full", "light"))
+        self.assertEqual((local.refine_mode, api.refine_mode), ("auto", "off"))
+        self.assertTrue(local._helper_on("reminders"))
+        self.assertFalse(api._helper_on("reminders"))
+        self.assertFalse(api._helper_on("edge_cases"))
+
+    def test_switching_model_follows_unless_pinned(self):
+        a = agent("small")
+        a.set_model("api")
+        self.assertEqual(a.refine_mode, "off")
+        from harness import commands
+        commands.run(a, "/refine on")
+        a.set_model("small")
+        self.assertEqual(a.refine_mode, "on")  # you pinned it
+
+    def test_config_wins(self):
+        a = agent("api")
+        a.config = {**a.config, "reminders": True}
+        self.assertTrue(a._helper_on("reminders"))
+
+    def test_api_models_get_the_short_final_check(self):
+        a = agent("api")
+        Path(a.root, "x.py").write_text("x = 1\n")
+        known(a)
+        a.tools.trust_all = True
+        scripted(a, [reply("", tool=("edit_file", {"path": "x.py", "old_text": "x = 1", "new_text": "x = 2"})),
+                     reply("Done!"), reply("ok")])
+        a.turn("set x to 2")
+        check = next(m["content"] for m in a.messages if "read the user's request again" in (m.get("content") or ""))
+        self.assertNotIn("edge cases", check)
 
 
 class ModeTest(unittest.TestCase):

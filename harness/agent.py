@@ -14,7 +14,8 @@ from pathlib import Path
 
 from . import ui
 from .api import ApiError, Stopped, stream_chat
-from .limits import Limits
+from .limits import LOCAL, Limits
+from . import checks
 from .tools import Tools, clip, run_shell, schemas
 
 SYSTEM = """You are {model}, an AI model, working as a coding agent. You are running inside purr, \
@@ -24,7 +25,7 @@ the program around you; it is not you. If someone asks who or what you are, say 
 to be a different model.
 
 Environment
-- Project folder: {root} (relative paths start here)
+- Project folder: {root} (use paths relative to it, like src/app.py, not full paths)
 - Today: {date}
 - System: Linux
 
@@ -75,10 +76,29 @@ MODES = {
     "create": ("none", "brainstorming and writing, no tools, a bit more random"),
 }
 
+EMPTY_NUDGE = """(purr: your reply was empty. Look at the last results you got: if anything looks \
+wrong, fix it now; if everything is done, give a short summary of what you changed.)"""
+
+FINAL_CHECK_LIGHT = """(purr: before you finish, read the user's request again. Is every part done, \
+including any tests they asked for, and checked where you can? If not, do it now; otherwise reply with \
+a short summary of what you changed.)"""
+
+REMIND_EVERY = 8  # model calls between reminders of the request (reminders = false turns them off)
+
+FINAL_CHECK = """(purr: before you finish, read the user's request again and go through it point by \
+point. Is every part done, including any tests they asked for, and did you check it (run the tests \
+or the code) where you can? Then think of 2 or 3 edge cases the request implies but nobody spelled \
+out (empty input, a value that only shows up in one place, duplicates, the exact boundary of a \
+limit) and quickly try them, for example with python3 -c. If something is missing, untested or \
+breaks, fix it now. If everything is really done, reply with a short summary of what you changed.)"""
+
+REFINE_MODES = ("auto", "on", "off")
+
 REFINE = """You turn a user's short or vague request into a clear task for a coding agent that \
 works in this project. Use only what you can see below: don't invent files, functions or \
 requirements. Where the request is unclear, keep that part general instead of guessing. When tests \
-fail, don't decide whether the code or the test is wrong: say to find out why they fail.
+fail, don't decide whether the code or the test is wrong: say to find out why they fail. Don't \
+narrow the request either: if it doesn't say what exactly to return or include, don't decide it.
 
 Write it like this, short:
 Task: one or two sentences
@@ -303,8 +323,15 @@ class Agent:
         self.tools = Tools(self.root, view, read_only=helper, allow_run=perms.get("allow_run", []))
         self.tools.spawn = None if helper else self._helper
         self.stop_flag = False  # the TUI sets this to stop an answer (plain mode uses ctrl+c)
+        self.tools.code_checks = config.get("code_checks", True)
+        self.tools.read_before_edit = config.get("read_before_edit", True)
         self.mode = "code"       # code, ask, chat or create (MODES)
-        self.refine_on = False   # rewrite each message into a clear task first (/refine)
+        # /refine: "auto" rewrites a short first message into a clear task (you approve it),
+        # "on" every message, "off" none. purr bench measured +2 solved hard tasks from vague asks.
+        # Unset, it follows the model (auto for local models, off for API ones); /refine or
+        # refine = "..." in config.toml pins it.
+        self.refine_pinned = config.get("refine") in REFINE_MODES
+        self.refine_mode = config["refine"] if self.refine_pinned else "auto"
         self.set_model(model_name)
         self.new()
 
@@ -328,6 +355,8 @@ class Agent:
                                   if provider.get("opencode_auth") else ""))
         self.model_name, self.model, self.provider, self.key = name, model, provider, key
         self.limits = Limits.for_model(model)
+        if not getattr(self, "refine_pinned", True):
+            self.refine_mode = "auto" if self.limits.helpers == "full" else "off"
         if getattr(self, "tools", None):
             self.tools.limits = self.limits  # 32k and 1M models need different caps
         if getattr(self, "messages", None):
@@ -343,6 +372,18 @@ class Agent:
         self.tools.no_tools = MODES[mode][0] == "none"
         if getattr(self, "messages", None):
             self.messages[0] = {"role": "system", "content": self._system()}
+
+    def should_refine(self, text):
+        """Whether this message should go through refine first (see refine_mode)."""
+        if self.mode != "code" or self.refine_mode == "off" or text.startswith(("/", "!")):
+            return False
+        if self.refine_mode == "on":
+            return True
+        words = len(text.split())
+        first = not any(m.get("role") == "user" for m in self.messages)
+        # auto: a short first message is a new task said briefly; follow-ups need the chat to make
+        # sense (refine doesn't see it) and one-word replies ("yes", "continue") aren't tasks
+        return first and 3 <= words <= 15
 
     def refine(self, text):
         """Your request, rewritten by the same model into a clear task (Task / Where / Steps /
@@ -379,7 +420,8 @@ class Agent:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.log_path.write_text(json.dumps(
             {"model": self.model_name, "mode": self.mode, "folder": str(self.root), "title": self.title,
-             "cost": self.session_cost, "messages": self.messages},
+             "cost": self.session_cost, "messages": self.messages,
+             **({"cut_off_reply": self.cut_off} if getattr(self, "cut_off", None) else {})},
             indent=1, ensure_ascii=False))
 
     def load(self, path):
@@ -414,6 +456,7 @@ class Agent:
         if tools:
             body["tools"] = schemas(read_only=self.helper or self.mode == "ask",
                                     read_lines=self.limits.read_lines, hidden=self.limits.hidden_tools)
+        body.update(self.provider.get("body", {}))  # e.g. which OpenRouter hosts may answer
         body.update(self.model.get("body", {}))
         if self.mode == "create" and messages is None:  # a little more surprising
             body["temperature"] = min(1.2, (body.get("temperature") or 0.8) + 0.3)
@@ -475,6 +518,7 @@ class Agent:
 
     def turn(self, text):
         self.stop_flag = False
+        self.cut_off = None
         if not self.title:
             self.title = " ".join(text.split())[:70]
         self.messages.append({"role": "user", "content": self.expand(text)})
@@ -485,6 +529,8 @@ class Agent:
         self._repeats = {}  # (tool, args) -> how often it's been called, and the last result
         self.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0}
         todo_only = 0  # steps in a row that did nothing but update the task list
+        empty = 0      # empty answers nudged this turn
+        self._checked = False  # the final check (below) runs at most once a turn
         try:
             while True:
                 steps += 1
@@ -502,6 +548,11 @@ class Agent:
                     if used > ctx * self.limits.compact_at:
                         self.compact(auto=True)
                 try:
+                    if (self._helper_on("reminders") and self.mode == "code" and not self.helper
+                            and steps > 1 and (steps - 1) % REMIND_EVERY == 0):
+                        # small models lose the goal on long tasks: say it again now and then
+                        self.messages.append({"role": "user", "content":
+                            f"(purr: a reminder of what the user asked, so you stay on track: {text[:800]})"})
                     self.view.activity("thinking")
                     reply = self._call()
                 except ApiError as e:
@@ -510,6 +561,13 @@ class Agent:
                 turn_cost += self._count(reply["usage"])
                 self.turn_stats["out"] += (reply["usage"] or {}).get("completion_tokens", 0)
                 self.turn_stats["calls"] += 1
+                usage = reply["usage"] or {}
+                cached = usage.get("prompt_cache_hit_tokens") or (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+                self.turn_stats["in"] = self.turn_stats.get("in", 0) + (usage.get("prompt_tokens") or 0)
+                self.turn_stats["cached"] = self.turn_stats.get("cached", 0) + cached
+                if reply.get("provider"):
+                    self.turn_stats.setdefault("providers", {})
+                    self.turn_stats["providers"][reply["provider"]] = self.turn_stats["providers"].get(reply["provider"], 0) + 1
                 self.turn_stats["model_s"] += reply.get("call_seconds", 0.0)
                 # Ollama sends a tool call as one piece at the very end, and a short answer is over
                 # in a blink: then there's no writing time to measure, so count the whole call
@@ -518,6 +576,7 @@ class Agent:
 
                 if not reply["tool_calls"] and "<function=" in reply["text"]:
                     reply["tool_calls"], reply["text"] = calls_from_text(reply["text"])
+                    self.tools.repairs += ["tool call written as text -> real call"] * len(reply["tool_calls"])
 
                 msg = {"role": "assistant", "content": reply["text"] or None}
                 if reply["tool_calls"]:
@@ -533,6 +592,14 @@ class Agent:
                 if reply["finish"] == "length":
                     self.view.note("(the reply hit the output limit and was cut off)", "error")
                 if not reply["tool_calls"]:
+                    # a completely empty answer isn't "done": the model stalled (seen right after
+                    # it ran checks that showed bugs). Nudge it on, at most twice a turn.
+                    if not (reply["text"] or "").strip() and reply["finish"] != "length" and empty < 2:
+                        empty += 1
+                        self.tools.repairs.append("empty reply -> nudged to continue")
+                        self.view.note("the model went quiet, nudging it on")
+                        self.messages.append({"role": "user", "content": EMPTY_NUDGE})
+                        continue
                     # local models sometimes write a tool call as plain text, so it never runs
                     if "tool_call>" in (reply["text"] or "") and retries < 2:
                         retries += 1
@@ -540,6 +607,8 @@ class Agent:
                         self.messages.append({"role": "user", "content":
                             "(purr: your tool call came out as plain text, so it did not run. "
                             "Call the tool again.)"})
+                        continue
+                    if self._final_check():
                         continue
                     break
                 if self._run_tools(reply["tool_calls"]):
@@ -557,14 +626,17 @@ class Agent:
                 if all(c["name"] == "todo" for c in reply["tool_calls"]):
                     todo_only += 1
                     if reply["text"] and not self.tools.todos_left:
+                        if self._final_check():
+                            continue
                         break  # it answered and everything is done: that's the end
                     if todo_only >= 3:
                         self.view.note("it only kept updating its task list, so purr ended the turn")
                         break
                 else:
                     todo_only = 0
-        except Stopped:
+        except Stopped as e:
             self.view.note("stopped", "warn")
+            self.cut_off = e.partial  # the reply it was writing: only in the log, not the chat
         self.save_log()
         self._status(turn_cost)
         changed = len(self.tools.undo_stack[-1]) if self.tools.undo_stack else 0
@@ -573,10 +645,50 @@ class Agent:
         self.turn_stats["summary"] = self._turn_summary()
         self.view.note(self.turn_stats["summary"], "stats")
 
+    def _final_check(self):
+        """The model wants to stop after changing files: ask it once to go through the request
+        point by point first. Small models often fix the first thing, see the old tests pass and
+        say "done" with half the job left (purr bench showed it). Returns True when it asked."""
+        changed = self.tools.undo_stack[-1] if self.tools.undo_stack else {}
+        if (self._checked or not changed or self.helper or self.mode != "code"
+                or not self.config.get("final_check", True)):
+            return False
+        self._checked = True
+        self.view.note("♡ checking the request once more before finishing")
+        check = FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT
+        self.messages.append({"role": "user", "content": self._test_report() + check})
+        return True
+
+    def _helper_on(self, key):
+        """A training-wheels helper (reminders, edge_cases): config.toml decides if it's set there,
+        else the model's size does (on for local models, off for API ones)."""
+        return self.config[key] if key in self.config else self.limits.helpers == "full"
+
+    def _test_report(self):
+        """For the final check: purr runs the project's tests itself, so the model sees the real
+        result instead of trusting its own "tests pass". "" when there's nothing to run."""
+        cmd = checks.test_command(self.root) if self.config.get("final_check_tests", True) else None
+        if not cmd:
+            return ""
+        self.view.activity("run", cmd)
+        self.view.tool(f"run {cmd}")
+        ok, _ = self.tools._run_allowed(cmd)
+        if not ok:
+            return ""
+        output, code = run_shell(cmd, self.root, timeout=180)
+        self.view.tool_result("run", {"command": cmd}, f"{output}\n[exit code {code}]")
+        tail = "\n".join(output.strip().splitlines()[-40:])
+        verdict = "they pass" if code == 0 else "THEY FAIL: fix that first"
+        return f"(purr ran the tests itself: `{cmd}` → exit code {code}, {verdict})\n```\n{tail}\n```\n"
+
+    def on_my_gpu(self):
+        """Speed only means something for local models: an API's depends on its load, routing, ..."""
+        return self.model["provider"] in LOCAL
+
     def tok_per_s(self):
-        """Output speed this turn: tokens written / seconds spent writing them."""
+        """Output speed this turn: tokens written / seconds spent writing them (local models only)."""
         s = getattr(self, "turn_stats", None)
-        if not s or not s["out"] or s["gen"] < 0.2:
+        if not self.on_my_gpu() or not s or not s["out"] or s["gen"] < 0.2:
             return None
         return s["out"] / s["gen"]
 

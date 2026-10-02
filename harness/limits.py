@@ -13,6 +13,9 @@ import dataclasses
 from dataclasses import dataclass
 
 
+LOCAL = ("ollama", "llamacpp")  # providers that run on your own GPU
+
+
 def _clamp(n, low, high):
     return max(low, min(high, int(n)))
 
@@ -41,6 +44,9 @@ class Limits:
     keep_recent_tools: int  # this many recent tool results stay complete
     repeat_limit: int       # identical tool calls before the turn is stopped
     hidden_tools: tuple = ()  # tools this model doesn't get offered
+    # purr's training wheels: "full" for local models (auto-refine, reminders, edge cases in the
+    # final check), "light" for API models, which bench showed don't need them (just slower)
+    helpers: str = "full"
 
     @classmethod
     def for_model(cls, model):
@@ -61,6 +67,7 @@ class Limits:
             # a small local model does better with fewer choices: web pages eat its context,
             # and a helper is just the same small model with an empty memory
             hidden_tools=("fetch_url", "task") if context <= 65_536 else (),
+            helpers="full" if model.get("provider") in LOCAL or context <= 65_536 else "light",
         )
         overrides = model.get("limits") or {}
         known = {f.name for f in dataclasses.fields(cls)}

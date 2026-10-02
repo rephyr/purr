@@ -1,0 +1,5 @@
+{
+ "kind": "game feature across 4 files",
+ "level": "hard",
+ "prompt": "Make the inventory in game/ stack items. A slot is None or an (item, count) tuple with 1 <= count <= that item's max_stack (game/items.py). Inventory.add(item, count=1) first tops up existing stacks of that item in slot order, then fills empty slots from the first, and returns how many didn't fit (0 if everything fit); an unknown item raises KeyError. Inventory.remove(item, count=1) takes from that item's last stack first; a stack that reaches 0 becomes None; if there are fewer than count, it raises NotEnough and changes nothing. count(item) is the total. Add NotEnough and InventoryFull exceptions to game/inventory.py. craft(inv, recipe) must be all-or-nothing: if an ingredient is missing it raises NotEnough, and if the result doesn't fit it raises InventoryFull; either way the inventory is left exactly as it was. save.to_dict writes slots as None or [item, count] lists, from_dict reads that back into tuples, and old saves where a slot is just an item id string load as a count of 1. Update tests/test_inventory.py and run the tests."
+}

@@ -1,0 +1,3 @@
+{"kind": "performance, same output", "level": "hard",
+ "prompt": "unique_photos in dedupe.py is far too slow for real photo libraries: with 50 000 photos it takes minutes. Make it fast (a library of 50 000 photos should take well under a second) without changing anything about what it returns or what it does to its input. Keep the existing test passing and add a test that compares the new version with the old one on random data.",
+ "vague": "dedupe is super slow on big libraries, speed it up"}

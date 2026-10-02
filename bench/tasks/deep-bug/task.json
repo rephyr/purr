@@ -1,0 +1,3 @@
+{"kind": "find the bug in ~15 files", "level": "hard",
+ "prompt": "photosync's uploads give up almost straight away: the log says attempts time out after about 0.03 seconds, but upload_timeout_ms is 30000 (30 seconds). tests/test_upload.py shows it. Find the cause and fix it without breaking anything else (the pause between retries must stay as it is). Run the tests at the end.",
+ "vague": "uploads keep timing out instantly, fix it"}

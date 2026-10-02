@@ -122,7 +122,7 @@ def plain(agent, view):
                 if commands.parse(text)[0] == "help":
                     ui.say(ui.LILAC, PLAIN_HELP)
                 continue
-            if agent.refine_on and agent.mode == "code":
+            if agent.should_refine(text):
                 text = refined(agent, text)
                 if not text:
                     continue
@@ -136,7 +136,15 @@ def plain(agent, view):
 def main():
     if sys.argv[1:2] == ["bench"]:  # purr bench: purr vs OpenCode on the same tasks (harness/bench.py)
         from harness import bench
-        return bench.main(sys.argv[2:], tomllib.loads((HERE / "config.toml").read_text()))
+        window = sys.stdout.isatty() and sys.stdin.isatty() and "--plain" not in sys.argv
+        if window:
+            try:
+                import textual  # noqa: F401
+            except ImportError:  # the window needs the project's own Python
+                if VENV_PYTHON.exists() and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
+                    os.execv(VENV_PYTHON, [str(VENV_PYTHON), __file__, *sys.argv[1:]])
+                window = False
+        return bench.main(sys.argv[2:], tomllib.loads((HERE / "config.toml").read_text()), window=window)
     ap = argparse.ArgumentParser(prog="purr", description="tiny coding agent")
     ap.add_argument("folder", nargs="?", default=".", help="project folder (default: here)")
     ap.add_argument("-m", "--model", help="model name from config.toml")

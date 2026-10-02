@@ -1,0 +1,4 @@
+# your settings (anything missing comes from photosync/config.py)
+server = "https://photos.example.home"
+upload_timeout_ms = 30000
+retries = 3

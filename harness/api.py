@@ -13,7 +13,11 @@ class ApiError(Exception):
 
 
 class Stopped(Exception):
-    """You asked the answer to stop."""
+    """You asked the answer to stop. .partial holds what the model had written by then."""
+
+    def __init__(self, partial=None):
+        super().__init__("stopped")
+        self.partial = partial
 
 
 def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lambda: False):
@@ -47,10 +51,12 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
     usage = None
     finish = None
     first = last = None
+    served_by = None
     with resp:
         for raw in resp:
             if should_stop():
-                raise Stopped
+                raise Stopped({"text": "".join(text), "reasoning": "".join(reasoning), "provider": served_by,
+                               "tool_calls": [{"name": c["name"], "args": c["args"]} for c in calls.values()]})
             line = raw.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
                 continue
@@ -62,6 +68,7 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
                 raise ApiError(str(chunk["error"]))
             if chunk.get("usage"):
                 usage = chunk["usage"]
+            served_by = chunk.get("provider") or served_by  # OpenRouter says who answered
             for choice in chunk.get("choices") or []:
                 delta = choice.get("delta") or {}
                 if delta:
@@ -96,4 +103,5 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
         "finish": finish,
         "gen_seconds": (last - first) if first else 0.0,
         "call_seconds": time.monotonic() - started,
+        "provider": served_by,
     }

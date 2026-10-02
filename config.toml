@@ -8,6 +8,22 @@ default_model = "qwen3-coder-32k"
 co_author_email = "336710534+purr-harness@users.noreply.github.com"
 co_author_github = "purr-harness"
 
+# When the model wants to stop after changing files, ask it once to check every part of the
+# request is done (small models often stop halfway). purr bench's "purr-nocheck" turns it off.
+final_check = true
+# ...and runs the project's tests itself for that check, so the model sees the real result
+final_check_tests = true
+# After every edit: a syntax check and ruff's bug checks (undefined names, ...), and a guard
+# against rewrites that would delete code ("# ... rest unchanged").
+code_checks = true
+# Training wheels: these follow the model unless you set them here. Local models get them all,
+# API models (which purr bench showed don't need them) don't.
+#  refine = "auto"    rewrite a short first message into a clear task (you approve it); "on" / "off"
+#  reminders = true   every 8 model calls, remind the model of the request
+#  edge_cases = true  in the final check, also try 2-3 edge cases the request implies
+# Edits only on files the model has read (so old_text matches what's really there).
+read_before_edit = true
+
 # Max model calls in one turn before purr stops and asks you.
 max_steps = 40
 
@@ -20,6 +36,10 @@ max_steps = 40
 
 [providers.ollama]
 base_url = "http://127.0.0.1:11434/v1"
+
+[providers.llamacpp]
+# purr-turbo: llama.cpp's own server with speculative decoding (start it with `purr-turbo start`)
+base_url = "http://127.0.0.1:8081/v1"
 
 [providers.deepseek]
 base_url = "https://api.deepseek.com"
@@ -36,6 +56,15 @@ api_key_env = "OPENROUTER_API_KEY"
 opencode_auth = "openrouter"  # same key OpenCode uses
 # Thinking models (DeepSeek, Kimi, GLM) want their thinking back when tools are used.
 echo_reasoning = "reasoning"
+
+# Which hosts may answer (sent with every OpenRouter call; OpenCode's config asks for the same,
+# so benchmarks stay fair). Only well-known hosts, no fp4 copies (the cheapest no-name and fp4 hosts
+# went off the rails and were slow), cheapest first among those that do 100+ tok/s.
+[providers.openrouter.body.provider]
+only = ["deepseek", "together", "fireworks", "deepinfra", "baseten", "novita", "parasail", "siliconflow", "alibaba", "z-ai", "moonshotai", "openai", "azure", "anthropic", "google-vertex", "amazon-bedrock", "groq", "cerebras"]
+quantizations = ["int4", "int8", "fp8", "fp16", "bf16", "fp32", "unknown"]
+sort = "price"
+preferred_min_throughput = { p50 = 100 }
 
 # ---- local models (free) ----
 
@@ -68,12 +97,32 @@ id = "qwen3.6-iq2-64k"
 context = 65536
 body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
 
+# Qwen3.6 35B-A3B at IQ3_XXS (13.2 GB): the middle ground, better than IQ2, still (almost) all on the GPU
+[models.qwen3_6-iq3]
+provider = "ollama"
+id = "qwen3.6-iq3-32k"
+context = 32768
+body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
+
+# the same IQ3 model through purr-turbo (needs `purr-turbo start`; Ollama's models are unloaded then)
+[models.qwen3_6-iq3-turbo]
+provider = "llamacpp"
+id = "turbo"
+context = 32768
+
 # Qwen3.6 35B-A3B at Q4: smarter than the IQ2 ones, but 22 GB, so part of it runs on the CPU (slower)
 [models.qwen3_6-q4]
 provider = "ollama"
 id = "qwen3.6-q4-32k"
 context = 32768
 body = { temperature = 0.6, top_p = 0.95, top_k = 20, presence_penalty = 1.5 }
+
+# Qwen3.5 9.7B (Q4, 64k already set in Ollama): small enough to sit fully on the GPU
+[models.qwen3_5-code]
+provider = "ollama"
+id = "qwen3.5-code"
+context = 65536
+body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
 
 # ---- DeepSeek (paid, needs DEEPSEEK_API_KEY) ----
 # Prices: USD per 1M tokens, off-peak. Peak hours cost 2x.
@@ -93,7 +142,6 @@ price = { hit = 0.022, miss = 0.66, out = 1.98 }
 # ---- OpenRouter (paid, key from OpenCode or OPENROUTER_API_KEY) ----
 # Prices: USD per 1M tokens (purr shows OpenRouter's real cost when it sends one).
 # max_tokens stays at 16k: with a small balance OpenRouter refuses calls that could cost more.
-
 [models.ds-pro-or]
 provider = "openrouter"
 id = "deepseek/deepseek-v4-pro"

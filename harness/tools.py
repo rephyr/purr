@@ -4,6 +4,7 @@ Each tool = a schema (what the model sees) + a Python function (what actually ha
 Edits, writes and commands ask you first.
 """
 
+import difflib
 import fnmatch
 import json
 import os
@@ -13,6 +14,7 @@ import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
+from . import checks
 from .limits import Limits
 
 
@@ -37,7 +39,8 @@ SCHEMAS = [
         "glob": {"type": "string"},
     }, []),
     _schema("grep", "Search file contents with a regex (ripgrep). Returns file:line: text. "
-            "All lower-case ignores case; use it to find code before reading whole files.", {
+            "All lower-case ignores case; use it to find code before reading whole files. "
+            'Example: {"pattern": "def total", "glob": "*.py"}', {
         "pattern": {"type": "string"},
         "path": {"type": "string", "description": "File or folder. Default '.'"},
         "glob": {"type": "string", "description": "Only files matching, e.g. '*.py'"},
@@ -46,7 +49,8 @@ SCHEMAS = [
         "url": {"type": "string"},
     }, ["url"]),
     _schema("edit_file", "Replace exact text in a file. old_text must match exactly once "
-            "(include enough surrounding lines), unless replace_all is true.", {
+            "(include enough surrounding lines), unless replace_all is true. Read the file first. "
+            'Example: {"path": "shop.py", "old_text": "    return a - b", "new_text": "    return a + b"}', {
         "path": {"type": "string"},
         "old_text": {"type": "string"},
         "new_text": {"type": "string"},
@@ -73,6 +77,19 @@ SCHEMAS = [
         "prompt": {"type": "string"},
     }, ["prompt"]),
 ]
+
+# names models know from other harnesses -> purr's tools
+TOOL_ALIASES = {"search": "grep", "grep_search": "grep", "ripgrep": "grep", "find_in_files": "grep",
+                "read": "read_file", "view": "read_file", "cat": "read_file", "open_file": "read_file",
+                "ls": "list_files", "list": "list_files", "glob": "list_files", "list_dir": "list_files",
+                "edit": "edit_file", "str_replace": "edit_file", "replace": "edit_file",
+                "write": "write_file", "create_file": "write_file",
+                "bash": "run", "shell": "run", "exec": "run", "run_command": "run", "terminal": "run"}
+ARG_ALIASES = {"file_path": "path", "filePath": "path", "filename": "path", "file": "path",
+               "old_string": "old_text", "oldString": "old_text", "old_str": "old_text",
+               "new_string": "new_text", "newString": "new_text", "new_str": "new_text",
+               "cmd": "command", "query": "pattern", "regex": "pattern"}
+UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 READ_ONLY = {"read_file", "list_files", "grep", "fetch_url"}
 SHELL_CHAINING = set(";&|`$()<>\n")
@@ -154,6 +171,12 @@ class Tools:
         self.view = view
         self.read_only = read_only
         self.no_tools = False  # chat and create mode
+        self.repairs = []      # model slips purr fixed by itself (the benchmark counts them)
+        self.code_checks = True  # syntax + lint after edits, placeholder guard (checks.py)
+        self.warnings = []     # problems those checks pointed out (the benchmark counts them)
+        self.rewrite_ok = set()  # (path, content hash) rewrites the model insisted on
+        self.read_before_edit = True  # edits only on files read this session
+        self.seen = set()        # files read (or written) so far
         self.limits = limits or Limits.for_model({})
         self.allow_run = list(allow_run)  # patterns from config.toml that never ask
         self.always = set()      # tools you said "always" to this session
@@ -166,7 +189,31 @@ class Tools:
 
     def _path(self, p):
         p = Path(p).expanduser()
+        if not p.is_absolute() and not (self.root / p).exists() and str(p).startswith(str(self.root)[1:]):
+            # "home/me/project/a.py": an absolute path that lost its first "/"
+            self.repairs.append("path missing its leading / -> fixed")
+            p = Path("/" + str(p))
         return p if p.is_absolute() else self.root / p
+
+    def _no_such_file(self, path):
+        """A missing file, with the project's files whose names come closest, so a guessed path
+        ("build_order/README.md") turns into the right one ("README.md") in one step."""
+        files = self.t_list_files(".").splitlines()
+        name = Path(path).name
+        same = [f for f in files if Path(f).name == name]
+        close = same or difflib.get_close_matches(str(path), files, n=3, cutoff=0.5)
+        if close:
+            return f"error: no file {path}. Did you mean {', '.join(close[:3])}?"
+        return f"error: no file {path}. The files are: " + ", ".join(files[:20]) + (" …" if len(files) > 20 else "")
+
+    def _outside(self, path):
+        """An error for writing outside the project folder, or None. Small models garble long
+        absolute paths, and writing would create folders wherever the typo points."""
+        p = self._path(path).resolve()
+        if p == self.root or self.root in p.parents:
+            return None
+        return (f"error: {path} is outside the project folder ({self.root}). Only change files inside "
+                "it, and use paths relative to it (like src/app.py).")
 
     def summary(self, name, args):
         """One short line for the screen."""
@@ -182,10 +229,19 @@ class Tools:
             if not isinstance(args, dict):
                 raise ValueError
         except ValueError:
-            return f"error: arguments were not valid JSON: {raw_args[:300]}"
+            return self._failed(name, {}, f"error: arguments were not valid JSON: {raw_args[:300]}")
+        # models trained on other harnesses use their names: say grep for search, path for file_path
+        wanted = name
+        name = TOOL_ALIASES.get(re.sub(r"[^\w]", "", name), name)
+        if name != wanted:
+            self.repairs.append(f"tool {wanted} -> {name}")
+        for alias, real in ARG_ALIASES.items():
+            if alias in args and real not in args:
+                args[real] = args.pop(alias)
+                self.repairs.append(f"argument {alias} -> {real}")
         fn = getattr(self, "t_" + name, None)
         if fn is None or (self.read_only and name not in READ_ONLY):
-            return f"error: there is no tool called {name}"
+            return self._failed(wanted, args, f"error: there is no tool called {wanted}")
         if self.no_tools:
             return f"error: no tools in this mode ({name} can't run)"
         self.view.activity(name, self.summary(name, args)[len(name):].strip())
@@ -194,7 +250,9 @@ class Tools:
         try:
             result = clip(fn(**args), self.limits.tool_output)
         except TypeError as e:
-            result = f"error: wrong arguments for {name}: {e}"
+            missing = re.search(r"missing \d+ required positional arguments?: (.+)", str(e))
+            result = (f"error: {name} needs {missing.group(1).replace(chr(39), '')}" if missing
+                      else f"error: wrong arguments for {name}: {e}")
         except Exception as e:
             result = f"error: {type(e).__name__}: {e}"
         if name != "todo":
@@ -256,9 +314,17 @@ class Tools:
 
     # ---- tools ----
 
-    def t_read_file(self, path, offset=1, limit=None):
+    def t_read_file(self, path, offset=1, limit=None, line_start=None, line_end=None):
+        if line_start is not None:  # what some models (gpt-oss) call it
+            self.repairs.append("read_file line_start/line_end -> offset/limit")
+            offset = int(line_start)
+            if line_end is not None:
+                limit = max(1, int(line_end) - offset + 1)
         p = self._path(path)
+        if not p.is_file():
+            return self._no_such_file(path)
         lines = p.read_text(errors="replace").splitlines()
+        self.seen.add(p.resolve())
         offset = max(1, int(offset))
         limit = self.limits.read_lines if limit is None else int(limit)
         chunk = lines[offset - 1: offset - 1 + limit]
@@ -307,14 +373,45 @@ class Tools:
             raw = resp.read(2_000_000).decode(resp.headers.get_content_charset() or "utf-8", "replace")
         return html_to_text(raw) if "html" in kind else raw
 
-    def t_edit_file(self, path, old_text, new_text, replace_all=False):
+    def _failed(self, name, args, error):
+        """A call that couldn't even start: still show it (and let the benchmark count it)."""
+        if not self.no_tools:
+            self.view.tool(f"{name} {json.dumps(args)[:80]}")
+            self.view.tool_result(name, args, error)
+        return error
+
+    def t_edit_file(self, path, old_text=None, new_text=None, replace_all=False, content=None):
+        if old_text is None and content is not None:  # it meant "replace the whole file"
+            self.repairs.append("edit_file with only content -> write_file")
+            return self.t_write_file(path, content)
+        if old_text is None or new_text is None:
+            return ("error: edit_file needs old_text (copied from the file) and new_text. "
+                    "To replace the whole file, use write_file(path, content).")
+        if self.code_checks and old_text and new_text:
+            hole = checks.placeholder(old_text, new_text)
+            if hole:
+                self.warnings.append(f"{path}: placeholder in edit refused")
+                return (f"error: new_text contains the placeholder {hole!r} instead of real code; that would "
+                        "delete code. Put the real lines in new_text.")
         p = self._path(path)
+        if self._outside(path):
+            return self._outside(path)
+        if self.read_before_edit and p.exists() and p.resolve() not in self.seen:
+            self.warnings.append(f"{path}: edit before reading refused")
+            return (f"error: read {path} first (read_file), so your old_text matches what is really in it. "
+                    "Then make the edit.")
         before = p.read_text()
         count = before.count(old_text)
+        if count == 0 and "\\u00" in old_text:  # "\u003c" written out instead of "<"
+            fixed = [UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), t) for t in (old_text, new_text)]
+            if before.count(fixed[0]):
+                self.repairs.append("unescaped \\u00.. in edit_file")
+                old_text, new_text = fixed
+                count = before.count(old_text)
         if count == 0:
             loose = _loose_match(before, old_text, new_text)
             if not loose:
-                return "error: old_text not found. Read the file again and copy the text exactly."
+                return self._not_found(path, before, old_text)
             old_text, new_text, count = *loose, 1
         if count > 1 and not replace_all:
             return f"error: old_text matches {count} times. Add more surrounding lines so it is unique."
@@ -325,11 +422,51 @@ class Tools:
             return self._refused(reason)
         self._remember(p)
         p.write_text(after)
-        return f"edited {path} ({count if replace_all else 1} change)"
+        return f"edited {path} ({count if replace_all else 1} change)" + self._check_code(path, before, after)
+
+    def _not_found(self, path, text, old_text):
+        """old_text isn't in the file: say where it is instead, or show the closest lines,
+        so the model can fix its edit without reading everything again."""
+        msg = f"error: old_text not found in {path}."
+        elsewhere = []
+        for f in self.t_list_files(".").splitlines()[:2000]:
+            p = self.root / f
+            if f == path or not p.is_file() or p.stat().st_size > 400_000:
+                continue
+            try:
+                body = p.read_text(errors="strict")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if old_text in body:
+                elsewhere.append(f"{f} (line {body[:body.index(old_text)].count(chr(10)) + 1})")
+        if elsewhere:
+            return msg + f" That text is in {', '.join(elsewhere[:3])}: edit that file instead."
+        lines, want = text.splitlines(), old_text.strip("\n").splitlines()
+        if not want or not lines:
+            return msg + " Read the file again and copy the text exactly."
+        size = len(want)
+        best, at = 0.0, 0
+        for i in range(max(1, len(lines) - size + 1)):
+            r = difflib.SequenceMatcher(None, "\n".join(lines[i:i + size]), "\n".join(want)).quick_ratio()
+            if r > best:
+                best, at = r, i
+        if best < 0.5:
+            return msg + " Read the file again and copy the text exactly."
+        shown = "\n".join(f"{n:>5}\t{line}" for n, line in enumerate(lines[at:at + size], at + 1))
+        return (msg + f" The closest lines are {at + 1}-{at + size} (copy them exactly, "
+                f"without the line numbers):\n{shown}")
 
     def t_write_file(self, path, content):
         p = self._path(path)
+        if self._outside(path):
+            return self._outside(path)
+        if self.read_before_edit and p.exists() and p.resolve() not in self.seen:
+            self.warnings.append(f"{path}: overwrite before reading refused")
+            return f"error: {path} already exists: read it first (read_file) before replacing it."
         before = p.read_text() if p.exists() else ""
+        stop = self._suspicious_rewrite(path, before, content)
+        if stop:
+            return stop
         self.view.diff(path, before, content)  # a new file shows as a preview of its start
         ok, reason = self._allowed("write_file", f"{'overwrite' if p.exists() else 'create'} {path}?")
         if not ok:
@@ -337,7 +474,49 @@ class Tools:
         self._remember(p)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
-        return f"wrote {path} ({len(content.splitlines())} lines)"
+        self.seen.add(p.resolve())  # it knows what it just wrote
+        return f"wrote {path} ({len(content.splitlines())} lines)" + self._check_code(path, before, content)
+
+    # ---- checks on the model's code (harness/checks.py); code_checks = false turns them off ----
+
+    def _check_code(self, path, before, after):
+        """After a change: syntax and real-bug lint on the new code, added to the tool result."""
+        if not self.code_checks:
+            return ""
+        problems = checks.code_problems(path, before, after)
+        weakened = checks.weakened_tests(path, before, after)
+        if weakened:
+            self.warnings.append(f"{path}: test expectations changed")
+            return ("\n⚠ you changed or removed what a test checks:\n" + "\n".join("  - " + x for x in weakened)
+                    + "\nIf the code is wrong, fix the code instead. Only change a test when the test itself "
+                    "is wrong, and say why." + ("\n⚠ also: " + "; ".join(problems) if problems else ""))
+        if not problems:
+            return ""
+        self.warnings.append(f"{path}: {problems[0]}")
+        return ("\n⚠ purr checked the new code and found problems:\n" + "\n".join("  " + x for x in problems)
+                + "\nFix them before going on.")
+
+    def _suspicious_rewrite(self, path, before, content):
+        """A rewrite that would quietly delete code: a "...rest unchanged" placeholder, or a big
+        file shrinking to a fraction. Refused once; sent again unchanged, it goes through."""
+        if not self.code_checks or not before:
+            return None
+        key = (path, hash(content))
+        if key in self.rewrite_ok:
+            return None
+        hole = checks.placeholder(before, content)
+        old_n, new_n = len(before.splitlines()), len(content.splitlines())
+        if hole:
+            why = (f"it contains the placeholder {hole!r} instead of the real code, so saving it would "
+                   "delete that code")
+        elif old_n >= 40 and new_n < old_n * 0.5:
+            why = f"{path} would shrink from {old_n} to {new_n} lines"
+        else:
+            return None
+        self.rewrite_ok.add(key)
+        self.warnings.append(f"{path}: rewrite refused once ({why[:60]})")
+        return (f"error: not written: {why}. Write the complete file, or use edit_file to change only the "
+                "part that needs changing. (If this really is what you want, send the same write again.)")
 
     def t_run(self, command, timeout=120):
         ok, reason = self._run_allowed(command)

@@ -584,8 +584,8 @@ class PurrApp(App):
         line.append(f"  {provider} ({'paid' if self.agent.model.get('price') else 'local'})", style=DIM)
         icon, colour = self.MODE_LOOK[self.agent.mode]
         line.append(f"   {icon} {self.agent.mode}", style=f"bold {colour}")
-        if self.agent.refine_on and self.agent.mode == "code":
-            line.append("  ✧ refine", style=PEACH)
+        if self.agent.refine_mode != "off" and self.agent.mode == "code":
+            line.append("  ✧ refine" if self.agent.refine_mode == "on" else "  ✧ auto-refine", style=PEACH)
         if self.agent.tools.trust_all:
             line.append("  trusting everything", style=PEACH)
         self.query_one("#model", Static).update(line)
@@ -706,7 +706,7 @@ class PurrApp(App):
             return self.last_stats
         parts = [ui.duration(time.monotonic() - self.busy_since)]
         if self.job == "turn":
-            live = self.view.live_rate()
+            live = self.view.live_rate() if self.agent.on_my_gpu() else None
             rate = live or self.agent.tok_per_s()
             if rate:
                 parts.append(f"{rate:.0f} tok/s")
@@ -933,7 +933,7 @@ class PurrApp(App):
             self.add_user(text)
             self.busy = True
             self.run_shell(text[1:].strip())
-        elif self.agent.refine_on and self.agent.mode == "code":
+        elif self.agent.should_refine(text):
             self.busy = True
             self.run_refine(text)
         else:
