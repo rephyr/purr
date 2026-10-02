@@ -11,7 +11,6 @@
 set -eu
 cd "$(dirname "$0")/.."
 export PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2-1}"
-case "$PURR_DATASET" in */*) ORG="${PURR_DATASET%%/*}/" ;; *) ORG="" ;; esac
 MODEL="${PURR_LOCAL_MODEL:-ornith-9b-128k}"
 TASKS=""
 if [ "${1:-}" = "--one" ]; then
@@ -20,28 +19,13 @@ else
     [ "${1:-}" = "--quick" ] && shift
     case " $* " in
         *" -i "*) ;;  # tasks picked by hand: just those
-        *) TASKS=$(grep -v '^#' tbench/quick-tasks.txt | awk -v org="$ORG" 'NF {printf "-i %s%s ", org, $1}') ;;
+        *) TASKS=$(grep -v '^#' tbench/quick-tasks.txt | awk 'NF {printf "-i %s ", $1}') ;;
     esac
 fi
-n=$#
-while [ "$n" -gt 0 ]; do  # -i name -> -i org/name, like fair.sh
-    a="$1"
-    shift
-    n=$((n - 1))
-    if [ "$a" = "-i" ] && [ "$n" -gt 0 ]; then
-        t="$1"
-        shift
-        n=$((n - 1))
-        case "$t" in */*) ;; *) t="$ORG$t" ;; esac
-        set -- "$@" -i "$t"
-    else
-        set -- "$@" "$a"
-    fi
-done
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-    echo "purr has uncommitted changes: commit first, so the results name the exact version" >&2
-    [ "${PURR_ALLOW_DIRTY:-}" = 1 ] || exit 1
-fi
+# the quick set's tasks join the ones picked by hand; common.sh gives them all the dataset's org/
+# shellcheck disable=SC2086  # $TASKS is a list of -i options
+set -- $TASKS "$@"
+. tbench/common.sh
 # the exact name (ornith-9b isn't ornith-9b-128k), with or without Ollama's :latest
 case "$(curl -fsS http://127.0.0.1:11434/api/tags 2>/dev/null)" in
     *"\"$MODEL\""*|*"\"$MODEL:latest\""*) ;;
@@ -53,5 +37,4 @@ export PURR_MODEL="ollama/$MODEL"
 python3 tbench/ollama_bridge.py 11435 "$$" >/dev/null 2>&1 &
 JOB_NAME="${PURR_JOB:-$(date +%Y-%m-%d__%H-%M-%S)}"
 python3 tbench/clean_images.py "$$" "$HOME/.local/state/purr/tbench/$JOB_NAME" 1 >/dev/null 2>&1 &
-# shellcheck disable=SC2086  # $TASKS is a list of -i options
-exec tbench/run.sh --job-name "$JOB_NAME" -k 1 -n 1 $TASKS --max-retries 3 --retry-include RuntimeError --ak max_steps=500 "$@"
+exec tbench/run.sh --job-name "$JOB_NAME" -k 1 -n 1 --max-retries 3 --retry-include RuntimeError --ak max_steps=500 "$@"

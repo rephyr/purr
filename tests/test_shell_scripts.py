@@ -46,6 +46,39 @@ def picked(argv):
     return [argv[i + 1] for i, a in enumerate(argv) if a == "-i"]
 
 
+def dirty_repo():
+    """GIT_DIR/GIT_WORK_TREE for a throwaway repo with an uncommitted change: what the scripts' git sees."""
+    repo = Path(tempfile.mkdtemp())
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(git + ["init", "-q"], check=True)
+    (repo / "f").write_text("a")
+    subprocess.run(git + ["add", "f"], check=True)
+    subprocess.run(git + ["commit", "-qm", "f"], check=True)
+    (repo / "f").write_text("b")
+    return {"GIT_DIR": str(repo / ".git"), "GIT_WORK_TREE": str(repo)}
+
+
+class CommonShTest(unittest.TestCase):
+    def test_both_refuse_uncommitted_changes_unless_allowed(self):
+        for script in ("fair.sh", "local.sh"):
+            rc, argv, err = run(script, "--one", PURR_ALLOW_DIRTY="", **dirty_repo())
+            self.assertNotEqual(rc, 0, script)
+            self.assertIsNone(argv, script)
+            self.assertIn("uncommitted changes", err)
+            rc, argv, err = run(script, "--one", **dirty_repo())  # PURR_ALLOW_DIRTY=1: a warning only
+            self.assertEqual(rc, 0, err)
+            self.assertIn("uncommitted changes", err)
+
+    def test_the_quick_set_and_hand_picked_tasks_get_the_org_once(self):
+        for script, n in (("fair.sh", 22), ("local.sh", 2)):  # local.sh: tasks picked by hand replace the quick set
+            rc, argv, err = run(script, "--quick", "-i", "terminal-bench/already", "-i", "bare")
+            self.assertEqual(rc, 0, err)
+            tasks = picked(argv)
+            self.assertEqual(len(tasks), n, script)
+            self.assertTrue(all(t.startswith("terminal-bench/") and t.count("/") == 1 for t in tasks), tasks)
+            self.assertEqual(tasks[-2:], ["terminal-bench/already", "terminal-bench/bare"])
+
+
 class FairShTest(unittest.TestCase):
     def test_quick_runs_the_quick_20_once(self):
         rc, argv, err = run("fair.sh", "--quick")

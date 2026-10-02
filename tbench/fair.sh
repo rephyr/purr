@@ -56,8 +56,6 @@ if [ -n "$DEEPSWE" ]; then
     fi
 fi
 export PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2-1}"
-# a package dataset (org/name, like 2.1) names its tasks org/task: mteb-retrieve -> terminal-bench/mteb-retrieve
-case "$PURR_DATASET" in */*) ORG="${PURR_DATASET%%/*}/" ;; *) ORG="" ;; esac
 ATTEMPTS=3
 TASKS=""
 case "$SIZE" in
@@ -65,28 +63,12 @@ case "$SIZE" in
     --one) ATTEMPTS=1 ;;
     --quick)
         ATTEMPTS=1
-        TASKS=$(grep -v '^#' "$QUICK_FILE" | awk -v org="$ORG" 'NF {printf "-i %s%s ", org, $1}') ;;
+        TASKS=$(grep -v '^#' "$QUICK_FILE" | awk 'NF {printf "-i %s ", $1}') ;;
 esac
-# the same for tasks picked by hand (-i name)
-n=$#
-while [ "$n" -gt 0 ]; do
-    a="$1"
-    shift
-    n=$((n - 1))
-    if [ "$a" = "-i" ] && [ "$n" -gt 0 ]; then
-        t="$1"
-        shift
-        n=$((n - 1))
-        case "$t" in */*) ;; *) t="$ORG$t" ;; esac
-        set -- "$@" -i "$t"
-    else
-        set -- "$@" "$a"
-    fi
-done
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-    echo "purr has uncommitted changes: commit first, so the results name the exact version" >&2
-    [ "${PURR_ALLOW_DIRTY:-}" = 1 ] || exit 1
-fi
+# the quick set's tasks join the ones picked by hand; common.sh gives them all the dataset's org/
+# shellcheck disable=SC2086  # $TASKS is a list of -i options
+set -- $TASKS "$@"
+. tbench/common.sh
 export PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}"
 case "$PURR_MODEL" in
     openrouter/*) ;;
@@ -122,6 +104,6 @@ JOB_NAME="${PURR_JOB:-$(date +%Y-%m-%d__%H-%M-%S)}"  # a known name: the cleaner
 python3 tbench/clean_images.py "$$" "$HOME/.local/state/purr/tbench/$JOB_NAME" "$ATTEMPTS" >/dev/null 2>&1 &
 # a trial whose container never started (RuntimeError: an image pull refused by a rate limit,
 # a compose hiccup) is tried again, up to 3 times with growing waits: it's not purr's answer
-# shellcheck disable=SC2086  # $TASKS is a list of -i options, $OFFLINE and $SUBMIT options
-exec tbench/run.sh --job-name "$JOB_NAME" -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS $OFFLINE $SUBMIT --max-retries 3 --retry-include RuntimeError \
+# shellcheck disable=SC2086  # $OFFLINE and $SUBMIT are options
+exec tbench/run.sh --job-name "$JOB_NAME" -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $OFFLINE $SUBMIT --max-retries 3 --retry-include RuntimeError \
     --ak hosts=deepseek --ak temperature=1.0 --ak top_p=0.95 --ak max_tokens=65536 --ak max_steps=500 "$@"
