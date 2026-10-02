@@ -18,6 +18,7 @@ Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the 
     max_steps=500         model calls per turn before purr would stop
     edge_cases=true       the final check also tries edge cases (purr leaves it off for API models)
     time_limit=900        seconds purr is told it has (default: the task's own limit, less 10%)
+    web=false             no fetch_url: leaderboard runs may not look at the benchmark's site or repo
 """
 
 
@@ -88,7 +89,8 @@ class PurrAgent(BaseInstalledAgent):
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
 
     def __init__(self, *args, mcp: str | bool = True, hosts: str | None = None, temperature=None,
-                 top_p=None, max_tokens=None, max_steps=200, edge_cases=None, time_limit=None, **kwargs):
+                 top_p=None, max_tokens=None, max_steps=200, edge_cases=None, time_limit=None, web=True,
+                 **kwargs):
         kwargs.setdefault("version", purr_version())
         super().__init__(*args, **kwargs)
         self.use_mcp = str(mcp).lower() not in ("false", "0", "no", "off")
@@ -98,6 +100,7 @@ class PurrAgent(BaseInstalledAgent):
         self.max_steps = int(max_steps)
         self.edge_cases = None if edge_cases is None else str(edge_cases).lower() in ("true", "1", "yes", "on")
         self.time_limit = float(time_limit) if time_limit else None
+        self.web = str(web).lower() not in ("false", "0", "no", "off")
 
     @staticmethod
     def name() -> str:
@@ -120,6 +123,10 @@ class PurrAgent(BaseInstalledAgent):
                       if spec.get("provider") == provider and spec.get("id") == model_id), {})
         known.pop("router", None)
         spec = {"context": 131072, **known, "provider": provider, "id": model_id}
+        if not self.web:  # on top of what the model already doesn't get (a small one: no helpers either)
+            from harness.limits import Limits
+            hidden = list(Limits.for_model(spec).hidden_tools)
+            spec["limits"] = {**(spec.get("limits") or {}), "hidden_tools": sorted({*hidden, "fetch_url"})}
         body = dict(spec.get("body") or {}, **self.sampling)
         if self.max_tokens:
             body["max_tokens"] = self.max_tokens

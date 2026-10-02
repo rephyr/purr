@@ -11,6 +11,8 @@
 #   tbench/fair.sh --one        all 89 tasks x 1 (~$2, about 2 hours): the same score, a wider margin
 #   tbench/fair.sh --quick      the quick set: the same 20 tasks x 1 (under $0.50, about an hour), for
 #                               comparing purr versions with each other (tbench/quick-tasks.txt)
+#   tbench/fair.sh --submit     for the Terminal-Bench 2.0 leaderboard (Harbor Hub): every task x 5,
+#                               purr's web tool off (no peeking at the benchmark); then tbench/submit.py
 #   tbench/fair.sh --deepswe [--one|--quick]
 #                               DeepSWE 1.1 instead: 113 tasks in real projects, no network in the task
 #                               container (purr only reaches the model), its quick set in
@@ -19,6 +21,13 @@ set -eu
 cd "$(dirname "$0")/.."
 QUICK_FILE=tbench/quick-tasks.txt
 OFFLINE=""
+SUBMIT=""
+if [ "${1:-}" = "--submit" ]; then
+    shift
+    # the leaderboard's own dataset (Harbor Hub package), 5 tries a task, the rest as always
+    PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2}"
+    SUBMIT="--ak web=false"
+fi
 if [ "${1:-}" = "--deepswe" ]; then
     shift
     PURR_DATASET="${PURR_DATASET:-datacurve/deep-swe-1-1}"
@@ -35,6 +44,7 @@ export PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2-1}"
 # a package dataset (org/name, like 2.1) names its tasks org/task: mteb-retrieve -> terminal-bench/mteb-retrieve
 case "$PURR_DATASET" in */*) ORG="${PURR_DATASET%%/*}/" ;; *) ORG="" ;; esac
 ATTEMPTS=3
+[ -n "$SUBMIT" ] && ATTEMPTS=5
 TASKS=""
 if [ "${1:-}" = "--one" ]; then
     shift
@@ -89,6 +99,6 @@ export PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}"
 python3 tbench/clean_images.py "$$" "$(date +%s)" >/dev/null 2>&1 &
 # a trial whose container never started (RuntimeError: an image pull refused by a rate limit,
 # a compose hiccup) is tried again, up to 3 times with growing waits: it's not purr's answer
-# shellcheck disable=SC2086  # $TASKS is a list of -i options, $OFFLINE one option
-exec tbench/run.sh -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS $OFFLINE --max-retries 3 --retry-include RuntimeError \
+# shellcheck disable=SC2086  # $TASKS is a list of -i options, $OFFLINE and $SUBMIT options
+exec tbench/run.sh -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS $OFFLINE $SUBMIT --max-retries 3 --retry-include RuntimeError \
     --ak hosts=deepseek --ak temperature=1.0 --ak top_p=0.95 --ak max_tokens=65536 --ak max_steps=500 "$@"
