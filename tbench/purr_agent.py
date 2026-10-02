@@ -148,9 +148,30 @@ class PurrAgent(BaseInstalledAgent):
                 self.logger.warning("installing %s failed, trying again in %ss", ", ".join(packages), pause)
                 await asyncio.sleep(pause)
 
+    async def missing_packages(self, environment):
+        """Only what the container lacks. Harbor's helper otherwise reinstalls everything, which
+        upgrades the image's own curl: on an old Debian image the mirror no longer had those
+        versions (404) and the task failed before purr started (qemu-alpine-ssh, three times)."""
+        checks = {"curl": "command -v curl || [ -x /opt/uv/uv ]", "ripgrep": "command -v rg",
+                  "tmux": "command -v tmux", "ca_certificates": "[ -s /etc/ssl/certs/ca-certificates.crt ]"}
+        missing = []
+        for package, check in checks.items():
+            result = await self.exec_as_root(environment, command=f"{check} >/dev/null 2>&1 && echo yes || echo no")
+            if "yes" not in (getattr(result, "stdout", None) or ""):
+                missing.append(package)
+        return tuple(missing)
+
     async def install(self, environment: BaseEnvironment) -> None:
-        # tmux: purr's terminal sessions survive it, so a VM or server a task needs stays up
-        await self.install_packages(environment, ("curl", "ca_certificates", "ripgrep", "tmux"))
+        missing = await self.missing_packages(environment)
+        try:
+            await self.install_packages(environment, missing)
+        except Exception:  # noqa: BLE001 - Harbor raises its own error types for a failed command
+            # tmux is only nice to have (purr's terminal falls back to its own sessions without it)
+            needed = tuple(p for p in missing if p != "tmux")
+            if needed == missing:
+                raise
+            self.logger.warning("installing tmux failed: purr's terminal sessions run without it")
+            await self.install_packages(environment, needed)
         with tempfile.TemporaryDirectory() as tmp:
             pack = Path(tmp) / "purr"
             pack.mkdir()
