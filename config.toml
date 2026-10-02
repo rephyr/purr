@@ -139,6 +139,12 @@ provider = "ollama"
 id = "gpt-oss-32k"
 context = 32768
 
+# the same at 64k, still all on a 16 GB GPU (13 GB): what tbench/local.sh runs gpt-oss with
+[models.gpt-oss-64k]
+provider = "ollama"
+id = "gpt-oss-64k"
+context = 65536
+
 [models.qwen3_6-32k]
 vision = true  # can look at images (look_at_image)
 provider = "ollama"

@@ -24,6 +24,7 @@ Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the 
 
 import asyncio
 import json
+import os
 import shlex
 import shutil
 import sys
@@ -83,6 +84,38 @@ def to_toml(data):
     return "\n".join(out).strip() + "\n"
 
 
+def ollama_default_context():
+    """Ollama's context for models without num_ctx: OLLAMA_CONTEXT_LENGTH (here, in its service), else 4096."""
+    import re
+    import subprocess
+    env = os.environ.get("OLLAMA_CONTEXT_LENGTH")
+    if not env:
+        try:
+            out = subprocess.run(["systemctl", "show", "ollama", "-p", "Environment"], capture_output=True,
+                                 text=True, timeout=5).stdout
+            env = (re.search(r"OLLAMA_CONTEXT_LENGTH=(\d+)", out) or [None, None])[1]
+        except (OSError, subprocess.SubprocessError):
+            env = None
+    return int(env) if env and str(env).isdigit() else 4096
+
+
+def ollama_context(model_id, default=None):
+    """The context Ollama runs a model with (its num_ctx), or Ollama's own default."""
+    import urllib.request
+    default = default or ollama_default_context()
+    try:
+        req = urllib.request.Request("http://127.0.0.1:11434/api/show", data=json.dumps({"model": model_id}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        info = json.loads(urllib.request.urlopen(req, timeout=10).read())
+    except (OSError, ValueError):
+        return default
+    for line in (info.get("parameters") or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "num_ctx" and parts[1].isdigit():
+            return int(parts[1])
+    return default
+
+
 class PurrAgent(BaseInstalledAgent):
     """purr, installed into the task's container and run once in plain mode."""
 
@@ -122,6 +155,10 @@ class PurrAgent(BaseInstalledAgent):
         known = next((dict(spec) for spec in mine["models"].values()
                       if spec.get("provider") == provider and spec.get("id") == model_id), {})
         known.pop("router", None)
+        if not known and provider == "ollama":
+            # an Ollama model purr's config doesn't list: its real context, or purr would think it
+            # has 128k and Ollama would quietly cut the start of the chat (purr's instructions)
+            known["context"] = ollama_context(model_id)
         spec = {"context": 131072, **known, "provider": provider, "id": model_id}
         if not self.web:  # on top of what the model already doesn't get (a small one: no helpers either)
             from harness.limits import Limits
