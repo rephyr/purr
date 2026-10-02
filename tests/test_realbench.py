@@ -8,7 +8,6 @@ import json
 import os
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -86,17 +85,20 @@ class JobFolderTest(unittest.TestCase):
 
     def test_finds_its_own_job_folder(self):
         jobs = Path(tempfile.mkdtemp())
-        old = jobs / "old"
-        old.mkdir()
-        (old / "config.json").write_text("{}")
-        os.utime(old, (time.time() - 3600, time.time() - 3600))
         run = realbench.Run("terminal-bench", "quick")
         with mock.patch.object(realbench, "JOBS", jobs):
             self.assertIsNone(run.find_job())
-            new = jobs / "new"
-            new.mkdir()
-            (new / "config.json").write_text("{}")
-            self.assertEqual(run.find_job(), new)
+            other = jobs / "2026-10-02__23-00-00"  # another run, newer: not ours
+            other.mkdir()
+            (other / "config.json").write_text("{}")
+            self.assertIsNone(run.find_job())
+            mine = jobs / run.job_name
+            mine.mkdir()
+            (mine / "config.json").write_text("{}")
+            self.assertEqual(run.find_job(), mine)
+        with mock.patch.object(realbench.subprocess, "Popen") as popen:
+            run.start()
+        self.assertEqual(popen.call_args.kwargs["env"]["PURR_JOB"], run.job_name)
 
 
 class PlanTest(unittest.TestCase):
@@ -195,9 +197,15 @@ class ImageCleanerTest(unittest.TestCase):
             (job / trial / "result.json").write_text(json.dumps({"task_name": task}))
         (job / "b__1").mkdir()  # still running: no result yet
 
+    def job(self):
+        return self.mod.JOBS / "2026-10-02__20-00-00"
+
     def test_only_graded_tasks_with_a_prebuilt_image(self):
-        self.assertEqual(self.mod.graded_images(time.time() - 60), {"img-a"})
-        self.assertEqual(self.mod.graded_images(time.time() + 3600), set())  # an older job isn't touched
+        self.assertEqual(self.mod.graded_images(self.job(), 1), {"img-a"})
+
+    def test_an_image_waits_for_every_try_of_its_task(self):
+        self.assertEqual(self.mod.graded_images(self.job(), 3), set())  # 1 of 3 tries graded
+        self.assertEqual(self.mod.graded_images(self.job(), 3, final=True), {"img-a"})  # the run ended
 
     def test_an_image_in_use_is_tried_again_later(self):
         calls = []
@@ -208,7 +216,7 @@ class ImageCleanerTest(unittest.TestCase):
             return mock.Mock(returncode=1 if in_use else 0, stderr="image is being used" if in_use else "")
         with mock.patch.object(self.mod.subprocess, "run", docker), mock.patch.object(self.mod.time, "sleep"), \
                 mock.patch.object(self.mod, "alive", side_effect=[True, False]):
-            self.mod.main(["1", str(time.time() - 60)])
+            self.mod.main(["1", str(self.job()), "1"])
         self.assertEqual(calls, ["img-a", "img-a"])  # refused while in use, removed on the next round
 
 
@@ -250,6 +258,11 @@ class WindowTest(unittest.IsolatedAsyncioTestCase):
         # it once kept its run in self.run, which hid App.run: purr bench --real crashed at once
         app = realbench_app.RealBenchApp({"models": {}, "providers": {}})
         self.assertTrue(callable(app.run))
+        # nor any other of Textual's own methods (it once had its own watch(), hiding DOMNode.watch)
+        from textual.app import App
+        for name in ("run", "watch", "exit", "notify", "refresh", "query"):
+            self.assertIs(getattr(realbench_app.RealBenchApp, name), getattr(App, name), name)
+        self.assertEqual(realbench_app._mtime(Path("/no/such/log")), 0.0)
 
     async def test_from_setup_to_mochis_verdict(self):
         job = make_job()

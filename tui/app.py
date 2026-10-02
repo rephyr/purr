@@ -1291,8 +1291,8 @@ class PurrApp(App):
             self.prompt.placeholder = self.MODE_HINT[arg]
         elif name == "plan":
             self.prompt.placeholder = self.MODE_HINT["plan"]
-        if result is None:
-            self.exit()
+        if result is None:  # /quit: stop the turn going on first, like ctrl+q
+            self._quit()
             return
         if isinstance(result, dict):  # /init or one of your own commands
             self.add_user(text)
@@ -1495,6 +1495,11 @@ class PurrApp(App):
         self.chat.scroll_page_down() if direction > 0 else self.chat.scroll_page_up()
 
     async def action_quit(self):
+        self._quit()
+
+    def _quit(self):
+        """Stop the agent's turn (its thread ends at the next step) and close. A plain exit()
+        waited for the whole turn to finish."""
         self.closing = True
         if self.agent:
             self.agent.stop_flag = True

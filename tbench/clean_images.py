@@ -1,6 +1,6 @@
 """Remove a task's Docker image once its trials are graded, while a benchmark runs.
 
-    tbench/clean_images.py <pid of the run> <start time, unix seconds>
+    tbench/clean_images.py <pid of the run> <its job folder> <tries per task>
 
 DeepSWE gives every task its own prebuilt image (about 2.7 GB each, 113 of them), and Harbor only
 removes images it built itself: a whole run would fill the disk a third of the way in. fair.sh
@@ -31,20 +31,22 @@ def image_of(task_name):
     return None
 
 
-def graded_images(since):
-    """Images of the tasks with a graded trial in the jobs started since then."""
-    images = set()
-    for job in JOBS.glob("*/"):
-        if job.stat().st_mtime < since - 5:
+def graded_images(job, attempts, final=False):
+    """Images of the tasks in this job whose tries are all graded (any graded try once the run
+    has ended): removing one sooner would make the next try download it again."""
+    graded = {}
+    for result in Path(job).glob("*/result.json"):
+        try:
+            name = json.loads(result.read_text()).get("task_name")
+        except (OSError, ValueError):
             continue
-        for result in job.glob("*/result.json"):
-            try:
-                name = json.loads(result.read_text()).get("task_name")
-            except (OSError, ValueError):
-                continue
-            image = image_of(name) if name else None
-            if image:
-                images.add(image)
+        if name:
+            graded[name] = graded.get(name, 0) + 1
+    images = set()
+    for name, n in graded.items():
+        image = image_of(name) if (final or n >= attempts) else None
+        if image:
+            images.add(image)
     return images
 
 
@@ -68,11 +70,11 @@ def main(argv):
     # q in the bench window (or ctrl+c) interrupts the whole process group: keep going until Harbor
     # has stopped, then make the last pass, or the images of the last graded tasks stay behind
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    pid, since = int(argv[0]), float(argv[1])
+    pid, job, attempts = int(argv[0]), Path(argv[1]), int(argv[2])
     gone = set()
     while True:
         running = alive(pid)
-        for image in sorted(graded_images(since) - gone):
+        for image in sorted(graded_images(job, attempts, final=not running) - gone):
             if remove(image):
                 gone.add(image)
         if not running:

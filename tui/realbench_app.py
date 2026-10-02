@@ -15,6 +15,7 @@ from rich.align import Align
 from rich.console import Group
 from rich.table import Table
 from rich.text import Text
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical, VerticalScroll
@@ -110,6 +111,14 @@ def big(text, phase=0.0):
         if r < 4:
             out.append("\n")
     return Align.center(out)
+
+
+def _mtime(path):
+    """A log's last change, or 0 if Harbor just removed it (stat() would stop the update timer)."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def landmarks(entries):
@@ -396,13 +405,13 @@ class RealBenchApp(App):
         if name and name != self.selected and self.job_run:  # following moves the cursor after watch(): same name
             if self.selected is not None:
                 self.follow = False  # you picked one: stay on it (f follows again)
-            self.watch(name)
+            self.show_trial(name)
 
     def action_follow(self):
         self.follow = True
         self.notify("following the newest task ♡", timeout=2)
 
-    def watch(self, name):
+    def show_trial(self, name):  # not "watch": that's Textual's own method on every widget
         self.selected = name
         self.live_pos, self.live_buf = 0, ""
         log = self.query_one("#live", RichLog)
@@ -418,9 +427,9 @@ class RealBenchApp(App):
     def draw_live(self):
         working = [t for t in self.trials if t["state"] == "working" and t["log"].exists()]
         if self.follow and working:
-            newest = max(working, key=lambda t: t["log"].stat().st_mtime)
+            newest = max(working, key=lambda t: _mtime(t["log"]))
             if newest["name"] != self.selected:
-                self.watch(newest["name"])
+                self.show_trial(newest["name"])
                 table = self.query_one("#trials", DataTable)
                 table.move_cursor(row=table.get_row_index(newest["name"]))
         t = next((t for t in self.trials if t["name"] == self.selected), None)
@@ -587,14 +596,23 @@ class RealBenchApp(App):
         if self.job_run.stopping or self.job_run.proc.returncode != 0:
             self.notify("only a whole run can be published ♡", severity="warning")
             return
+        self.published = True  # not twice, while it runs
+        self.notify("publishing ♡", timeout=3)
+        self.publish_in_background()
+
+    @work(thread=True)
+    def publish_in_background(self):
+        """publish.py takes a few seconds: not on the window's own thread, or it freezes meanwhile."""
         res = subprocess.run(["python3", str(realbench.ROOT / "tbench" / "publish.py"), str(self.job_run.job)],
                              capture_output=True, text=True, cwd=realbench.ROOT)
-        out = (res.stdout + res.stderr).strip().splitlines()
-        if res.returncode == 0:
-            self.published = True
+        self.call_from_thread(self.published_it, res.returncode, (res.stdout + res.stderr).strip().splitlines())
+
+    def published_it(self, code, out):
+        if code == 0:
             self.mood("celebrating", "published: commit benchmarks/ to share it", hold=6)
             self.notify(out[0] if out else "published ♡", timeout=8)
         else:
+            self.published = False  # it can be tried again
             self.notify(out[-1] if out else "publishing failed", severity="error", timeout=10)
 
     def action_open_job(self):

@@ -219,13 +219,19 @@ class BenchApp(App):
         models, tasks, harnesses, runs = self.plan
 
         def events(kind, info):
-            self.call_from_thread(self.bench_event, kind, info)
+            try:
+                self.call_from_thread(self.bench_event, kind, info)
+            except RuntimeError:  # the window has closed (ctrl+q): let the run finish its cleanup
+                pass
         try:
             bench.run_all(self.config, models, tasks, harnesses, runs, self.args.timeout, self.out_dir, events)
         except Exception as e:  # noqa: BLE001 - show it rather than vanish
-            self.call_from_thread(self.notify, f"bench broke: {type(e).__name__}: {e}", severity="error")
-            self.call_from_thread(self.bench_event, "finished", {"results": self.results, "summary":
-                                  bench.summarise(self.results), "report": None})
+            try:
+                self.call_from_thread(self.notify, f"bench broke: {type(e).__name__}: {e}", severity="error")
+                self.call_from_thread(self.bench_event, "finished", {"results": self.results, "summary":
+                                      bench.summarise(self.results), "report": None})
+            except RuntimeError:  # closed meanwhile
+                pass
 
     # ---- what run_all tells us ----
 
@@ -495,6 +501,8 @@ class BenchApp(App):
         self.cat_until = time.monotonic() + hold if hold else 0.0
 
     def tick(self):
+        if not self.screen.query("#benchcat"):  # closing: the widgets are already gone
+            return
         self.cat_tick += 1
         now = time.monotonic()
         if self.cat_until and now > self.cat_until and self.running:

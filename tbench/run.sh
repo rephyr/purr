@@ -19,14 +19,17 @@ PURR=$(cd "$(dirname "$0")/.." && pwd)
 MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}"
 PROVIDER="${MODEL%%/*}"
 # the provider's key, the way purr finds it (environment, purr --key, opencode auth)
-eval "$("$PURR/.venv/bin/python" -c "
-import sys, tomllib; sys.path.insert(0, '$PURR')
+# (in a variable first: `eval "$(...)"` returns 0 even when the snippet fails, so set -e
+# would never stop a run that has no key)
+KEY_LINE=$("$PURR/.venv/bin/python" -c "
+import shlex, sys, tomllib; sys.path.insert(0, '$PURR')
 from harness.agent import provider_key
 p = tomllib.load(open('$PURR/config.toml', 'rb'))['providers'].get('$PROVIDER')
 if not p: sys.exit('purr has no provider $PROVIDER')
 env, key = p.get('api_key_env'), provider_key(p)
 if env and not key: sys.exit(f'no key for $PROVIDER: purr --key $PROVIDER')
-print(f'export {env}={key!r}' if env else '')")"
+print(f'export {env}={shlex.quote(key)}' if env else '')") || exit 1
+eval "$KEY_LINE"
 export PYTHONPATH="$PURR${PYTHONPATH:+:$PYTHONPATH}"
 if [ "${1:-}" = "resume" ]; then
     exec harbor jobs resume -p "$2" -f RuntimeError

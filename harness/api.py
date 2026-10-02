@@ -48,6 +48,10 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
                        retry=e.code == 429 or e.code >= 500, status=e.code) from None
     except urllib.error.URLError as e:
         raise ApiError(f"can't reach {base_url}: {e.reason}", retry=True) from None
+    except (http.client.HTTPException, ConnectionError, socket.timeout) as e:
+        # the server hung up or went quiet before answering (RemoteDisconnected, a reset, a
+        # timeout): urllib doesn't wrap these, so without this a run would end in a traceback
+        raise ApiError(f"can't reach {base_url}: {type(e).__name__}: {e}", retry=True) from None
 
     try:
         with resp:

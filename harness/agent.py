@@ -1415,6 +1415,7 @@ class Agent:
         self._background = False  # started something that should keep running (a terminal, cmd &)
         self._hedged = False   # one-shot: told once that nobody will answer its question
         self._evidence = False  # one-shot: the second look (EVIDENCE_PASS) at most once
+        self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
         cap = self._step_cap()
         try:
             while True:
@@ -1436,14 +1437,19 @@ class Agent:
                     if used > ctx * self.limits.prune_at:
                         self._prune_old_tools()
                         used = self.context_used()
-                    if used > ctx * self.limits.compact_at:
+                    if used > ctx * self.limits.compact_at and len(self.messages) >= self._compact_again_at:
                         try:
-                            self.compact(auto=True)
+                            done = self.compact(auto=True)
                         except ApiError as e:
                             # the summary call failed (a full context, a server hiccup): free what
                             # can be freed without a model and carry on, rather than end the run
                             self.view.note(f"compacting failed ({e}), trimming old output instead", "warn")
+                            done = None
+                        if not done:
+                            # nothing was freed: trim old output, and don't try again until the chat
+                            # has grown (every try is a long call that would fail the same way)
                             self._prune_old_tools(keep=1)
+                            self._compact_again_at = len(self.messages) + 10
                 try:
                     if (self._helper_on("reminders") and self.mode == "code" and not self.helper
                             and steps > 1 and (steps - 1) % REMIND_EVERY == 0):
