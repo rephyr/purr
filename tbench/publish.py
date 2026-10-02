@@ -104,7 +104,7 @@ def readme(results):
         "",
         "As close as we can get to the settings DeepSeek used to run its model through other harnesses:",
         "",
-        "- **model:** DeepSeek V4.1 Flash, served by DeepSeek itself (OpenRouter pinned to the `deepseek` host,",
+        "- **model:** DeepSeek V4.1 Flash, served by DeepSeek itself (OpenRouter pinned to the `deepseek` host,\n  which uses prompts for training, so the account allows that;",
         "  no fallback to other hosts, some of which serve it at fp4/fp8)",
         "- **sampling:** temperature 1.0, top_p 0.95; up to 64k tokens per reply",
         "- **limits:** 1M context, 500 model calls per task, each task's own time limit",
