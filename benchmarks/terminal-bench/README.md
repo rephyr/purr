@@ -28,6 +28,15 @@ As close as we can get to the settings DeepSeek used to run its model through ot
 |---|---|---|---|---|---|---|---|---|
 | (none yet) |
 
+### Terminal-Bench 2.1: one-try runs, all 89 tasks, 1 attempt each
+
+The same score as a full run (pass@1) in about 2 hours instead of 5, with a wider margin
+(see ±). Fine to set next to the reference scores below, keeping the ± in mind.
+
+| purr | date | pass@1 | timeouts | errors | cost | tokens in / cached / out | median time |
+|---|---|---|---|---|---|---|---|
+| (none yet) |
+
 ### Terminal-Bench 2.1: quick runs, the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each
 
 Cheap (well under $1 with DeepSeek V4.1 Flash) and quick, for seeing whether a purr version got
