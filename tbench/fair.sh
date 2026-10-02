@@ -96,9 +96,10 @@ PY
 export PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}"
 # prebuilt task images (DeepSWE: ~2.7 GB each) stay after their trial: remove each once it's graded,
 # or a whole run fills the disk. It watches this process ($$, Harbor after the exec) and stops with it.
-python3 tbench/clean_images.py "$$" "$(date +%s)" >/dev/null 2>&1 &
+JOB_NAME="${PURR_JOB:-$(date +%Y-%m-%d__%H-%M-%S)}"  # a known name: the cleaner and the window find it
+python3 tbench/clean_images.py "$$" "$HOME/.local/state/purr/tbench/$JOB_NAME" "$ATTEMPTS" >/dev/null 2>&1 &
 # a trial whose container never started (RuntimeError: an image pull refused by a rate limit,
 # a compose hiccup) is tried again, up to 3 times with growing waits: it's not purr's answer
 # shellcheck disable=SC2086  # $TASKS is a list of -i options, $OFFLINE and $SUBMIT options
-exec tbench/run.sh -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS $OFFLINE $SUBMIT --max-retries 3 --retry-include RuntimeError \
+exec tbench/run.sh --job-name "$JOB_NAME" -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS $OFFLINE $SUBMIT --max-retries 3 --retry-include RuntimeError \
     --ak hosts=deepseek --ak temperature=1.0 --ak top_p=0.95 --ak max_tokens=65536 --ak max_steps=500 "$@"

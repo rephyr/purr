@@ -195,9 +195,15 @@ class ImageCleanerTest(unittest.TestCase):
             (job / trial / "result.json").write_text(json.dumps({"task_name": task}))
         (job / "b__1").mkdir()  # still running: no result yet
 
+    def job(self):
+        return self.mod.JOBS / "2026-10-02__20-00-00"
+
     def test_only_graded_tasks_with_a_prebuilt_image(self):
-        self.assertEqual(self.mod.graded_images(time.time() - 60), {"img-a"})
-        self.assertEqual(self.mod.graded_images(time.time() + 3600), set())  # an older job isn't touched
+        self.assertEqual(self.mod.graded_images(self.job(), 1), {"img-a"})
+
+    def test_an_image_waits_for_every_try_of_its_task(self):
+        self.assertEqual(self.mod.graded_images(self.job(), 3), set())  # 1 of 3 tries graded
+        self.assertEqual(self.mod.graded_images(self.job(), 3, final=True), {"img-a"})  # the run ended
 
     def test_an_image_in_use_is_tried_again_later(self):
         calls = []
@@ -208,7 +214,7 @@ class ImageCleanerTest(unittest.TestCase):
             return mock.Mock(returncode=1 if in_use else 0, stderr="image is being used" if in_use else "")
         with mock.patch.object(self.mod.subprocess, "run", docker), mock.patch.object(self.mod.time, "sleep"), \
                 mock.patch.object(self.mod, "alive", side_effect=[True, False]):
-            self.mod.main(["1", str(time.time() - 60)])
+            self.mod.main(["1", str(self.job()), "1"])
         self.assertEqual(calls, ["img-a", "img-a"])  # refused while in use, removed on the next round
 
 
