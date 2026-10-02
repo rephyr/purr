@@ -152,7 +152,7 @@ class PurrAgent(BaseInstalledAgent):
         """Only what the container lacks. Harbor's helper otherwise reinstalls everything, which
         upgrades the image's own curl: on an old Debian image the mirror no longer had those
         versions (404) and the task failed before purr started (qemu-alpine-ssh, three times)."""
-        checks = {"curl": "command -v curl || [ -x /opt/uv/uv ]", "ripgrep": "command -v rg",
+        checks = {"curl": "command -v curl || /opt/uv/uv --version", "ripgrep": "command -v rg",
                   "tmux": "command -v tmux", "ca_certificates": "[ -s /etc/ssl/certs/ca-certificates.crt ]"}
         missing = []
         for package, check in checks.items():
@@ -161,7 +161,23 @@ class PurrAgent(BaseInstalledAgent):
                 missing.append(package)
         return tuple(missing)
 
+    async def upload_uv(self, environment):
+        """This machine's uv, copied in: then the container needs no curl to fetch it. curl was the
+        package that failed (qemu-alpine-ssh's old Debian mirror no longer has its version). uv is
+        a glibc build, so on a musl image (Alpine) it doesn't run and curl fetches one as before."""
+        uv = shutil.which("uv")
+        if not uv:
+            return
+        try:
+            await self.exec_as_root(environment, command="mkdir -p /opt/uv")
+            await environment.upload_file(uv, "/opt/uv/uv")
+            await self.exec_as_root(environment, command="chmod 755 /opt/uv/uv; /opt/uv/uv --version >/dev/null 2>&1 "
+                                                         "|| rm -f /opt/uv/uv")
+        except Exception:  # noqa: BLE001 - then the curl way below
+            self.logger.warning("copying uv into the container failed: fetching it with curl")
+
     async def install(self, environment: BaseEnvironment) -> None:
+        await self.upload_uv(environment)
         missing = await self.missing_packages(environment)
         try:
             await self.install_packages(environment, missing)
