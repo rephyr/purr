@@ -1,0 +1,25 @@
+# The DeepSWE quick set: 20 DeepSWE 1.1 tasks, run once each (tbench/fair.sh --deepswe --quick).
+# Picked by language in the full set's proportions (6 TypeScript, 6 Go, 6 Python, 1 Rust,
+# 1 JavaScript of 35/34/34/5/5), at random with seed 2026, then frozen: every purr version runs
+# these same 20, so quick runs compare versions with each other, not with the published scores.
+# task                                                language    category
+dynamodb-toolbox-conditional-attribute-requirements   typescript  feature_request
+dynamodb-toolbox-lazy-recursive-schemas               typescript  feature_request
+meriyah-explicit-resource-declarations                typescript  feature_request
+quill-shared-toolbar-focus                            typescript  feature_request
+ts-pattern-match-each                                 typescript  feature_request
+vitest-duration-sharding                              typescript  feature_request
+abs-module-cache-flags                                go          enhancement
+etree-xml-diff-patch                                  go          feature_request
+opa-rego-rule-profiling                               go          feature_request
+task-task-graph-export                                go          feature_request
+tengo-destructuring-bindings                          go          feature_request
+wazero-multi-module-snapshots                         go          feature_request
+bandit-interprocedural-taint-checks                   python      feature_request
+cattrs-partial-structuring-recovery                   python      feature_request
+fastapi-deprecation-response-headers                  python      feature_request
+kombu-single-active-consumer-priority                 python      feature_request
+mashumaro-flattened-dataclass-fields                  python      feature_request
+returns-validated-error-accumulation                  python      feature_request
+boa-hierarchical-evaluation-cancellation              rust        feature_request
+testem-per-launcher-reports                           javascript  feature_request

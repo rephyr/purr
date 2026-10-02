@@ -11,8 +11,21 @@
 #   tbench/fair.sh --one        all 89 tasks x 1 (~$2, about 2 hours): the same score, a wider margin
 #   tbench/fair.sh --quick      the quick set: the same 20 tasks x 1 (under $0.50, about an hour), for
 #                               comparing purr versions with each other (tbench/quick-tasks.txt)
+#   tbench/fair.sh --deepswe [--one|--quick]
+#                               DeepSWE 1.1 instead: 113 tasks in real projects, no network in the task
+#                               container (purr only reaches the model), its quick set in
+#                               tbench/quick-tasks-deepswe.txt
 set -eu
 cd "$(dirname "$0")/.."
+QUICK_FILE=tbench/quick-tasks.txt
+OFFLINE=""
+if [ "${1:-}" = "--deepswe" ]; then
+    shift
+    PURR_DATASET="${PURR_DATASET:-datacurve/deep-swe-1-1}"
+    QUICK_FILE=tbench/quick-tasks-deepswe.txt
+    # its tasks run with no network; the agent may still reach the model, like in DeepSeek's runs
+    OFFLINE="--allow-agent-host openrouter.ai"
+fi
 export PURR_DATASET="${PURR_DATASET:-terminal-bench/terminal-bench-2-1}"
 # a package dataset (org/name, like 2.1) names its tasks org/task: mteb-retrieve -> terminal-bench/mteb-retrieve
 case "$PURR_DATASET" in */*) ORG="${PURR_DATASET%%/*}/" ;; *) ORG="" ;; esac
@@ -24,7 +37,7 @@ if [ "${1:-}" = "--one" ]; then
 elif [ "${1:-}" = "--quick" ]; then
     shift
     ATTEMPTS=1
-    TASKS=$(grep -v '^#' tbench/quick-tasks.txt | awk -v org="$ORG" 'NF {printf "-i %s%s ", org, $1}')
+    TASKS=$(grep -v '^#' "$QUICK_FILE" | awk -v org="$ORG" 'NF {printf "-i %s%s ", org, $1}')
 fi
 # the same for tasks picked by hand (-i name)
 n=$#
@@ -66,6 +79,6 @@ except urllib.error.HTTPError as e:
     sys.exit(f"DeepSeek's host on OpenRouter refused a test request ({e.code}): {detail}{hint}")
 PY
 export PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}"
-# shellcheck disable=SC2086  # $TASKS is a list of -i options
-exec tbench/run.sh -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS \
+# shellcheck disable=SC2086  # $TASKS is a list of -i options, $OFFLINE one option
+exec tbench/run.sh -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS $OFFLINE \
     --ak hosts=deepseek --ak temperature=1.0 --ak top_p=0.95 --ak max_tokens=65536 --ak max_steps=500 "$@"
