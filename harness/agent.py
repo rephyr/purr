@@ -1175,6 +1175,7 @@ class Agent:
     def turn(self, text):
         self.stop_flag = False
         self.cut_off = None
+        self.failed = None
         if self.mode == "plan" and not self.helper:
             return self.plan_turn(text)
         if not self.title:
@@ -1227,6 +1228,7 @@ class Agent:
                     reply = self._call()
                 except ApiError as e:
                     self.view.note(f"api error: {e}", "error")
+                    self.failed = str(e)  # the turn ended on the model server, not on the task
                     break
                 turn_cost += self._count(reply["usage"])
                 self.turn_stats["out"] += (reply["usage"] or {}).get("completion_tokens", 0)

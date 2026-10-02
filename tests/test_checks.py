@@ -229,5 +229,21 @@ class CutOffTest(unittest.TestCase):
         self.assertEqual(calls["n"], 3)  # the first try and two nudges, then it stops
 
 
+
+class ApiFailureTest(unittest.TestCase):
+    def test_a_turn_ended_by_the_api_is_marked_failed(self):
+        from harness.api import ApiError
+        a = agent()
+
+        def boom(*args, **kwargs):
+            raise ApiError("404: no endpoints", status=404)
+        a._call = boom
+        a.turn("do it")
+        self.assertIn("404", a.failed)
+        scripted(a, [reply("done")])
+        a.turn("again")
+        self.assertIsNone(a.failed)
+
+
 if __name__ == "__main__":
     unittest.main()

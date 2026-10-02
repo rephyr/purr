@@ -237,7 +237,9 @@ def main():
 
     if args.prompt:
         send(agent, view, args.prompt)
-        return 0
+        # a one-shot run that ended on an API error failed: say so with the exit code (benchmarks
+        # count it as an error to re-run, not as a task purr got wrong)
+        return 3 if getattr(agent, "failed", None) else 0
     plain(agent, view)
     return 0
 
