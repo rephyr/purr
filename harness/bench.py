@@ -762,11 +762,15 @@ def new_out_dir():
 
 PUBLISHED = Path(__file__).resolve().parent.parent / "benchmarks" / "purr-bench"
 
-NOTE = """> **Not an official benchmark.** These are purr's own small tasks (`bench/tasks/`), run with
-> `purr bench`, mostly on local models and often just once each, to debug, iterate on and improve
-> the harness. They're nowhere near official numbers: a task or two either way is noise, and the
-> tasks were written alongside purr. For official, comparable numbers see
-> [Terminal-Bench](../terminal-bench/)."""
+NOTE = """> **Not an official benchmark.** `purr bench` is for improving purr as a harness for
+> **small, local models**: purr's goal is to get the most out of a ~10-35B model on your own GPU,
+> on longer and vaguely worded tasks. These are purr's own small tasks (`bench/tasks/`), often run
+> just once each, to debug, iterate on and improve the harness: a task or two either way is noise,
+> and the tasks were written alongside purr. It's **not meant for judging large models** (big API
+> models solve most of these). For official, comparable numbers see [Terminal-Bench](../terminal-bench/).
+>
+> **Hardware:** AMD Ryzen 9 5900X (12 cores), 32 GB RAM, NVIDIA RTX 4080 (16 GB VRAM), Arch Linux;
+> local models through Ollama. Speeds and times are this machine's: yours will differ."""
 
 
 HARNESS_NAMES = {"purr": "purr", "opencode": "OpenCode", "human": "you", "purr-nomcp": "purr (no MCP)",
@@ -791,12 +795,18 @@ def _label(s, many_models):
 
 
 def _model_name(key):
+    """`key` (its id), and where it ran: on this machine's GPU, or an API model."""
     try:
         import tomllib
         spec = tomllib.loads((PUBLISHED.parent.parent / "config.toml").read_text())["models"].get(key, {})
-        return f"`{key}` ({spec['id']})" if spec.get("id") and spec["id"] != key else f"`{key}`"
-    except (OSError, ValueError, KeyError):
-        return f"`{key}`"
+    except (OSError, ValueError):
+        spec = {}
+    name = f"`{key}` ({spec['id']})" if spec.get("id") and spec["id"] != key else f"`{key}`"
+    if spec.get("provider") in LOCAL:
+        return name + ", a local model on the RTX 4080"
+    if spec.get("provider"):
+        return name + ", an API model: a check on the harness, not purr's small-model goal"
+    return name
 
 
 def _run_section(p, heading):

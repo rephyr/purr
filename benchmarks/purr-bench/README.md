@@ -1,16 +1,20 @@
 # purr bench
 
-> **Not an official benchmark.** These are purr's own small tasks (`bench/tasks/`), run with
-> `purr bench`, mostly on local models and often just once each, to debug, iterate on and improve
-> the harness. They're nowhere near official numbers: a task or two either way is noise, and the
-> tasks were written alongside purr. For official, comparable numbers see
-> [Terminal-Bench](../terminal-bench/).
+> **Not an official benchmark.** `purr bench` is for improving purr as a harness for
+> **small, local models**: purr's goal is to get the most out of a ~10-35B model on your own GPU,
+> on longer and vaguely worded tasks. These are purr's own small tasks (`bench/tasks/`), often run
+> just once each, to debug, iterate on and improve the harness: a task or two either way is noise,
+> and the tasks were written alongside purr. It's **not meant for judging large models** (big API
+> models solve most of these). For official, comparable numbers see [Terminal-Bench](../terminal-bench/).
+>
+> **Hardware:** AMD Ryzen 9 5900X (12 cores), 32 GB RAM, NVIDIA RTX 4080 (16 GB VRAM), Arch Linux;
+> local models through Ollama. Speeds and times are this machine's: yours will differ.
 
 ## Latest: 2026-10-02 · ds-flash-or · 9 tasks, vague prompts
 
 **purr** solved 8 of 9 tasks · OpenCode solved 7 of 9 tasks
 
-purr before 0.3 · model `ds-flash-or` (deepseek/deepseek-v4.1-flash) · **bold** = better
+purr before 0.3 · model `ds-flash-or` (deepseek/deepseek-v4.1-flash), an API model: a check on the harness, not purr's small-model goal · **bold** = better
 
 | | purr | OpenCode |
 |---|---|---|
