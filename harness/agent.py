@@ -216,6 +216,7 @@ FINAL_CHECK_LIGHT = """(purr: before you finish, read the user's request again. 
 including any tests they asked for, and checked where you can?{services} If not, do it now; \
 otherwise reply with a short summary of what you changed.)"""
 
+TEST_TIMEOUT = 180  # seconds for a run of the project's tests (the final check, plan mode)
 REMIND_EVERY = 8  # model calls between reminders of the request (reminders = false turns them off)
 
 FINAL_CHECK = """(purr: before you finish, read the user's request again and go through it point by \
@@ -869,9 +870,7 @@ class Agent:
             self.refine_mode = "auto" if self.limits.helpers == "full" else "off"
         if getattr(self, "tools", None):
             self.tools.limits = self.limits  # 32k and 1M models need different caps
-        if getattr(self, "messages", None):
-            # the system prompt names the model, so it changes with it
-            self.messages[0] = {"role": "system", "content": self._system()}
+        self._refresh_system()  # the system prompt names the model, so it changes with it
 
     def set_mode(self, mode):
         """code: every tool. ask: look but never change. chat / create: no tools at all."""
@@ -882,8 +881,7 @@ class Agent:
         self.tools.no_tools = MODES[mode][0] == "none"
         if mode == "pair" and not self.helper:
             self.pair_snapshot()  # from now on, file changes between turns are the user's
-        if getattr(self, "messages", None):
-            self.messages[0] = {"role": "system", "content": self._system()}
+        self._refresh_system()
 
     def switch_mode(self, mode):
         """set_mode for your own switches (shift+tab, /mode, /plan): also moves to the model that
@@ -1098,8 +1096,7 @@ class Agent:
         added, not for ones the project already had. None when there's nothing to run."""
         if not cmd:
             return None
-        self.view.activity("run", cmd)
-        output, code = run_shell(cmd, self.root, timeout=180)
+        output, code = self._run_tests(cmd, ask=False)
         baseline = {"code": code, "failed": failed_tests(output)}
         if code != 0:
             known = f" ({len(baseline['failed'])} failing)" if baseline["failed"] else ""
@@ -1113,8 +1110,7 @@ class Agent:
         name = f"ticket {i}/{total}: {title}"
         if not cmd:
             return True, f"✓ {name} (not checked: no tests found)", None
-        self.view.activity("run", cmd)
-        output, code = run_shell(cmd, self.root, timeout=180)
+        output, code = self._run_tests(cmd, ask=False)
         now = {"code": code, "failed": failed_tests(output)}
         if code == 0:
             return True, f"✓ {name} (tests pass)", now
@@ -1211,7 +1207,7 @@ class Agent:
         self.messages = data["messages"]
         if data.get("mode") in MODES:
             self.set_mode(data["mode"])
-        self.messages[0] = {"role": "system", "content": self._system()}
+        self._refresh_system()
         self.title = data.get("title", "")
         self.session_cost = data.get("cost", 0.0)
         self.session_out = data.get("out", 0)
@@ -1287,6 +1283,11 @@ class Agent:
     def set_one_shot(self, on=True):
         """One-shot runs: the prompt says nobody will answer, so settle unclear points yourself."""
         self.one_shot = on
+        self._refresh_system()
+
+    def _refresh_system(self):
+        """Rebuild the system prompt (the model, the mode or one-shot changed). Before the chat
+        exists (set_model runs before new()), there's nothing to rebuild."""
         if getattr(self, "messages", None):
             self.messages[0] = {"role": "system", "content": self._system()}
 
@@ -1917,18 +1918,27 @@ class Agent:
         else the model's size does (on for local models, off for API ones)."""
         return self.config[key] if key in self.config else self.limits.helpers == "full"
 
+    def _run_tests(self, cmd, ask=True):
+        """Run the project's tests: (output, exit code), or None when you said no. Plan mode doesn't
+        ask (ask=False): you approved the plan, its test runs between tickets included."""
+        self.view.activity("run", cmd)
+        if ask:
+            self.view.tool(f"run {cmd}")
+            ok, _ = self.tools._run_allowed(cmd)
+            if not ok:
+                return None
+        return run_shell(cmd, self.root, timeout=TEST_TIMEOUT)
+
     def _test_report(self):
         """For the final check: purr runs the project's tests itself, so the model sees the real
         result instead of trusting its own "tests pass". "" when there's nothing to run."""
         cmd = checks.test_command(self.root) if self.config.get("final_check_tests", True) else None
         if not cmd:
             return ""
-        self.view.activity("run", cmd)
-        self.view.tool(f"run {cmd}")
-        ok, _ = self.tools._run_allowed(cmd)
-        if not ok:
+        ran = self._run_tests(cmd)
+        if ran is None:
             return ""
-        output, code = run_shell(cmd, self.root, timeout=180)
+        output, code = ran
         self.view.tool_result("run", {"command": cmd}, f"{output}\n[exit code {code}]")
         tail = "\n".join(output.strip().splitlines()[-40:])
         verdict = "they pass" if code == 0 else (
@@ -1937,7 +1947,7 @@ class Agent:
             "in your answer")
         result = f"exit code {code}, {verdict}"
         if code == -1:  # stopped, not failed: something hangs, or the suite is just slow
-            result = "timed out after 180s: check whether a test hangs (run one file at a time)"
+            result = f"timed out after {TEST_TIMEOUT}s: check whether a test hangs (run one file at a time)"
         return f"(purr, not the user, ran the tests itself: `{cmd}` → {result})\n```\n{tail}\n```\n"
 
     def on_my_gpu(self):
