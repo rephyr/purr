@@ -7,10 +7,18 @@
 # 89 tasks, which the results say. DeepSeek's host trains on prompts, so OpenRouter has to allow
 # "paid model training" (openrouter.ai/settings/privacy). Then: tbench/publish.py <job folder>.
 #
-#   tbench/fair.sh              everything (89 tasks x 3)
-#   tbench/fair.sh -l 5 -k 1    a quick check that it all works (not for publishing)
+#   tbench/fair.sh              the full run: all 89 tasks x 3 (~$15-30, a night)
+#   tbench/fair.sh --quick      the quick set: the same 20 tasks x 1 (~$1-2, under an hour), for
+#                               comparing purr versions with each other (tbench/quick-tasks.txt)
 set -eu
 cd "$(dirname "$0")/.."
+ATTEMPTS=3
+TASKS=""
+if [ "${1:-}" = "--quick" ]; then
+    shift
+    ATTEMPTS=1
+    TASKS=$(grep -v '^#' tbench/quick-tasks.txt | awk 'NF {printf "-i %s ", $1}')
+fi
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     echo "purr has uncommitted changes: commit first, so the results name the exact version" >&2
     [ "${PURR_ALLOW_DIRTY:-}" = 1 ] || exit 1
@@ -35,5 +43,6 @@ except urllib.error.HTTPError as e:
     sys.exit(f"DeepSeek's host on OpenRouter refused a test request ({e.code}): {detail}{hint}")
 PY
 PURR_DATASET="${PURR_DATASET:-terminal-bench@2.0}" PURR_MODEL="${PURR_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}" \
-exec tbench/run.sh -k 3 -n "${PURR_JOBS:-6}" \
+# shellcheck disable=SC2086  # $TASKS is a list of -i options
+exec tbench/run.sh -k "$ATTEMPTS" -n "${PURR_JOBS:-6}" $TASKS \
     --ak hosts=deepseek --ak temperature=1.0 --ak top_p=0.95 --ak max_tokens=65536 --ak max_steps=500 "$@"

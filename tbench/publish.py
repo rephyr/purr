@@ -2,6 +2,11 @@
 
     tbench/publish.py ~/.local/state/purr/tbench/<job folder>
 
+Two kinds of run get published, each in its own table: the full run (all 89 Terminal-Bench 2.0
+tasks x 3 attempts, compared with other harnesses' published scores) and the quick run (the 20
+tasks in tbench/quick-tasks.txt x 1, compared only with other quick runs). Anything else is
+refused, so a partial run can't sneak into the tables.
+
 Writes benchmarks/terminal-bench/results/<purr version>.json (every trial, plus the totals) and
 rebuilds benchmarks/terminal-bench/README.md: how the run was done, a row per purr version, and
 the other harnesses' published scores with the same model to compare against.
@@ -61,6 +66,23 @@ def load_job(job):
     return job, config, trials
 
 
+QUICK = [line.split()[0] for line in (Path(__file__).parent / "quick-tasks.txt").read_text().splitlines()
+         if line.strip() and not line.startswith("#")]
+
+
+def profile(dataset, trials):
+    """ "full", "quick", or None (not a run we publish)."""
+    tasks = {t["task"] for t in trials}
+    per_task = len(trials) / max(len(tasks), 1)
+    if not dataset.startswith("terminal-bench@2.0"):
+        return None
+    if tasks == set(QUICK) and per_task == 1:
+        return "quick"
+    if len(tasks) == 89 and per_task == 3:
+        return "full"
+    return None
+
+
 def summarise(config, trials):
     """pass@1 = the mean over tasks of the share of attempts that passed (an error counts as a fail,
     like on the leaderboards); ± is the standard error over tasks."""
@@ -81,7 +103,7 @@ def summarise(config, trials):
         "dataset": "@".join(str(x) for x in ((config.get("datasets") or [{}])[0].get("name"),
                                               (config.get("datasets") or [{}])[0].get("version")) if x),
         "dataset_ref": (config.get("datasets") or [{}])[0].get("ref"),
-        "settings": {**(agent.get("kwargs") or {}), "attempts": config.get("n_attempts"),
+        "settings": {**(agent.get("kwargs") or {}), "attempts": round(len(trials) / max(n, 1)),
                      "agent_timeout_multiplier": config.get("agent_timeout_multiplier", 1.0)},
         "tasks": n, "trials": len(trials), "errors": sum(1 for t in trials if t["error"]),
         "timeouts": sum(1 for t in trials if t.get("timeout")),
@@ -123,23 +145,37 @@ def readme(results):
         "",
         "## purr, version by version",
         "",
-        "| purr | date | dataset | pass@1 | pass@3 | timeouts | errors | cost | tokens in / cached / out | median time |",
-        "|---|---|---|---|---|---|---|---|---|---|",
     ]
-    for r in sorted(results, key=lambda r: (r["date"], str(r["purr"]))):
-        lines.append(f"| {r['purr']} | {r['date']} | {r['dataset']} ({r['tasks']} tasks) | "
-                     f"**{r['pass@1']}%** ± {r['stderr']} | {r['pass@k']}% | {r.get('timeouts', 0)} | "
-                     f"{r['errors']}/{r['trials']} | "
-                     f"${r['cost_usd']} | {short(r['tokens_in'])} / {short(r['tokens_cached'])} / "
-                     f"{short(r['tokens_out'])} | {r['median_agent_minutes']} min |")
-    lines += ["", "## Other harnesses, same model (published)", "",
+    head = ["| purr | date | pass@1 | pass@3 | timeouts | errors | cost | tokens in / cached / out | median time |",
+            "|---|---|---|---|---|---|---|---|---|"]
+    quick_head = [h.replace(" pass@3 |", "").replace("---|---|---|---|---|---|---|---|---|", "---|---|---|---|---|---|---|---|")
+                  for h in head]
+    lines += ["### Full runs: all 89 tasks, 3 attempts each", ""] + head
+    lines += [row(r, full=True) for r in sorted(results, key=key) if r.get("profile") == "full"] or ["| (none yet) |"]
+    lines += ["", "### Quick runs: the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each", "",
+              "Cheap (~$1-2) and quick, for seeing whether a purr version got better or worse. With 20",
+              "tasks and one try each the margin is wide (see ±): compare quick runs with each other, not",
+              "with the full runs or the leaderboards.", ""] + quick_head
+    lines += [row(r, full=False) for r in sorted(results, key=key) if r.get("profile") == "quick"] or ["| (none yet) |"]
+    lines += ["", "## Other harnesses, same model (published, full runs)", "",
               "| harness | model | benchmark | pass@1 | source |", "|---|---|---|---|---|"]
     for ref in REFERENCE:
         note = f" ({ref['note']})" if ref.get("note") else ""
         lines.append(f"| {ref['harness']} | {ref['model']} | {ref['benchmark']} | {ref['pass@1']}%{note} | "
                      f"[link]({ref['source']}) |")
-    lines += ["", "Each run's every trial is in `results/<version>.json`.", ""]
+    lines += ["", "Each run's every trial is in `results/`.", ""]
     return "\n".join(lines)
+
+
+def key(r):
+    return (r["date"], str(r["purr"]))
+
+
+def row(r, full):
+    third = f" {r['pass@k']}% |" if full else ""
+    return (f"| {r['purr']} | {r['date']} | **{r['pass@1']}%** ± {r['stderr']} |{third} {r.get('timeouts', 0)} | "
+            f"{r['errors']}/{r['trials']} | ${r['cost_usd']} | {short(r['tokens_in'])} / {short(r['tokens_cached'])} / "
+            f"{short(r['tokens_out'])} | {r['median_agent_minutes']} min |")
 
 
 def main(argv):
@@ -151,15 +187,21 @@ def main(argv):
         print(f"no trials in {job}")
         return 1
     summary = summarise(config, trials)
+    summary["profile"] = profile(summary["dataset"], trials)
+    if not summary["profile"]:
+        print(f"not published: {summary['tasks']} tasks x {summary['settings']['attempts']} on {summary['dataset']} "
+              "is neither the full run (89 x 3, tbench/fair.sh) nor the quick one (the 20 in quick-tasks.txt x 1, "
+              "tbench/fair.sh --quick)")
+        return 1
     version = summary["purr"] if isinstance(summary["purr"], str) else "mixed"
     if "dirty" in version:
         print(f"warning: {version} had uncommitted changes, so this result can't be tied to a commit")
     (OUT / "results").mkdir(parents=True, exist_ok=True)
-    name = f"{version}__{summary['dataset'].replace('/', '-')}__{job.name}.json"
+    name = f"{version}__{summary['profile']}__{job.name}.json"
     (OUT / "results" / name).write_text(json.dumps({"summary": summary, "trials": trials}, indent=1) + "\n")
     results = [json.loads(f.read_text())["summary"] for f in sorted((OUT / "results").glob("*.json"))]
     (OUT / "README.md").write_text(readme(results))
-    print(f"purr {version}: pass@1 {summary['pass@1']}% ± {summary['stderr']} over {summary['tasks']} tasks "
+    print(f"purr {version} ({summary['profile']} run): pass@1 {summary['pass@1']}% ± {summary['stderr']} over {summary['tasks']} tasks "
           f"({summary['trials']} trials, {summary['errors']} errors), ${summary['cost_usd']}")
     print(f"wrote {OUT / 'results' / name} and {OUT / 'README.md'}")
     return 0

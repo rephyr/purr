@@ -1,0 +1,26 @@
+# The quick set: 20 Terminal-Bench 2.0 tasks, run once each (tbench/fair.sh --quick).
+# Picked by difficulty in the full set's proportions (1 easy, 12 medium, 7 hard of 4/55/30),
+# at random with seed 2026, then frozen: every purr version runs these same 20, so quick runs
+# compare versions with each other. They're too few to compare with the leaderboards: that's
+# what the full run (all 89, 3 attempts) is for.
+# task                                  difficulty  category
+cobol-modernization                     easy        software-engineering
+git-leak-recovery                       medium      software-engineering
+mteb-retrieve                           medium      data-science
+vulnerable-secret                       medium      security
+qemu-alpine-ssh                         medium      system-administration
+chess-best-move                         medium      games
+distribution-search                     medium      machine-learning
+pypi-server                             medium      software-engineering
+pytorch-model-cli                       medium      model-training
+openssl-selfsigned-cert                 medium      security
+largest-eigenval                        medium      mathematics
+polyglot-c-py                           medium      software-engineering
+reshard-c4-data                         medium      data-science
+torch-tensor-parallelism                hard        software-engineering
+sam-cell-seg                            hard        data-science
+sparql-university                       hard        data-querying
+train-fasttext                          hard        model-training
+mcmc-sampling-stan                      hard        data-science
+write-compressor                        hard        software-engineering
+path-tracing                            hard        software-engineering
