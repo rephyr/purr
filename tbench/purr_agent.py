@@ -40,6 +40,11 @@ from harness import full_version as purr_version  # noqa: E402
 
 PURR = Path(__file__).resolve().parent.parent
 REMOTE = "/opt/purr"
+# a model on this machine (Ollama): from inside the container it's this machine's address on the
+# container's network (its gateway), through tbench/ollama_bridge.py; filled in when installing
+GATEWAY = "HOST_GATEWAY"
+BRIDGE_PORT = 11435
+LOCAL_HOSTS = ("127.0.0.1", "localhost")
 PY = f"{REMOTE}/py"  # uv's Python 3.12, linked here when installing
 SHIPPED = ("purr.py", "harness", "servers")  # all plain mode needs
 
@@ -121,6 +126,8 @@ class PurrAgent(BaseInstalledAgent):
         if body:
             spec["body"] = body
         prov = {k: v for k, v in mine["providers"][provider].items() if k != "opencode_auth"}
+        if any(f"//{h}:" in prov.get("base_url", "") for h in LOCAL_HOSTS):
+            prov["base_url"] = f"http://{GATEWAY}:{BRIDGE_PORT}/v1"
         if self.hosts:  # pinned hosts replace purr's usual "cheapest of these" routing, with no fallback
             prov["body"] = {"provider": {"only": self.hosts, "allow_fallbacks": False}}
         config = {k: v for k, v in mine.items()
@@ -209,7 +216,11 @@ class PurrAgent(BaseInstalledAgent):
             "[ -x /opt/uv/uv ] || curl -LsSf https://astral.sh/uv/install.sh | sh; "
             "/opt/uv/uv python install 3.12 >/dev/null; "
             f"ln -sf \"$(/opt/uv/uv python find 3.12)\" {PY}; chmod -R a+rX {REMOTE} /opt/uv; "
-            f"{PY} -c 'import sys, tomllib; print(sys.version)'"))
+            f"{PY} -c 'import sys, tomllib; print(sys.version)'; "
+            # the gateway of the container's network is this machine (for a local model's bridge)
+            f"GW=$({PY} -c 'import socket, struct; print(next(socket.inet_ntoa(struct.pack(\"<L\", int(f[2], 16))) "
+            f"for f in (l.split() for l in open(\"/proc/net/route\")) if f[1] == \"00000000\"))'); "
+            f"sed -i \"s/{GATEWAY}/$GW/\" {REMOTE}/config.toml"))
 
     def task_time_limit(self):
         """The task's own agent time limit in seconds (its task.toml, times the job's multiplier), less

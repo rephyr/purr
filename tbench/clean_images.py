@@ -12,6 +12,7 @@ Plain Python (no packages).
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -64,6 +65,9 @@ def alive(pid):
 
 
 def main(argv):
+    # q in the bench window (or ctrl+c) interrupts the whole process group: keep going until Harbor
+    # has stopped, then make the last pass, or the images of the last graded tasks stay behind
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     pid, since = int(argv[0]), float(argv[1])
     gone = set()
     while True:

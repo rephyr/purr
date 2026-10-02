@@ -59,8 +59,8 @@ def trials_in(suite, size):
 def references(suite):
     """The published scores with the same model: [(harness, pass@1)], best first."""
     bench = SUITES[suite]["bench"]
-    return sorted(((r["harness"], r["pass@1"]) for r in PUBLISH.REFERENCE if r["benchmark"].startswith(bench)),
-                  key=lambda x: -x[1])
+    return sorted(((r["harness"], r["pass@1"]) for r in PUBLISH.REFERENCE
+                   if r["benchmark"].startswith(bench) and r["model"] == "DeepSeek V4.1 Flash"), key=lambda x: -x[1])
 
 
 def previous(suite, size):
@@ -71,7 +71,8 @@ def previous(suite, size):
             s = json.loads(f.read_text())["summary"]
         except (OSError, ValueError, KeyError):
             continue
-        if s.get("profile") == size and PUBLISH.bench_name(s.get("dataset")) == SUITES[suite]["bench"]:
+        if (s.get("profile") == size and PUBLISH.bench_name(s.get("dataset")) == SUITES[suite]["bench"]
+                and not PUBLISH.is_local(s)):  # the window runs DeepSeek: compare with DeepSeek runs
             out.append((str(s["purr"]), s["date"], s["pass@1"]))
     return out
 

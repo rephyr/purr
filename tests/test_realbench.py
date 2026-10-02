@@ -190,6 +190,38 @@ class ImageCleanerTest(unittest.TestCase):
         self.assertEqual(calls, ["img-a", "img-a"])  # refused while in use, removed on the next round
 
 
+class LocalModelTest(unittest.TestCase):
+    """tbench/local.sh: the bridge only lets containers in, and local runs stay out of the hosted tables."""
+
+    def test_the_bridge_only_lets_containers_in(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "ollama_bridge", Path(__file__).resolve().parent.parent / "tbench" / "ollama_bridge.py")
+        bridge = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bridge)
+        self.assertTrue(bridge.allowed("172.17.0.2"))
+        self.assertTrue(bridge.allowed("172.27.0.5"))
+        self.assertFalse(bridge.allowed("192.168.101.100"))  # the LAN
+        self.assertFalse(bridge.allowed("127.0.0.1"))
+        self.assertFalse(bridge.allowed("not an address"))
+
+    def test_local_runs_get_their_own_table(self):
+        publish = realbench.PUBLISH
+        base = {"date": "2026-10-03", "pass@1": 40.0, "stderr": 11.0, "pass@k": 40.0, "timeouts": 0, "errors": 0,
+                "trials": 20, "tasks": 20, "cost_usd": 0, "tokens_in": 1, "tokens_cached": 1, "tokens_out": 1,
+                "median_agent_minutes": 6.0, "purr": "0.4.0", "dataset": "terminal-bench/terminal-bench-2-1",
+                "profile": "quick"}
+        page = publish.readme([{**base, "model": "ollama/ornith-9b-128k"}], "terminal-bench")
+        self.assertIn("local models on this machine", page)
+        self.assertIn("| 0.4.0 | ornith-9b-128k | quick | 2026-10-03 | **40.0%**", page)
+        quick = page.split("2.1: quick runs")[1].split("###")[0]
+        self.assertIn("(none yet)", quick)  # not mixed in with the DeepSeek runs
+        self.assertIn("| Terminus-2 | Ornith-1.5-9B |", page)
+
+    def test_the_window_compares_deepseek_with_deepseek(self):
+        self.assertNotIn("Terminus-2", [h for h, _ in realbench.references("terminal-bench")])
+
+
 @unittest.skipIf(realbench_app is None, "needs textual (uv sync)")
 class WindowTest(unittest.IsolatedAsyncioTestCase):
     def test_the_window_can_still_start(self):
