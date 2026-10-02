@@ -1,13 +1,15 @@
 """purr bench --real in a full-screen window: Terminal-Bench or DeepSWE, the way other harnesses
 are scored, with everything that's happening on screen and Mochi's verdict at the end.
 
-The run is tbench/fair.sh (harness/realbench.py starts it and reads Harbor's job folder); this
-only shows it. q stops (Harbor cancels the trials and cleans up), q again quits.
+The run is tbench/fair.sh, or tbench/local.sh for a model on this machine (harness/realbench.py
+starts it and reads Harbor's job folder); this only shows it. Several picks can wait in a queue and
+run one after another (overnight). q stops (Harbor cancels the trials and cleans up), q again quits.
 """
 
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 from rich import box
 from rich.align import Align
@@ -30,8 +32,11 @@ from tui.themes import DIM, FAINT, LILAC, MINT, PEACH, PINK, ROSE, TEXT  # noqa:
 CSS = """
 #start { min-width: 22; }
 #choices { height: auto; }
-#picks { width: 44; height: auto; margin-right: 2; }
-#picks > Static { color: $lilac; text-style: bold; margin: 1 0 0 1; }
+#picks, #picks2 { width: 44; height: auto; margin-right: 2; }
+#picks > Static, #picks2 > Static { color: $lilac; text-style: bold; margin: 1 0 0 1; }
+#buttons { height: auto; width: auto; }
+#queue { margin-top: 1; margin-right: 2; background: $button; color: $fg; border: none; min-width: 16; }
+#queue:focus { background: $lilac; color: $ink; text-style: bold; }
 RadioSet { width: 100%; border: round $line; background: $panel; padding: 0 1; }
 RadioSet:focus { border: round $pink; }
 RadioSet > RadioButton.-selected { background: transparent; }
@@ -121,6 +126,21 @@ def floor_of(scores):
     return max(0, (int(min(scores)) - 10) // 10 * 10) if scores else 0
 
 
+QUEUE_PAUSE = 15  # seconds between queued runs: to read the result, or q to stop the rest
+
+
+def short_pick(pick):
+    """'DeepSeek Flash · minimal'."""
+    variant = "" if pick["variant"] == "purr" else f" · {pick['variant']}"
+    model = "DeepSeek Flash" if pick["model"] == realbench.DEEPSEEK else pick["model"]
+    return f"{model}{variant}"
+
+
+def describe(pick):
+    """'Terminal-Bench 2.1 one · DeepSeek Flash · minimal'."""
+    return f"{realbench.SUITES[pick['suite']]['bench']} {pick['size']} · {short_pick(pick)}"
+
+
 class RealBenchApp(BenchWindow):
     TITLE = "purr bench · real"
     CSS_PATH = ["purr.tcss", "bench.tcss"]
@@ -136,7 +156,12 @@ class RealBenchApp(BenchWindow):
 
     def __init__(self, config, suite=None, size=None, jobs=6, edge_cases=False):
         super().__init__(config)
-        self.choice = {"suite": suite or "terminal-bench", "size": size or "quick"}
+        self.choice = {"suite": suite or "terminal-bench", "size": size or "quick",
+                       "model": realbench.DEEPSEEK, "variant": "purr"}
+        self.locals = realbench.local_models()  # Ollama models with room for a benchmark
+        self.queue = []      # picks waiting their turn (dicts like self.choice)
+        self.ran = []        # finished runs: what, score, job folder, published
+        self.next_at = None  # when the next queued run starts (a pause to read the result, or stop)
         self.go_now = bool(suite and size)
         self.jobs, self.edge_cases = jobs, edge_cases
         self.job_run = None
@@ -145,7 +170,6 @@ class RealBenchApp(BenchWindow):
         self.live_pos, self.live_buf, self.live_lines = 0, "", []
         self.finished_names = set()
         self.final = None  # (mood, headline, detail) once it's over
-        self.published = False
 
     # ---- layout ----
 
@@ -169,10 +193,22 @@ class RealBenchApp(BenchWindow):
                         yield Input(str(self.jobs), type="integer", id="jobs")
                         yield Static("edge cases")
                         yield Switch(self.edge_cases, id="edge")
+                with Vertical(id="picks2"):
+                    yield Static("model")
+                    with RadioSet(id="model"):
+                        yield RadioButton("DeepSeek V4.1 Flash · OpenRouter", value=True, name=realbench.DEEPSEEK)
+                        for name in self.locals:
+                            yield RadioButton(f"{name} · your GPU", name=name)
+                    yield Static("harness")
+                    with RadioSet(id="variant"):
+                        for key, v in realbench.VARIANTS.items():
+                            yield RadioButton(v["what"], value=key == "purr", name=key)
                 yield Static("", id="preview")
-            with Center():
+            with Center(), Horizontal(id="buttons"):
+                yield Button("＋ queue", id="queue")
                 yield Button("start ✧", id="start")
-            yield Static("↑↓ picks · tab moves · enter on start · q quits", id="setuphint")
+            yield Static("↑↓ picks · tab moves · ＋ queue adds the pick, start runs the queue (or just the pick) · "
+                         "q quits", id="setuphint")
             yield Static("", id="setupcat")
         with Vertical(id="run"):
             with Horizontal(id="runhead"):
@@ -207,25 +243,34 @@ class RealBenchApp(BenchWindow):
     # ---- the setup screen ----
 
     def on_radio_set_changed(self, event):
-        key = "suite" if event.radio_set.id == "suite" else "size"
-        self.choice[key] = event.pressed.name
+        self.choice[event.radio_set.id] = event.pressed.name
         self.draw_preview()
 
     def draw_preview(self):
-        suite, size = self.choice["suite"], self.choice["size"]
+        suite, size, model = self.choice["suite"], self.choice["size"], self.choice["model"]
         s = realbench.SUITES[suite]
         tasks, trials = realbench.tasks_in(suite, size), realbench.trials_in(suite, size)
-        when, cost = realbench.ESTIMATES.get((suite, size), ("not measured yet", "not measured yet"))
+        when, cost = realbench.estimate(suite, size, model)
+        where = "DeepSeek's own host" if model == realbench.DEEPSEEK else "Ollama, your GPU"
         t = Text()
         t.append_text(cat.shimmer(s["bench"], 0.15))
         t.append(f"\n{s['what']}\n\n", style=DIM)
         for label, value in (("tasks", f"{tasks} × {realbench.SIZES[size]['attempts']} = {trials} tries"),
-                             ("time", when), ("cost", cost), ("model", "DeepSeek V4.1 Flash, DeepSeek's own host")):
-            t.append(f"  {label:<7}", style=LILAC)
+                             ("time", when), ("cost", cost), ("model", f"{realbench.model_name(model)}, {where}"),
+                             ("harness", realbench.VARIANTS[self.choice["variant"]]["what"])):
+            t.append(f"  {label:<9}", style=LILAC)
             t.append(f"{value}\n", style=TEXT)
+        why = realbench.problem(suite, size, model)
+        if why:
+            t.append(f"\n  ✗ {why}\n", style=f"bold {ROSE}")
+        if self.queue:
+            t.append(f"\nqueued, one after another ({len(self.queue)})\n", style=f"bold {PINK}")
+            for n, q in enumerate(self.queue, 1):
+                t.append(f"  {n}. {describe(q)}\n", style=TEXT)
+            t.append("  start runs these (＋ adds the pick above)\n", style=DIM)
         t.append("\n")
         if size == "quick":
-            before = realbench.previous(suite, size)
+            before = realbench.previous(suite, size, model)
             t.append("earlier quick runs\n", style=f"bold {PINK}")
             if not before:
                 t.append("  none yet: this one sets the baseline ♡\n", style=DIM)
@@ -249,7 +294,7 @@ class RealBenchApp(BenchWindow):
                 t.append("\n5 tries a task and purr's web tool off, as the leaderboard asks; then\n", style=DIM)
                 t.append("tbench/submit.py <job> checks every rule and readies the entry", style=DIM)
         else:
-            refs = realbench.references(suite)
+            refs = realbench.references(suite, model)
             lo = floor_of([p for _, p in refs])
             t.append("to beat ", style=f"bold {PINK}")
             t.append(f"same model, published · bars start at {lo}%\n", style=DIM)
@@ -262,30 +307,62 @@ class RealBenchApp(BenchWindow):
     def on_button_pressed(self, event):
         if event.button.id == "start":
             self.start()
+        elif event.button.id == "queue":
+            self.add_to_queue()
+
+    def pick(self):
+        """The current pick with the knobs, or None (and a note) when it can't run."""
+        why = realbench.problem(self.choice["suite"], self.choice["size"], self.choice["model"])
+        if why:
+            self.notify(f"{why} ♡", severity="warning")
+            return None
+        try:
+            jobs = max(1, min(16, int(self.query_one("#jobs", Input).value or 6)))
+        except ValueError:
+            jobs = 6
+        return {**self.choice, "jobs": jobs, "edge_cases": self.query_one("#edge", Switch).value}
+
+    def add_to_queue(self):
+        pick = self.pick()
+        if pick:
+            self.queue.append(pick)
+            self.notify(f"queued: {describe(pick)} ♡", timeout=3)
+            self.draw_preview()
 
     def start(self):
-        try:
-            self.jobs = max(1, min(16, int(self.query_one("#jobs", Input).value or 6)))
-        except ValueError:
-            self.jobs = 6
-        self.edge_cases = self.query_one("#edge", Switch).value
-        suite, size = self.choice["suite"], self.choice["size"]
-        only = realbench.SIZES[size].get("only")
-        if only and suite != only:
-            self.notify(f"{size} is for {realbench.SUITES[only]['bench']} only ♡", severity="warning")
-            return
+        if not self.queue:
+            pick = self.pick()
+            if not pick:
+                return
+            self.queue.append(pick)
+        self.query_one("#setup").add_class("hide")
+        self.query_one("#run").add_class("show")
+        self.next_run()
+
+    def next_run(self):
+        """The first queued pick: a clean run view, and its script started."""
+        pick = self.queue.pop(0)
+        suite, size = pick["suite"], pick["size"]
+        self.trials, self.rows, self.finished_names = [], {}, set()
+        self.selected, self.follow, self.final = None, True, None
+        self.live_pos, self.live_buf, self.live_lines = 0, "", []
+        self.query_one("#trials", DataTable).clear()
+        self.query_one("#live", RichLog).clear()
+        self.query_one("#run").remove_class("results")
+        self.jobs, self.edge_cases = pick["jobs"], pick["edge_cases"]
         self.total = realbench.trials_in(suite, size)
-        self.job_run = realbench.Run(suite, size, self.jobs, self.edge_cases)
+        self.job_run = realbench.Run(suite, size, self.jobs, self.edge_cases, pick["model"], pick["variant"])
+        self.job_run.pick = pick
         try:
             self.job_run.start()
         except OSError as e:
-            self.notify(f"couldn't start fair.sh: {e}", severity="error")
+            self.notify(f"couldn't start {Path(self.job_run.cmd[0]).name}: {e}", severity="error")
             return
         threading.Thread(target=self.job_run.read_output, daemon=True).start()
-        self.query_one("#setup").add_class("hide")
-        self.query_one("#run").add_class("show")
         bench = realbench.SUITES[suite]["bench"]
-        self.query_one("#runtitle", Static).update(Text.assemble((f"{bench} ", f"bold {PINK}"), (size, LILAC)))
+        left = f"  ·  {len(self.queue)} more queued" if self.queue else ""
+        self.query_one("#runtitle", Static).update(Text.assemble(
+            (f"{bench} ", f"bold {PINK}"), (size, LILAC), (f"  ·  {short_pick(pick)}{left}", DIM)))
         self.query_one("#bar", ProgressBar).update(total=self.total, progress=0)
         self.query_one("#runhint", Static).update(Text(
             "↑↓ picks a task to watch · f follows the newest · q stops (Harbor cleans up) · ctrl+q quits", style=DIM))
@@ -297,6 +374,13 @@ class RealBenchApp(BenchWindow):
     def poll(self):
         if not self.job_run or not self.screen.query("#trials"):  # closing: the widgets are gone
             return
+        if self.next_at:
+            if time.monotonic() >= self.next_at:
+                self.next_at = None
+                self.next_run()
+            else:
+                self.hint()
+                return
         self.job_run.find_job()
         self.trials = realbench.scan(self.job_run.job)
         self.draw_trials()
@@ -440,15 +524,32 @@ class RealBenchApp(BenchWindow):
         done = sum(t["state"] in FINISHED for t in self.trials)
         pct, se = realbench.score(self.trials)
         self.final = realbench.verdict(self.job_run.suite, self.job_run.size, pct, done, self.total,
-                                       stopped=self.job_run.stopping, name=self.name_)
+                                       stopped=self.job_run.stopping, name=self.name_, model=self.job_run.model)
         mood, headline, detail = self.final
         self.mood(mood, detail, hold=10**9, label=headline)
+        ok = self.job_run.proc.returncode == 0 and done == self.total and not self.job_run.stopping
+        self.ran.append({"pick": getattr(self.job_run, "pick", None) or {
+            "suite": self.job_run.suite, "size": self.job_run.size, "model": self.job_run.model,
+            "variant": self.job_run.variant}, "pct": pct, "done": done, "total": self.total, "ok": ok,
+            "stopped": self.job_run.stopping, "job": self.job_run.job, "published": False})
+        if self.job_run.stopping:
+            self.queue.clear()  # q stops the whole queue, not just this run
         self.query_one("#results_body", Static).update(self.results_page(pct, se, done))
         self.query_one("#run").add_class("results")
-        ok = self.job_run.proc.returncode == 0 and done == self.total and not self.job_run.stopping
-        hint = "p publishes it to the repo · " if ok else ""
-        self.query_one("#runhint", Static).update(Text(
-            f"{hint}r live view / results · o opens the job folder · q quits", style=DIM))
+        if self.queue:
+            self.next_at = time.monotonic() + QUEUE_PAUSE
+        self.hint()
+
+    def hint(self):
+        publishable = any(r["ok"] and not r["published"] for r in self.ran)
+        hint = ("p publishes " + ("them" if sum(r["ok"] for r in self.ran) > 1 else "it") + " to the repo · "
+                if publishable else "")
+        if self.next_at:
+            wait = max(0, round(self.next_at - time.monotonic()))
+            text = f"next: {describe(self.queue[0])} in {wait}s · q cancels the rest of the queue"
+        else:
+            text = f"{hint}r live view / results · o opens the job folder · q quits"
+        self.query_one("#runhint", Static).update(Text(text, style=PINK if self.next_at else DIM))
 
     def results_page(self, pct, se, done):
         suite, size = self.job_run.suite, self.job_run.size
@@ -478,7 +579,25 @@ class RealBenchApp(BenchWindow):
         misses = self.misses()
         if misses:
             parts += [Text(""), misses]
+        if len(self.ran) > 1 or self.queue:
+            parts += [Text(""), self.queue_table()]
         return Group(*parts)
+
+    def queue_table(self):
+        """Every run this window did, and what's still queued."""
+        t = Table(box=box.SIMPLE_HEAD, border_style=themes.colour(self, "line-hi"), header_style=f"bold {LILAC}",
+                  expand=True, padding=(0, 1), title=Text("♡ the queue", style=f"bold {PINK}"), title_justify="left")
+        for col, just in (("run", "left"), ("score", "right"), ("", "left")):
+            t.add_column(col, justify=just)
+        for r in self.ran:
+            score = "--" if r["pct"] is None else f"{r['pct']:.1f}%"
+            how = ("published ♡" if r["published"] else "whole run" if r["ok"]
+                   else "stopped" if r["stopped"] else f"{r['done']} of {r['total']} graded")
+            t.add_row(Text(describe(r["pick"]), style=TEXT), Text(score, style=f"bold {PINK}"),
+                      Text(how, style=MINT if r["ok"] else DIM))
+        for q in self.queue:
+            t.add_row(Text(describe(q), style=DIM), Text("queued", style=DIM), Text(""))
+        return t
 
     def misses(self):
         """What didn't pass, and how: for deciding what to fix (or which task was at fault)."""
@@ -499,7 +618,7 @@ class RealBenchApp(BenchWindow):
         return t
 
     def standings(self, pct):
-        suite, size = self.job_run.suite, self.job_run.size
+        suite, size, model = self.job_run.suite, self.job_run.size, self.job_run.model
         t = Table(box=box.ROUNDED, border_style=themes.colour(self, "line-hi"), show_header=False, padding=(0, 1),
                   title=Text("♛ where purr lands" if size != "quick" else "♛ quick runs so far", style=f"bold {PINK}"),
                   title_justify="left")
@@ -507,25 +626,28 @@ class RealBenchApp(BenchWindow):
         t.add_column("bar", no_wrap=True)
         t.add_column("score", justify="right", min_width=7)
         if size == "quick":
-            rows = [(f"purr {v[:16]}", s, False) for v, _, s in realbench.previous(suite, size)[-7:]]
-        elif suite == "terminal-bench-2":
+            rows = [(f"purr {v[:28]}", s, False) for v, _, s in realbench.previous(suite, size, model)[-7:]]
+        elif suite == "terminal-bench-2" and model == realbench.DEEPSEEK:
             rank, _ = realbench.place(pct)
             rows = [(f"#{e['rank']} {e['agent']} · {e['model']}"[:38], e["score"], False)
                     for e in landmarks(realbench.leaderboard()[0])]
             rows.append((f"#{rank} purr · DeepSeek V4.1 Flash ♡", pct, True))
         else:
-            rows = [(h, s, False) for h, s in realbench.references(suite)]
-        if not (size != "quick" and suite == "terminal-bench-2"):
+            rows = [(h, s, False) for h, s in realbench.references(suite, model)]
+        if not (size != "quick" and suite == "terminal-bench-2" and model == realbench.DEEPSEEK):
             rows.append(("purr (this run) ♡", pct, True))
-        lo = 0 if suite == "terminal-bench-2" and size != "quick" else floor_of([r[1] for r in rows])
+        lo = (0 if suite == "terminal-bench-2" and size != "quick" and model == realbench.DEEPSEEK
+              else floor_of([r[1] for r in rows]))
         for who, score, mine in sorted(rows, key=lambda r: -r[1]):
             t.add_row(Text(who, style=f"bold {PINK}" if mine else TEXT), bar(score, 44, PINK if mine else LILAC, lo, empty=themes.colour(self, "line")),
                       Text(f"{score:.1f}%", style=f"bold {PINK}" if mine else LILAC))
         note = f"bars start at {lo}%"
-        if size != "quick" and suite == "terminal-bench-2":
+        if size != "quick" and suite == "terminal-bench-2" and model == realbench.DEEPSEEK:
             note += " · the leaderboard's entries ran 5 tries a task (a submit run does too)"
-        elif size != "quick":
+        elif size != "quick" and model == realbench.DEEPSEEK:
             note += " · theirs: DeepSeek's model card (3 or 8 tries a task); one try has a wider margin"
+        elif size != "quick":
+            note += " · theirs: the model makers' own run, full weights (yours runs in Ollama)"
         t.caption = Text(note, style=DIM)
         return t
 
@@ -556,29 +678,34 @@ class RealBenchApp(BenchWindow):
             self.query_one("#run").toggle_class("results")
 
     def action_publish(self):
-        if self.final is None or self.published:
+        if self.final is None or self.next_at:
             return
-        if self.job_run.stopping or self.job_run.proc.returncode != 0:
-            self.notify("only a whole run can be published ♡", severity="warning")
+        todo = [r for r in self.ran if r["ok"] and not r["published"]]
+        if not todo:
+            if not any(r["ok"] for r in self.ran):
+                self.notify("only a whole run can be published ♡", severity="warning")
             return
-        self.published = True  # not twice, while it runs
+        for r in todo:
+            r["published"] = True  # not twice, while it runs
         self.notify("publishing ♡", timeout=3)
-        self.publish_in_background()
+        self.publish_in_background(todo)
 
     @work(thread=True)
-    def publish_in_background(self):
-        """publish.py takes a few seconds: not on the window's own thread, or it freezes meanwhile."""
-        res = subprocess.run(["python3", str(realbench.ROOT / "tbench" / "publish.py"), str(self.job_run.job)],
-                             capture_output=True, text=True, cwd=realbench.ROOT)
-        self.call_from_thread(self.published_it, res.returncode, (res.stdout + res.stderr).strip().splitlines())
+    def publish_in_background(self, runs):
+        """publish.py takes a few seconds a run: not on the window's own thread, or it freezes meanwhile."""
+        for r in runs:
+            res = subprocess.run(["python3", str(realbench.ROOT / "tbench" / "publish.py"), str(r["job"])],
+                                 capture_output=True, text=True, cwd=realbench.ROOT)
+            self.call_from_thread(self.published_it, r, res.returncode, (res.stdout + res.stderr).strip().splitlines())
 
-    def published_it(self, code, out):
+    def published_it(self, run, code, out):
         if code == 0:
             self.mood("celebrating", "published: commit benchmarks/ to share it", hold=6)
             self.notify(out[0] if out else "published ♡", timeout=8)
         else:
-            self.published = False  # it can be tried again
+            run["published"] = False  # it can be tried again
             self.notify(out[-1] if out else "publishing failed", severity="error", timeout=10)
+        self.hint()
 
     def action_open_job(self):
         if self.job_run:
@@ -592,7 +719,7 @@ class RealBenchApp(BenchWindow):
         self.cat_tick += 1
         if not self.job_run:
             self.query_one("#title", Static).update(cat.shimmer("₊˚✧ real benchmarks ✧˚₊", self.cat_tick * 0.03))
-            refs = realbench.references(self.choice["suite"])
+            refs = realbench.references(self.choice["suite"], self.choice["model"])
             best = f"best published: {refs[0][1]:.1f}% ({refs[0][0]})" if refs else ""
             self.query_one("#setupcat", Static).update(cat.render(
                 "watching", self.cat_tick, best, (), label=f"{self.name_} wants to see how purr does",
@@ -621,6 +748,14 @@ class RealBenchApp(BenchWindow):
 
     def action_stop_or_quit(self):
         if self.focused and isinstance(self.focused, Input):
+            return
+        if self.next_at:  # between two queued runs: stop here, keep what's done
+            self.next_at = None
+            self.notify(f"the rest of the queue is cancelled ({len(self.queue)}) ♡", timeout=4)
+            self.queue.clear()
+            self.hint()
+            self.query_one("#results_body", Static).update(self.results_page(*realbench.score(self.trials),
+                                                                                self.ran[-1]["done"]))
             return
         if self.job_run and not self.job_run.done and not self.job_run.stopping:
             self.job_run.stop()

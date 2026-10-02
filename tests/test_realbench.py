@@ -324,6 +324,76 @@ class WindowTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(app.query_one("#run").has_class("results"))
                 self.assertIn("75.0% on the quick set", app.cat_label)
 
+    async def test_a_queue_runs_one_pick_after_another(self):
+        quick = realbench.PUBLISH.QUICK
+        started = []
+
+        class FakeProc:
+            returncode, pid = None, 0
+
+            def poll(self):
+                return self.returncode
+
+        class FakeRun(realbench.Run):
+            def start(self):
+                self.proc, self.job = FakeProc(), make_job()
+                started.append((self.model, self.variant, self.cmd))
+
+            def read_output(self):
+                pass
+
+        app = realbench_app.RealBenchApp({"models": {}, "providers": {}})
+        app.locals = ["ornith-9b-128k"]
+        with mock.patch.object(realbench_app.realbench, "Run", FakeRun), \
+                mock.patch.object(realbench, "previous", return_value=[]), \
+                mock.patch.object(realbench_app, "QUEUE_PAUSE", 0):
+            async with app.run_test(size=(150, 44)) as pilot:
+                await pilot.pause()
+                app.choice.update(size="one", variant="purr")
+                app.add_to_queue()
+                app.choice.update(variant="minimal")
+                app.add_to_queue()
+                app.choice.update(suite="deepswe", model="ornith-9b-128k")
+                app.add_to_queue()  # refused: a local model runs Terminal-Bench only
+                self.assertEqual(len(app.queue), 2)
+                self.assertIn("queued, one after another (2)", str(app.query_one("#preview").render()))
+                app.start()
+                self.assertEqual(len(app.queue), 1)
+                for i, task in enumerate(quick[:2]):
+                    graded(app.job_run.job, f"{task}__{i}", 1.0)
+                app.total = 2
+                app.job_run.proc.returncode = 0
+                await pilot.pause(2.5)  # finished, then (no pause in the test) the next pick starts
+                self.assertEqual(len(app.ran), 1)
+                self.assertEqual(len(started), 2)
+                self.assertEqual(started[1][1], "minimal")
+                self.assertIn("minimal=true", started[1][2])
+                self.assertIsNone(app.final)  # a fresh run view
+                self.assertEqual(app.rows, {})
+                graded(app.job_run.job, f"{quick[0]}__0", 0.0)
+                app.total = 1
+                app.job_run.proc.returncode = 0
+                await pilot.pause(1.3)
+                self.assertEqual([r["pct"] for r in app.ran], [100.0, 0.0])
+                from rich.console import Console
+                console = Console(width=150, record=True, file=open(os.devnull, "w"))
+                console.print(app.queue_table())
+                text = console.export_text()
+                self.assertIn("Terminal-Bench 2.1 one · DeepSeek Flash · minimal", text)
+                self.assertIn("100.0%", text)
+
+    def test_local_models_run_terminal_bench_through_local_sh(self):
+        cmd = realbench.command("terminal-bench", "one", model="ornith-9b-128k", variant="thinking")
+        self.assertTrue(cmd[0].endswith("tbench/local.sh"))
+        self.assertEqual(cmd[1:], ["--one", "--ak", "keep_reasoning=all"])
+        self.assertTrue(realbench.command("terminal-bench", "quick", variant="minimal")[0].endswith("fair.sh"))
+        with self.assertRaises(ValueError):
+            realbench.command("deepswe", "quick", model="ornith-9b-128k")
+        run = realbench.Run("terminal-bench", "quick", model="ornith-9b-128k")
+        with mock.patch.object(realbench.subprocess, "Popen") as popen:
+            run.start()
+        self.assertEqual(popen.call_args.kwargs["env"]["PURR_LOCAL_MODEL"], "ornith-9b-128k")
+
 
 if __name__ == "__main__":
     unittest.main()
