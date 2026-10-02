@@ -7,9 +7,10 @@ import urllib.request
 
 
 class ApiError(Exception):
-    def __init__(self, message, retry=False):
+    def __init__(self, message, retry=False, status=None):
         super().__init__(message)
         self.retry = retry  # worth trying again (server busy or restarting)
+        self.status = status  # the HTTP code (or the error's own code in a stream), if there was one
 
 
 class Stopped(Exception):
@@ -42,7 +43,7 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
         resp = urllib.request.urlopen(req, timeout=600)
     except urllib.error.HTTPError as e:
         raise ApiError(f"{e.code}: {e.read().decode(errors='replace')[:800]}",
-                       retry=e.code == 429 or e.code >= 500) from None
+                       retry=e.code == 429 or e.code >= 500, status=e.code) from None
     except urllib.error.URLError as e:
         raise ApiError(f"can't reach {base_url}: {e.reason}", retry=True) from None
 
@@ -65,7 +66,9 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
                 break
             chunk = json.loads(data)
             if chunk.get("error"):
-                raise ApiError(str(chunk["error"]))
+                err = chunk["error"]
+                code = err.get("code") if isinstance(err, dict) else None
+                raise ApiError(str(err), status=code if isinstance(code, int) else None)
             if chunk.get("usage"):
                 usage = chunk["usage"]
             served_by = chunk.get("provider") or served_by  # OpenRouter says who answered

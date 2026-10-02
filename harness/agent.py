@@ -5,6 +5,7 @@ Also: compacting long chats, saving/resuming sessions, undo, helpers (sub-agents
 """
 
 import datetime
+import difflib
 import json
 import os
 import re
@@ -15,8 +16,10 @@ from pathlib import Path
 from . import ui
 from .api import ApiError, Stopped, stream_chat
 from .limits import LOCAL, Limits
+from .free import FreeRouter, rest_for
+from .mcp import Mcp
 from . import checks
-from .tools import Tools, clip, run_shell, schemas
+from .tools import TOOL_NAMES, Tools, clip, run_shell, schemas
 
 SYSTEM = """You are {model}, an AI model, working as a coding agent. You are running inside purr, \
 a small terminal program that gives you tools and shows your replies to the user. purr is only \
@@ -51,6 +54,78 @@ ASK_TOOLS = """Tools
 - {look} to look around. This is ask mode: you can't change files or run commands.
 - Explain, answer and plan. If something should change, say exactly where and what (file, \
 line, the new code) instead of doing it."""
+
+LEARN = """How to work: learn mode
+The user is here to learn by writing code themselves. You are their pair programmer and teacher.
+- Understand first: find and read the files that matter, like always. Never guess what a file contains.
+- Write the boring parts yourself: setup, imports, wiring, boilerplate, tests. Leave the interesting \
+part to the user: the 3 to 10 lines where the real idea is (the logic, the algorithm, the decision).
+- One idea per piece. If the feature has two ideas (say stacking items, then a limit per stack), \
+leave only the first now; the second comes after the user has done the first.
+- Leave the piece in the file as a short comment where the code goes, in the file's own comment \
+style, two lines at most: the task in one sentence, and one small hint (a function or idea to use). \
+The hint must never spell out the steps or the code: working those out is what the user is here for. \
+For example:
+    # TODO(you): if a slot already holds this item, add to it instead of making a new slot
+    # hint: loop over self.slots and look at slot[0]
+  Keep the code around it runnable (a pass or return placeholder under the comment).
+- Then tell the user, short: where the TODO(you) is (file and line), what it should do, and one \
+line starting with "✦ why:" about the idea behind it.
+- Never write the TODO(you) code yourself, even when it is easy. Only when the user asks you to \
+("show me", "just do it"): then write it and explain it line by line.
+
+When the user says done or check
+- Read what they wrote and run the tests or the code.
+- Start with what is good. Then at most one or two things to improve, as questions or hints \
+("what happens when the list is empty?"). Don't fix their code for them: they fix it.
+- When it works, remove the TODO(you) and hint comments, then offer the next piece.
+
+When the user is stuck ("hint", "help", "I don't get it")
+- Each time a little more: first a question that points the way, then the idea, then a tiny \
+example in a different setting. The full answer only when they ask for it.
+
+Replies
+- Short, friendly and plain. Explain a new word the first time you use it. No lectures.
+- Be honest: say when something failed or you're unsure, and never claim you ran or checked something you didn't."""
+
+LEARN_NUDGE = """(purr: this is learn mode, and you changed files without leaving anything for the \
+user to write. If the change has an interesting part (real logic, not boilerplate), take it back \
+out now: put a TODO(you) comment with a hint where it goes, keep a placeholder so the code still \
+runs, and tell the user where it is. If the user asked you to write it, or it really was all \
+boilerplate, just say so.)"""
+
+LEARN_SHORTEN = """(purr: the TODO(you) comment at {where} is {n} lines long. Make it two lines: the \
+task in one sentence and one small hint that doesn't give away the steps or the code. Also, if it \
+asks for two ideas at once, keep only the first. Change the comment now; say anything else in your reply.)"""
+LEARN_TODO_LINES = 4  # a longer TODO(you) comment has usually written out the answer
+
+TODO_YOU = "TODO(you)"
+
+PAIR = """How to work: pair mode
+You and the user are pair programming: you take turns at the keyboard.
+- Work in small steps: one change at a time (one edit, or a few edits for one small thing). After \
+it, purr hands the keyboard back to the user.
+- If the task needs more than a couple of steps, first say the plan in 2 to 4 short lines and ask \
+if it sounds right, before changing anything.
+- When you hand back, say in 1 to 3 lines what you did and what you would do next, so the user can \
+say "go", change direction, or take over.
+- The user edits files too. purr shows you what they changed since your last turn ("the user \
+changed"). Build on their code: never undo or rewrite it. If you see a bug in it, say so and ask \
+before fixing it.
+- When the user asks for your opinion or a review, give it straight: what works, what you would \
+change and why.
+- Understand before changing: find the right files and read them. Never guess what a file contains.
+- Keep changes small and match the existing style, naming and indentation (tabs or spaces).
+
+Replies
+- Short and plain, like talking to a friend at the same desk.
+- Be honest: say when something failed or you're unsure, and never claim you ran or checked something you didn't."""
+
+PAIR_HAND_BACK = """(purr: pair mode: that was your step, the keyboard goes back to the user now. \
+Don't call any more tools. In 1 to 3 short lines say what you did and what you would do next.)"""
+
+PAIR_SNAPSHOT_FILES = 3000  # files remembered to spot the user's own edits (text, < 200 kB each)
+PAIR_DIFF_CHARS = 6000      # the most of the user's changes shown to the model at once
 
 CHAT = """You are {model}, an AI model, chatting with the user inside purr, a small terminal \
 program. purr is only the program around you; it is not you. If someone asks who or what you are, \
@@ -104,6 +179,8 @@ This ticket:
 MODES = {
     "code": ("all", "does the work: reads, edits, runs"),
     "ask": ("read", "looks at the project and explains, never changes anything"),
+    "learn": ("all", "you learn by doing: purr writes the boring parts and leaves the key lines to you"),
+    "pair": ("all", "pair programming: you take turns, one small step each"),
     "plan": ("all", "a big model splits the task into tickets, then a small one works through them"),
     "chat": ("none", "just talking, no tools"),
     "create": ("none", "brainstorming and writing, no tools, a bit more random"),
@@ -188,9 +265,34 @@ TASK_LINE = ("\n- task: send a helper to explore many files or the web and repor
              "so this chat stays small.")
 
 
-def system_prompt(root, model_id, provider, hidden=(), mode="code"):
+MCP_HINTS = [  # what to say about the tools purr's own MCP servers add (servers/)
+    ({"outline", "code_map", "find_symbol", "related_files"},
+     "- {names}: find your way around the code. Prefer outline, then read_file with offset/limit, over "
+     "reading whole files, and use find_symbol before changing something other code uses."),
+    ({"godot_class", "python_api"},
+     "- {names}: the real API for this project's versions. Check a method there before using it if "
+     "you aren't sure it exists."),
+]
+OVERVIEW_CHARS = 2000
+
+
+def _mcp_lines(names):
+    names, lines = list(names), []
+    for group, text in MCP_HINTS:
+        have = [n for n in names if n in group]
+        if have:
+            lines.append(text.format(names=", ".join(have)))
+            names = [n for n in names if n not in group]
+    names = [n for n in names if n != "project_overview"]  # its answer is already in the prompt
+    if names:
+        lines.append(f"- also: {', '.join(names)} (see their descriptions)")
+    return "\n".join(lines)
+
+
+def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=(), overview=""):
     """hidden: tools this model isn't offered, so the prompt doesn't mention them either.
-    mode: code (all tools), ask (look only), chat or create (no tools, their own prompt)."""
+    mode: code (all tools), ask (look only), chat or create (no tools, their own prompt).
+    mcp_tools: names of the MCP servers' tools; overview: the project overview to start from."""
     date = datetime.date.today().isoformat()
     if mode in ("chat", "create"):  # no project, no tools: a short prompt leaves room to talk
         return (CHAT if mode == "chat" else CREATE).format(model=model_id, provider=provider, date=date)
@@ -200,6 +302,17 @@ def system_prompt(root, model_id, provider, hidden=(), mode="code"):
     if mode == "ask":
         start, end = text.index("Tools\n"), text.index("\n\nHow to work")
         text = text[:start] + ASK_TOOLS.format(look=look) + text[end:]
+    elif mode == "learn":
+        text = text[:text.index("How to work")] + LEARN
+    elif mode == "pair":
+        text = text[:text.index("How to work")] + PAIR
+    extra = _mcp_lines(mcp_tools)
+    if extra:
+        cut = text.index("\n\nHow to work")
+        text = text[:cut] + "\n" + extra + text[cut:]
+    if overview:
+        text += ("\n\nProject overview (purr made it from the files; when they disagree, the files win):\n"
+                 + overview[:OVERVIEW_CHARS])
     text += _notes(GLOBAL_NOTES, "The user's notes for every project")
     for name in NOTES_FILES:
         text += _notes(Path(root) / name, f"Project notes ({name})")
@@ -259,6 +372,15 @@ def _stable(raw):
         return json.dumps(json.loads(raw or "{}"), sort_keys=True)
     except ValueError:
         return raw or ""
+
+
+def _args(raw):
+    """A tool call's arguments as a dict ({} when the model wrote broken JSON)."""
+    try:
+        args = json.loads(raw or "{}")
+    except ValueError:
+        return {}
+    return args if isinstance(args, dict) else {}
 
 
 def _looks_failed(result):
@@ -374,6 +496,28 @@ def read_tickets(root):
 _OPENCODE_KEYS = {}
 
 
+KEYS_FILE = Path.home() / ".config/purr/keys.toml"  # `purr --key groq` writes here (only you can read it)
+
+
+def saved_key(env_name):
+    """A key saved with `purr --key`, by its environment variable's name."""
+    try:
+        import tomllib
+        return tomllib.loads(KEYS_FILE.read_text()).get(env_name)
+    except (OSError, ValueError):
+        return None
+
+
+def provider_key(provider):
+    """The provider's key: its environment variable, then `purr --key`, then `opencode auth login`.
+    None if it needs one and there's none."""
+    env = provider.get("api_key_env")
+    if not env:
+        return None
+    return os.environ.get(env) or saved_key(env) or (
+        opencode_key(provider["opencode_auth"]) if provider.get("opencode_auth") else None)
+
+
 def opencode_key(integration):
     """A key you saved with `opencode auth login`, so it doesn't have to live in ~/.zshrc too."""
     if integration in _OPENCODE_KEYS:
@@ -458,11 +602,18 @@ class Agent:
         self.parent = parent
         perms = config.get("permissions", {})
         self.tools = Tools(self.root, view, read_only=helper, allow_run=perms.get("allow_run", []))
+        # MCP servers ([mcp.*] in config.toml): started on first use, shared with helpers
+        self.mcp = parent.mcp if parent else Mcp(config, self.root, note=lambda s: view.note(s, "warn"))
+        self.tools.mcp = self.mcp
+        self.tools.is_private = lambda: self.private
+        self._overview = None
         self.tools.spawn = None if helper else self._helper
         self.stop_flag = False  # the TUI sets this to stop an answer (plain mode uses ctrl+c)
         self.tools.code_checks = config.get("code_checks", True)
         self.tools.read_before_edit = config.get("read_before_edit", True)
-        self.mode = "code"       # code, ask, plan, chat or create (MODES)
+        self.mode = "code"       # code, ask, learn, pair, plan, chat or create (MODES)
+        self.mode_model = {}     # mode -> the model it had last (switch_mode)
+        self.router = None       # /model free: picks free models and moves on when one is maxed out
         # /refine: "auto" rewrites a short first message into a clear task (you approve it),
         # "on" every message, "off" none. purr bench measured +2 solved hard tasks from vague asks.
         # Unset, it follows the model (auto for local models, off for API ones); /refine or
@@ -475,21 +626,75 @@ class Agent:
     def stopping(self):
         return self.stop_flag or bool(self.parent and self.parent.stopping())
 
+    # ---- /private: local models only, no web, nothing saved ----
+
+    @property
+    def private(self):
+        # kept in the config dict, which helpers, the planner and ticket workers share
+        return bool(self.config.get("_private"))
+
+    def local_models(self):
+        return [n for n, m in self.config["models"].items() if m["provider"] in LOCAL and not m.get("router")]
+
+    def set_private(self, on):
+        """Turn private mode on or off. Either way the chat starts fresh: what was said in private
+        is gone, and nothing from before carries into it. Returns a line about it."""
+        if on:
+            local = self.local_models()
+            if not local:
+                raise KeyError("private mode needs a local model (an Ollama one in config.toml)")
+            self.config["_private"] = True
+            want = self.config.get("private_model")
+            pick = (want if want in local else self.model_name if self.model_name in local
+                    else self.config.get("default_model") if self.config.get("default_model") in local
+                    else (self.config.get("plan") or {}).get("executor") if (self.config.get("plan") or {}).get("executor") in local
+                    else local[0])
+            self.router = None
+            self.mode_model = {}
+            self.set_model(pick)
+        else:
+            self.config.pop("_private", None)
+        self.mcp.offline(on)  # the Godot docs lookup stops fetching from GitHub
+        self.new()
+        return pick if on else None
+
+    @property
+    def hidden_tools(self):
+        """Tools this model isn't offered: the model's own limits, plus the web in private mode."""
+        return tuple(self.limits.hidden_tools) + (("fetch_url",) if self.private else ())
+
+    @property
+    def chosen_model(self):
+        """What you picked: "free" while the free router picks for you, else the model itself."""
+        return self.router_name if self.router else self.model_name
+
     def set_model(self, name):
         models = self.config["models"]
         if name not in models:
             raise KeyError(f"no model called {name!r}. Have: {', '.join(models)}")
-        model = models[name]
+        if self.private and (models[name].get("router") or models[name]["provider"] not in LOCAL):
+            raise KeyError(f"private mode: {name} runs at {models[name]['provider']}, so your chat would leave "
+                           "this computer. Only local models now (/private again to leave)")
+        if models[name].get("router"):  # [models.free]: let the free router choose
+            router = self.router or FreeRouter(self.config)
+            pick = router.pick(self.mode, need=self.context_used() if getattr(self, "messages", None) else 0)
+            if not pick:
+                raise KeyError(f"every free model is resting until about {router.next_free_at(self.mode)} "
+                               "(/free shows them)")
+            self.router, self.router_name = router, name
+            return self._use_model(pick)
+        self.router = None
+        return self._use_model(name)
+
+    def _use_model(self, name):
+        model = self.config["models"][name]
         provider = self.config["providers"][model["provider"]]
-        key = None
-        if provider.get("api_key_env"):
-            key = os.environ.get(provider["api_key_env"])
-            if not key and provider.get("opencode_auth"):
-                key = opencode_key(provider["opencode_auth"])
-            if not key:
-                raise KeyError(f"{name} needs the {provider['api_key_env']} environment variable"
-                               + (f" or `opencode auth login {provider['opencode_auth']}`"
-                                  if provider.get("opencode_auth") else ""))
+        key = provider_key(provider)
+        if provider.get("api_key_env") and not key:
+            raise KeyError(f"{name} needs a key: `purr --key {model['provider']}`, or the "
+                           f"{provider['api_key_env']} environment variable"
+                           + (f", or `opencode auth login {provider['opencode_auth']}`"
+                              if provider.get("opencode_auth") else ""))
         self.model_name, self.model, self.provider, self.key = name, model, provider, key
         self.limits = Limits.for_model(model)
         if not getattr(self, "refine_pinned", True):
@@ -507,8 +712,34 @@ class Agent:
         self.mode = mode
         self.tools.read_only = self.helper or mode == "ask"  # enforced, not just asked for
         self.tools.no_tools = MODES[mode][0] == "none"
+        if mode == "pair" and not self.helper:
+            self.pair_snapshot()  # from now on, file changes between turns are the user's
         if getattr(self, "messages", None):
             self.messages[0] = {"role": "system", "content": self._system()}
+
+    def switch_mode(self, mode):
+        """set_mode for your own switches (shift+tab, /mode, /plan): also moves to the model that
+        mode is best on (mode_models in config.toml). A model you picked by hand in a mode wins
+        for the rest of the session. Returns a line about the model change, or None."""
+        if mode not in MODES:
+            raise KeyError(f"no mode called {mode!r}. Have: {', '.join(MODES)}")
+        self.mode_model[self.mode] = self.chosen_model  # going back to this mode brings it back
+        self.set_mode(mode)
+        want = self.mode_model.get(mode) or self.config.get("mode_models", {}).get(mode)
+        if self.router and mode not in self.mode_model:
+            want = self.router_name  # the free router stays on: it picks the best free model for this mode
+        if self.private and want and want not in self.local_models():
+            want = None  # private: a mode's API model stays out; keep the local one
+        if not want or (want == self.chosen_model and not self.router):
+            return None
+        before = self.model_name
+        try:
+            self.set_model(want)
+        except KeyError as e:  # no key, or a name that isn't in [models]: keep the current one
+            return f"kept {self.model_name} ({e.args[0]})"
+        if self.model_name == before:
+            return None
+        return f"model: {self.router_name} → {self.model_name}" if self.router else f"model: {want}"
 
     def should_refine(self, text):
         """Whether this message should go through refine first (see refine_mode)."""
@@ -750,9 +981,19 @@ class Agent:
         self.view.note(line, "stats")
         self.save_log()
 
+    def project_overview(self):
+        """The codebase server's project overview, made once per session ("" without one)."""
+        if self._overview is None:
+            on = self.config.get("overview_in_prompt", True) and not self.helper
+            self._overview = self.mcp.run_once("project_overview") if on else ""
+        return self._overview
+
     def _system(self):
-        text = system_prompt(self.root, self.model["id"], self.model["provider"], self.limits.hidden_tools,
-                             self.mode)
+        tools = MODES[self.mode][0] != "none"
+        names = [s["function"]["name"] for s in self.mcp.schemas(read_only=self.helper or self.mode == "ask",
+                                                                 taken=TOOL_NAMES)] if tools else []
+        text = system_prompt(self.root, self.model["id"], self.model["provider"], self.hidden_tools,
+                             self.mode, mcp_tools=names, overview=self.project_overview() if tools else "")
         return text + HELPER if self.helper else text
 
     def new(self):
@@ -762,7 +1003,7 @@ class Agent:
         self.last_usage = None
         self.title = ""
         stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
-        self.log_path = None if self.helper else LOG_DIR / f"{stamp}.json"
+        self.log_path = None if self.helper or self.private else LOG_DIR / f"{stamp}.json"  # private: never saved
 
     # ---- sessions ----
 
@@ -772,8 +1013,8 @@ class Agent:
             return
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.log_path.write_text(json.dumps(
-            {"model": self.model_name, "mode": self.mode, "folder": str(self.root), "title": self.title,
-             "cost": self.session_cost, "messages": self.messages,
+            {"model": self.chosen_model, "mode": self.mode, "folder": str(self.root), "title": self.title,
+             "cost": self.session_cost, "out": self.session_out, "messages": self.messages,
              **({"cut_off_reply": self.cut_off} if getattr(self, "cut_off", None) else {})},
             indent=1, ensure_ascii=False))
 
@@ -791,15 +1032,17 @@ class Agent:
         self.messages[0] = {"role": "system", "content": self._system()}
         self.title = data.get("title", "")
         self.session_cost = data.get("cost", 0.0)
+        self.session_out = data.get("out", 0)
         self.last_usage = None
         self.log_path = Path(path)
 
     # ---- one model call ----
 
-    def _call(self, messages=None, tools=True, quiet=False):
+    def _body(self, messages, tools):
         msgs = messages or self.messages
         if tools and MODES[self.mode][0] == "none":
             tools, msgs = False, plain_history(msgs)
+        msgs = self._for_provider(msgs)
         body = {
             "model": self.model["id"],
             "messages": msgs,
@@ -807,22 +1050,64 @@ class Agent:
             "stream_options": {"include_usage": True},
         }
         if tools:
-            body["tools"] = schemas(read_only=self.helper or self.mode == "ask",
-                                    read_lines=self.limits.read_lines, hidden=self.limits.hidden_tools)
+            read_only = self.helper or self.mode == "ask"
+            body["tools"] = schemas(read_only=read_only, read_lines=self.limits.read_lines,
+                                    hidden=self.hidden_tools) + self.mcp.schemas(read_only, taken=TOOL_NAMES)
         body.update(self.provider.get("body", {}))  # e.g. which OpenRouter hosts may answer
         body.update(self.model.get("body", {}))
         if self.mode == "create" and messages is None:  # a little more surprising
             body["temperature"] = min(1.2, (body.get("temperature") or 0.8) + 0.3)
+        return body
+
+    STANDARD = {"role", "content", "tool_calls", "tool_call_id", "name"}
+
+    def _for_provider(self, msgs):
+        """The chat with only the fields this provider understands: after the free router switches
+        mid-chat, the history holds another provider's thinking (reasoning / reasoning_content),
+        and strict APIs refuse fields they don't know."""
+        keep = self.STANDARD | ({self.provider["echo_reasoning"]} if self.provider.get("echo_reasoning") else set())
+        if all(k in keep for m in msgs for k in m):
+            return msgs
+        return [{k: v for k, v in m.items() if k in keep} for m in msgs]
+
+    def _next_free(self, err):
+        """The free router's model just got maxed out: rest it and move to the next one.
+        True when there is one to try (the call goes again), False to give up."""
+        router = self.router or (self.parent.router if self.parent else None)
+        rest = rest_for(err) if router else None
+        if not rest and router and getattr(err, "status", None) in (400, 422) and self._refused < 2:
+            # providers take slightly different settings: one refusing purr's request doesn't mean
+            # the next will (but a request every model refuses shouldn't empty the whole list)
+            self._refused += 1
+            rest = (3600, "refused purr's request", "model")
+        if not rest:
+            return False
+        router.rest(self.model_name, *rest)
+        pick = router.pick(self.mode, need=self.context_used())
+        if not pick:
+            self.view.note(f"{self.model_name} is {rest[1]}, and every other free model is resting too "
+                           f"(back about {router.next_free_at(self.mode)}; /free shows them)", "warn")
+            return False
+        self.view.note(f"{self.model_name} is {rest[1]}: switching to {pick}", "warn")
+        self._use_model(pick)
+        return True
+
+    def _call(self, messages=None, tools=True, quiet=False):
         on_text = (lambda s: None) if quiet else self.view.text
         on_think = (lambda s: None) if quiet else self.view.thinking
-
-        for attempt in range(len(RETRY_WAITS) + 1):
+        attempt = 0
+        self._refused = 0  # 400s that made the free router switch, this call
+        while True:
+            body = self._body(messages, tools)  # again after a switch: another model, id and hosts
             try:
                 return stream_chat(self.provider["base_url"], self.key, body, on_text, on_think, self.stopping)
             except ApiError as e:
+                if self._next_free(e):
+                    continue
                 if not e.retry or attempt == len(RETRY_WAITS):
                     raise
                 wait = RETRY_WAITS[attempt]
+                attempt += 1
                 self.view.note(f"the model server had a problem, trying again in {wait}s", "warn")
                 for _ in range(wait * 10):
                     if self.stopping():
@@ -876,8 +1161,19 @@ class Agent:
             return self.plan_turn(text)
         if not self.title:
             self.title = " ".join(text.split())[:70]
-        self.messages.append({"role": "user", "content": self.expand(text)})
+        content = self.expand(text)
+        if self.mode == "pair" and not self.helper:
+            yours = self.pair_changes()
+            if yours:
+                content += f"\n\n(purr: the user changed these files since your last turn:)\n{yours}"
+        open_todos = self.learn_todos() if self.mode == "learn" and not self.helper else []
+        if open_todos:  # small models lose track of what they left for the user: say it every time
+            content += f"\n\n(purr: {TODO_YOU} still in the code: {', '.join(open_todos)})"
+        self.messages.append({"role": "user", "content": content})
         self.tools.begin_turn()
+        self._learn_nudged = bool(open_todos)  # pieces already out there: no need to leave new ones
+        self._pair_handing_back = False
+        self._learn_shortened = False
         turn_cost = 0.0
         steps = 0
         retries = 0
@@ -933,6 +1229,13 @@ class Agent:
                     reply["tool_calls"], reply["text"] = calls_from_text(reply["text"])
                     self.tools.repairs += ["tool call written as text -> real call"] * len(reply["tool_calls"])
 
+                if self._pair_handing_back and reply["tool_calls"]:
+                    # the step is done: whatever it wanted next becomes a suggestion, not an action
+                    held = "; ".join(self.tools.summary(c["name"], _args(c["args"])) for c in reply["tool_calls"])
+                    reply["text"] = (reply["text"] or "").strip() or f"Next I'd do: {held}"
+                    reply["tool_calls"] = []
+                    self.view.note(f"⇄ held back for your go: {held}")
+
                 # content may only be null next to tool calls: Ollama refuses an empty reply's null
                 msg = {"role": "assistant", "content": reply["text"] or (None if reply["tool_calls"] else "")}
                 if reply["tool_calls"]:
@@ -964,12 +1267,18 @@ class Agent:
                             "(purr: your tool call came out as plain text, so it did not run. "
                             "Call the tool again.)"})
                         continue
-                    if self._final_check():
+                    if self._final_check() or self._learn_check():
                         continue
                     break
                 if self._run_tools(reply["tool_calls"]):
                     self.view.note("waiting for you", "info")
                     break
+                if self.mode == "pair" and not self.helper and any(
+                        name in ("edit_file", "write_file") and not _looks_failed(result)
+                        for name, _, result in self._executed):
+                    self._pair_handing_back = True
+                    self.messages.append({"role": "user", "content": PAIR_HAND_BACK})
+                    continue
                 nudge = self._check_repeats()
                 if nudge and nudge.startswith("stop"):
                     what = "failing step" if nudge == "stop failed" else "step and getting the same result"
@@ -982,7 +1291,7 @@ class Agent:
                 if all(c["name"] == "todo" for c in reply["tool_calls"]):
                     todo_only += 1
                     if reply["text"] and not self.tools.todos_left:
-                        if self._final_check():
+                        if self._final_check() or self._learn_check():
                             continue
                         break  # it answered and everything is done: that's the end
                     if todo_only >= 3:
@@ -998,6 +1307,14 @@ class Agent:
         changed = len(self.tools.undo_stack[-1]) if self.tools.undo_stack else 0
         if changed and not self.helper and (self.root / ".git").exists():
             self.view.note(f"✎ {changed} file{'s' * (changed != 1)} changed · /pr makes a pull request")
+        if self.mode == "pair" and not self.helper:
+            self.pair_snapshot()  # whatever changes from here on is the user's
+            if self._pair_handing_back:
+                self.view.note("⇄ your move: say go, steer it, or edit the code yourself and tell it", "info")
+        if self.mode == "learn" and not self.helper:
+            todos = self.learn_todos()
+            if todos:
+                self.view.note(f"✿ your turn: {', '.join(todos)} · say done when you're ready, or ask for a hint", "info")
         self.turn_stats["summary"] = self._turn_summary()
         self.view.note(self.turn_stats["summary"], "stats")
 
@@ -1014,6 +1331,103 @@ class Agent:
         check = FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT
         self.messages.append({"role": "user", "content": self._test_report() + check})
         return True
+
+    def _learn_check(self):
+        """Learn mode: small models happily write the whole thing themselves. When a turn changed
+        files and left no TODO(you) anywhere, ask once to hand the interesting part back."""
+        changed = self.tools.undo_stack[-1] if self.tools.undo_stack else {}
+        if self.mode != "learn" or self.helper or not changed:
+            return False
+        long = [(where, n) for where, n in self._todo_lengths(changed) if n > LEARN_TODO_LINES]
+        if long and not self._learn_shortened:
+            self._learn_shortened = True
+            self.tools.repairs.append("learn mode: TODO(you) too long -> asked to shorten it")
+            self.view.note("✿ asking it to keep the hint small, so you get to work it out")
+            self.messages.append({"role": "user", "content": LEARN_SHORTEN.format(where=long[0][0], n=long[0][1])})
+            return True
+        if self._learn_nudged or self.learn_todos():
+            return False
+        self._learn_nudged = True
+        self.tools.repairs.append("learn mode: wrote everything -> asked to leave a TODO(you)")
+        self.view.note("✿ asking it to leave the interesting part for you")
+        self.messages.append({"role": "user", "content": LEARN_NUDGE})
+        return True
+
+    def pair_snapshot(self):
+        """Pair mode: remember the project's text files, so the next message can show the model
+        what the user changed in their own editor meanwhile."""
+        try:
+            res = subprocess.run(["rg", "--files"], capture_output=True, text=True, timeout=10, cwd=self.root)
+        except (OSError, subprocess.SubprocessError):
+            self._pair_files = None
+            return
+        files = {}
+        for rel in res.stdout.splitlines()[:PAIR_SNAPSHOT_FILES]:
+            path = self.root / rel
+            try:
+                if path.stat().st_size < 200_000:
+                    files[rel] = path.read_text()
+            except (OSError, UnicodeDecodeError):
+                pass
+        self._pair_files = files
+
+    def pair_changes(self):
+        """What changed since pair_snapshot(), as a unified diff ("" if nothing or no snapshot yet)."""
+        before = getattr(self, "_pair_files", None)
+        if before is None:
+            self.pair_snapshot()  # first pair message: nothing to compare with yet
+            return ""
+        old_files = before
+        self.pair_snapshot()
+        now = self._pair_files or {}
+        out, more = [], []
+        for rel in sorted(set(old_files) | set(now)):
+            a, b = old_files.get(rel), now.get(rel)
+            if a == b:
+                continue
+            diff = "".join(difflib.unified_diff((a or "").splitlines(True), (b or "").splitlines(True),
+                                                f"a/{rel}", f"b/{rel}", n=2))
+            if not diff.endswith("\n"):
+                diff += "\n"
+            if sum(map(len, out)) + len(diff) > PAIR_DIFF_CHARS:
+                more.append(rel)
+            else:
+                out.append(diff if a is not None and b is not None
+                           else f"{'new' if a is None else 'deleted'} file {rel}\n" + (diff if b else ""))
+        if not out and not more:
+            return ""
+        text = "```diff\n" + "".join(out) + "```"
+        if more:
+            text += f"\nAlso changed (read them yourself): {', '.join(more)}"
+        return text
+
+    def _todo_lengths(self, paths):
+        """[("file:line", comment lines)] for each TODO(you) in these files: the TODO line and the
+        comment lines right under it."""
+        out = []
+        for p in paths:
+            try:
+                lines = Path(p).read_text().splitlines()
+            except (OSError, UnicodeDecodeError):
+                continue
+            for i, line in enumerate(lines):
+                if TODO_YOU not in line:
+                    continue
+                mark = line.strip()[:2] if line.strip()[:2] in ("//", "--") else line.strip()[:1]
+                n = 1
+                while i + n < len(lines) and lines[i + n].strip().startswith(mark) and mark:
+                    n += 1
+                out.append((f"{os.path.relpath(p, self.root)}:{i + 1}", n))
+        return out
+
+    def learn_todos(self):
+        """Where the TODO(you) pieces are: ["inventory.gd:12", ...]."""
+        try:
+            res = subprocess.run(["rg", "-n", "--fixed-strings", "--max-count", "20", TODO_YOU, "."],
+                                 capture_output=True, text=True, timeout=10, cwd=self.root)
+        except (OSError, subprocess.SubprocessError):
+            return []
+        return [":".join(line.removeprefix("./").split(":", 2)[:2]) for line in res.stdout.splitlines()][:20]
 
     def _helper_on(self, key):
         """A training-wheels helper (reminders, edge_cases): config.toml decides if it's set there,

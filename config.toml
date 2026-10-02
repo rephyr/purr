@@ -1,6 +1,6 @@
 # purr settings. Pick a model with /model inside purr, or `purr -m <name>`.
 
-default_model = "qwen3-coder-32k"
+default_model = "qwen3_6-iq3"
 
 # /pr: the co-author on purr's commits is "purr-<model> <co_author_email>". GitHub shows that
 # account's avatar next to the commit, so make purr a GitHub account with a cute picture and put
@@ -26,6 +26,15 @@ read_before_edit = true
 
 # Max model calls in one turn before purr stops and asks you.
 max_steps = 40
+
+# Switching mode (shift+tab, /mode) also switches to the model that's best at that job. A model
+# you pick with /model in a mode sticks to that mode for the rest of the session. Plan mode
+# uses [plan] below instead. Leave a mode out to keep whatever model you're on.
+[mode_models]
+code = "qwen3_6-iq3"   # bulk edits: local, fast, free
+ask = "ds-flash-or"    # reading and explaining: 1M context sees the whole project, ~free
+chat = "kimi"          # talking and bouncing ideas: the best conversationalist here
+create = "kimi"        # writing, names, game design
 
 # /plan (or /mode plan): `planner` reads your request and splits it into tickets under
 # <project>/.purr/tickets/, then `executor` does them one at a time, each in a fresh chat.
@@ -72,6 +81,44 @@ only = ["deepseek", "together", "fireworks", "deepinfra", "baseten", "novita", "
 quantizations = ["int4", "int8", "fp8", "fp16", "bf16", "fp32", "unknown"]
 sort = "price"
 preferred_min_throughput = { p50 = 100 }
+
+# ---- free-tier providers (no card needed; `purr --key <name>` saves a key; key_page = where to get one) ----
+# Their free tiers are rate-limited, and some use free-tier prompts to improve their models.
+
+[providers.groq]
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+opencode_auth = "groq"
+key_page = "https://console.groq.com/keys"
+
+[providers.cerebras]
+base_url = "https://api.cerebras.ai/v1"
+api_key_env = "CEREBRAS_API_KEY"
+opencode_auth = "cerebras"
+key_page = "https://cloud.cerebras.ai"
+
+[providers.gemini]
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+opencode_auth = "google"
+key_page = "https://aistudio.google.com/apikey"
+
+[providers.mistral]
+base_url = "https://api.mistral.ai/v1"
+api_key_env = "MISTRAL_API_KEY"
+opencode_auth = "mistral"
+key_page = "https://console.mistral.ai/api-keys"
+
+[providers.nvidia]
+base_url = "https://integrate.api.nvidia.com/v1"
+api_key_env = "NVIDIA_API_KEY"
+key_page = "https://build.nvidia.com (sign in, then Get API Key on any model)"
+
+[providers.cohere]
+base_url = "https://api.cohere.ai/compatibility/v1"
+api_key_env = "COHERE_API_KEY"
+opencode_auth = "cohere"
+key_page = "https://dashboard.cohere.com/api-keys"
 
 # ---- local models (free) ----
 
@@ -130,6 +177,19 @@ provider = "ollama"
 id = "qwen3.5-code"
 context = 65536
 body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
+
+# Gemma 4 abliterated (huihui_ai, Q4, fewer refusals): 12B fits fully on the GPU, 26B MoE is 17 GB
+[models.gemma4-abl-12b]
+provider = "ollama"
+id = "gemma-4-abliterated-32k:12b"
+context = 32768
+body = { temperature = 1.0, top_p = 0.95, top_k = 64 }
+
+[models.gemma4-abl-26b]
+provider = "ollama"
+id = "gemma-4-abliterated-32k:26b"
+context = 32768
+body = { temperature = 1.0, top_p = 0.95, top_k = 64 }
 
 # ---- DeepSeek (paid, needs DEEPSEEK_API_KEY) ----
 # Prices: USD per 1M tokens, off-peak. Peak hours cost 2x.
@@ -198,7 +258,280 @@ context = 262144
 price = { hit = 0.18, miss = 0.6712, out = 3.35 }
 body = { max_tokens = 16384 }
 
+# Poolside Laguna S 2.1, the free version (rate-limited by OpenRouter). Only Poolside hosts it, at
+# fp4, so it gets its own provider rule: a model's body replaces the [providers.openrouter.body] one.
+[models.laguna]
+provider = "openrouter"
+id = "poolside/laguna-s-2.1:free"
+context = 262144
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384, provider = { only = ["poolside"] } }
+
+# ---- free OpenRouter models (free, but rate-limited; free hosts may keep your prompts) ----
+# Any host may serve them (some only run at fp4), so each replaces the provider rule above.
+
+# Poolside Laguna XS 2.1: the small, fast one
+[models.laguna-xs]
+provider = "openrouter"
+id = "poolside/laguna-xs-2.1:free"
+context = 262144
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384, provider = { sort = "throughput" } }
+
+# Qwen3.8 27B
+[models.qwen38-free]
+provider = "openrouter"
+id = "qwen/qwen3.8-27b:free"
+context = 262144
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384, provider = { sort = "throughput" } }
+
+# NVIDIA Nemotron 3 Ultra 550B: huge, 1M context
+[models.nemotron-ultra-free]
+provider = "openrouter"
+id = "nvidia/nemotron-3-ultra-550b-a55b:free"
+context = 1000000
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384, provider = { sort = "throughput" } }
+
+# NVIDIA Nemotron 3 Super 120B
+[models.nemotron-super-free]
+provider = "openrouter"
+id = "nvidia/nemotron-3-super-120b-a12b:free"
+context = 262144
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384, provider = { sort = "throughput" } }
+
+
+# Cohere North Mini Code: made for code
+[models.north-code-free]
+provider = "openrouter"
+id = "cohere/north-mini-code:free"
+context = 256000
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384, provider = { sort = "throughput" } }
+
+# Google Gemma 4 31B
+[models.gemma4-31b-free]
+provider = "openrouter"
+id = "google/gemma-4-31b-it:free"
+context = 262144
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384, provider = { sort = "throughput" } }
+
+# dots.3 note (preview): 512k context
+[models.dots-free]
+provider = "openrouter"
+id = "dots-studio/dots-3-note-preview:free"
+context = 512000
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384, provider = { sort = "throughput" } }
+
+# OpenRouter's own free router: whatever free model it picks (last resort)
+[models.openrouter-free]
+provider = "openrouter"
+id = "openrouter/free"
+context = 200000
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384, provider = { sort = "throughput" } }
+
+# ---- models on the free-tier providers (used by /model free; skipped until you add that provider's key) ----
+
+# Groq: very fast. Free tier ~30 requests/min, ~1000/day per model.
+
+# OpenAI gpt-oss 120B
+[models.gptoss-groq]
+provider = "groq"
+id = "openai/gpt-oss-120b"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Qwen3.8 27B (preview on Groq)
+[models.qwen38-groq]
+provider = "groq"
+id = "qwen/qwen3.8-27b"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Llama 3.3 70B
+[models.llama70-groq]
+provider = "groq"
+id = "llama-3.3-70b-versatile"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Cerebras: the fastest (~2000-3000 tok/s). Free tier ~1M tokens/day, 64k context.
+
+# OpenAI gpt-oss 120B
+[models.gptoss-cerebras]
+provider = "cerebras"
+id = "gpt-oss-120b"
+context = 65536
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 8192 }
+
+# Qwen3.8 27B
+[models.qwen38-cerebras]
+provider = "cerebras"
+id = "qwen-3.8-27b"
+context = 65536
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 8192 }
+
+# Google AI Studio: 1M context. Free tier 5-15 requests/min; Google may use free-tier prompts.
+
+# Gemini 3.8 Flash
+[models.gemini-flash]
+provider = "gemini"
+id = "gemini-3.8-flash"
+context = 1048576
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Gemini 3.5 Flash-Lite
+[models.gemini-flash-lite]
+provider = "gemini"
+id = "gemini-3.5-flash-lite"
+context = 1048576
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Gemini 3.1 Pro preview (may not be on the free tier)
+[models.gemini-pro]
+provider = "gemini"
+id = "gemini-3.1-pro-preview"
+context = 1048576
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Mistral (Experiment tier): code models. IDs are the -latest aliases.
+
+# Devstral: made for coding agents
+[models.devstral]
+provider = "mistral"
+id = "devstral-medium-latest"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Codestral
+[models.codestral]
+provider = "mistral"
+id = "codestral-latest"
+context = 256000
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Mistral Medium
+[models.mistral-medium]
+provider = "mistral"
+id = "mistral-medium-latest"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Mistral Large
+[models.mistral-large]
+provider = "mistral"
+id = "mistral-large-latest"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# NVIDIA build.nvidia.com: free developer access (rate-limited). Context sizes are cautious guesses.
+
+# Kimi K3
+[models.kimi-k3-nv]
+provider = "nvidia"
+id = "moonshotai/kimi-k3"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Kimi K2.6
+[models.kimi-k26-nv]
+provider = "nvidia"
+id = "moonshotai/kimi-k2.6"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# GLM 5.3
+[models.glm53-nv]
+provider = "nvidia"
+id = "z-ai/glm-5.3"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# DeepSeek V4.1 Flash
+[models.deepseek-flash-nv]
+provider = "nvidia"
+id = "deepseek-ai/deepseek-v4.1-flash"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Nemotron 3 Ultra 550B
+[models.nemotron-ultra-nv]
+provider = "nvidia"
+id = "nvidia/nemotron-3-ultra-550b-a55b"
+context = 131072
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 16384 }
+
+# Cohere: trial key, ~1000 calls/month, not for commercial use.
+
+# Command A
+[models.command-a]
+provider = "cohere"
+id = "command-a-03-2025"
+context = 256000
+price = { hit = 0, miss = 0, out = 0 }
+body = { max_tokens = 8192 }
+
+# (Inkling's free version would be here, but OpenRouter only gives it to apps on its own list.)
+# /model free: purr picks the first model of the list for what you're doing (code: code, learn,
+# pair, plan; ask; talk: chat, create) that isn't resting and fits the chat. A model that's
+# rate-limited or out of free requests rests (until midnight UTC for the daily cap) and the
+# request goes on to the next one. /free shows them; /free reset forgets the resting.
+[models.free]
+router = "free"
+provider = "openrouter"
+id = "(the free router picks)"
+context = 262144
+price = { hit = 0, miss = 0, out = 0 }
+
+[free]
+# Best first. A model whose provider has no key is skipped; one that's maxed out rests and the
+# next takes over. The same model on several hosts (Qwen3.8, gpt-oss, Nemotron) is listed per host.
+code = ["kimi-k3-nv", "glm53-nv", "deepseek-flash-nv", "laguna", "qwen38-cerebras", "qwen38-groq", "qwen38-free",
+        "gptoss-cerebras", "gptoss-groq", "devstral", "gemini-flash", "nemotron-ultra-nv", "nemotron-ultra-free",
+        "north-code-free", "codestral", "kimi-k26-nv", "nemotron-super-free", "gemini-flash-lite",
+        "mistral-medium", "gemma4-31b-free", "laguna-xs", "llama70-groq", "openrouter-free"]
+ask = ["gemini-flash", "gemini-pro", "kimi-k3-nv", "nemotron-ultra-free", "deepseek-flash-nv", "glm53-nv",
+       "laguna", "qwen38-free", "dots-free", "mistral-large", "codestral", "qwen38-groq", "gemini-flash-lite",
+       "nemotron-super-free", "openrouter-free"]
+talk = ["kimi-k3-nv", "gemini-flash", "glm53-nv", "gemini-pro", "mistral-large", "gemma4-31b-free",
+        "qwen38-groq", "qwen38-free", "nemotron-ultra-free", "command-a", "laguna", "openrouter-free"]
+
 # Commands the model may run without asking (only simple ones: no ; && | $() > in them).
+# ---- MCP servers: their tools are offered next to purr's own ----
+# Each runs in the project folder; {purr} is purr's own folder. tools = [...] offers only some.
+# purr's own two (servers/, plain Python, no packages) help small models find their way:
+#   codebase: project_overview (also put in the system prompt), code_map, outline, find_symbol, related_files
+#   stack:    godot_class (your installed Godot's real API), python_api (the project's installed packages)
+[mcp.codebase]
+command = ["python3", "{purr}/servers/codebase.py"]
+
+[mcp.stack]
+command = ["python3", "{purr}/servers/stack.py"]
+
+# overview_in_prompt = false   # don't put the project overview in the system prompt
+
 [permissions]
 allow_run = ["ls", "ls *", "pwd", "cat *", "head *", "tail *", "wc *", "rg *", "grep *", "tree*",
              "git status*", "git diff*", "git log*", "git show*", "git branch"]

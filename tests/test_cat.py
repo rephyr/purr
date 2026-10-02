@@ -39,6 +39,15 @@ class CatTest(unittest.TestCase):
             self.assertIn(name, cat.ACTIVITY, f"{name} has no mood in cat.ACTIVITY")
             self.assertIn(cat.ACTIVITY[name], list(cat.MOODS) + [None])
 
+    def test_every_mode_has_a_scene_and_a_colour(self):
+        from harness.agent import MODES
+        css = (Path(__file__).resolve().parent.parent / "tui/purr.tcss").read_text()
+        for mode in MODES:
+            self.assertIn(f"mode_{mode}", cat.MOODS, mode)
+            self.assertIn(mode, cat.MODE_COLOUR, mode)
+            self.assertIn(mode, cat.MODES_WHAT, mode)
+            self.assertIn(f".mode-{mode} #box:focus-within", css, mode)
+
     def test_labels_use_her_name(self):
         self.assertIn("Luna", cat.label_for("exploring", "Luna"))
         self.assertTrue(all("{name}" not in v.format(name="x") for vs in cat.VERBS.values() for v in vs))
