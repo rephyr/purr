@@ -42,6 +42,9 @@ REFERENCE = [
           ("DSH Standard", 85.8), ("DSH PTC", 85.8), ("OpenCode", 85.0), ("Codex", 84.1))],
     {"harness": "Ante", "model": "DeepSeek V4.1 Flash", "benchmark": "Terminal-Bench 2.1 (89 tasks)", "pass@1": 83.9,
      "source": "https://antigma.ai/eval", "note": "5 trials per task"},
+    # local models (tbench/local.sh): the makers' own runs, to set this machine's runs next to
+    {"harness": "Terminus-2", "model": "Ornith-1.5-9B", "benchmark": "Terminal-Bench 2.1 (89 tasks)", "pass@1": 47.0,
+     "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B", "note": "the makers' run: full weights, 128k context"},
     # the same model card, same settings, N=8 per task
     *[{"harness": h, "model": "DeepSeek V4.1 Flash", "benchmark": "DeepSWE 1.1 (113 tasks)", "pass@1": s,
        "source": CARD, "note": "8 trials per task"} for h, s in (
@@ -98,6 +101,11 @@ BENCHES = {
     "DeepSWE 1.1": {"dataset": "datacurve/deep-swe-1-1", "tasks": 113, "quick": _quick("quick-tasks-deepswe.txt"),
                     "quick_file": "quick-tasks-deepswe.txt", "page": "deepswe", "flag": "--deepswe "},
 }
+
+
+def is_local(r):
+    """A run on this machine's GPU (tbench/local.sh), not the hosted model the tables compare."""
+    return str(r.get("model") or "").startswith("ollama/")
 
 
 def bench_name(dataset):
@@ -226,7 +234,9 @@ def readme(results, page="terminal-bench"):
     for bench, conf in BENCHES.items():
         if conf["page"] != page:
             continue
-        mine = [r for r in sorted(results, key=key) if bench_name(r.get("dataset")) == bench]
+        everything = [r for r in sorted(results, key=key) if bench_name(r.get("dataset")) == bench]
+        mine = [r for r in everything if not is_local(r)]
+        local = [r for r in everything if is_local(r)]
         main = not conf.get("old")
         if not mine and not main:
             continue  # an old dataset only shows when it has runs
@@ -252,6 +262,14 @@ def readme(results, page="terminal-bench"):
                       "try each the margin is wide (see ±): compare quick runs with each other, not with the full",
                       "runs or the leaderboards.", ""]
         lines += quick_head + (quick or ["| (none yet) |"]) + [""]
+        if local:
+            lines += [f"### {bench}: local models on this machine (`tbench/local.sh`)", "",
+                      "Free runs on the RTX 4080 (Ollama, quantized, one task at a time): for purr's own target, small",
+                      "models. Set them next to the same model's published score below, not the hosted rows.", "",
+                      "| purr | model | run | date | pass@1 | timeouts | errors | median time |", "|---|---|---|---|---|---|---|---|"]
+            lines += [f"| {r['purr']} | {str(r['model']).split('/', 1)[1]} | {r.get('profile')} | {r['date']} | "
+                      f"**{r['pass@1']}%** ± {r['stderr']} | {r.get('timeouts', 0)} | {r['errors']}/{r['trials']} | "
+                      f"{r['median_agent_minutes']} min |" for r in local] + [""]
         stopped = [r for r in mine if r.get("profile") == "stopped"]
         if stopped:
             lines += [f"### {bench}: stopped runs (not comparable)", "",
@@ -261,7 +279,7 @@ def readme(results, page="terminal-bench"):
             lines += [f"| {r['purr']} | {r['date']} | {r['tasks']} of {conf['tasks']} | {r['pass@1']}% | "
                       f"${r['cost_usd']} | {r.get('note', '')} |" for r in stopped] + [""]
     lines.pop()
-    lines += ["", "## Other harnesses, same model (published, full runs)", "",
+    lines += ["", "## Published scores to compare with (other harnesses, full runs)", "",
               "| harness | model | benchmark | pass@1 | source |", "|---|---|---|---|---|"]
     names = {b for b, c in BENCHES.items() if c["page"] == page}
     for ref in REFERENCE:

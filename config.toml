@@ -154,6 +154,15 @@ context = 65536
 body = { temperature = 0.6, top_p = 0.95, presence_penalty = 1.5 }
 
 # Qwen3.6 35B-A3B at IQ3_XXS (13.2 GB): the middle ground, better than IQ2, still (almost) all on the GPU
+# Ornith-1.5-9B (Q6_K, 128k context, all on a 16 GB GPU): a 9B coding/agent model that scores 47.0%
+# on Terminal-Bench 2.1 with Terminus-2, at these settings (temperature 1.0, top_p 1.0, 128k)
+[models.ornith-9b]
+vision = true  # can look at images (look_at_image)
+provider = "ollama"
+id = "ornith-9b-128k"
+context = 131072
+body = { temperature = 1.0, top_p = 1.0 }
+
 [models.qwen3_6-iq3]
 vision = true  # can look at images (look_at_image)
 provider = "ollama"
