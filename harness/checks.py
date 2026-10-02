@@ -106,7 +106,8 @@ def test_command(root):
     custom = root / ".purr" / "test_command"
     if custom.is_file():
         return custom.read_text().strip() or None
-    py_tests = list(root.glob("test_*.py")) + list(root.glob("tests/test_*.py")) + list(root.glob("*_test.py"))
+    py_tests = (list(root.glob("test_*.py")) + list(root.glob("tests/**/test_*.py"))
+                + list(root.glob("*_test.py")))
     if py_tests:
         python = "python3"
         if _has_pytest():
@@ -120,8 +121,23 @@ def test_command(root):
     package = root / "package.json"
     if package.is_file():
         try:
-            if (json.loads(package.read_text()).get("scripts") or {}).get("test"):
-                return "npm test --silent"
+            info = json.loads(package.read_text())
         except ValueError:
-            pass
+            info = {}
+        runner = "pnpm" if (root / "pnpm-lock.yaml").exists() else "yarn" if (root / "yarn.lock").exists() else "npm"
+        if (info.get("scripts") or {}).get("test"):
+            return f"{runner} test" + (" --silent" if runner == "npm" else "")
+        deps = {**(info.get("devDependencies") or {}), **(info.get("dependencies") or {})}
+        if "vitest" in deps:
+            return "npx vitest run"
+        if "jest" in deps:
+            return "npx jest"
+    # the other languages' own test commands (DeepSWE: a third of its projects are Go and Rust)
+    if (root / "go.mod").is_file():
+        return "go test ./..."
+    if (root / "Cargo.toml").is_file():
+        return "cargo test --quiet"
+    makefile = next((root / n for n in ("Makefile", "makefile", "GNUmakefile") if (root / n).is_file()), None)
+    if makefile and re.search(r"^test\s*:", makefile.read_text(errors="ignore"), re.M):
+        return "make test"
     return None
