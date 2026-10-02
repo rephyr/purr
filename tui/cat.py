@@ -10,7 +10,7 @@ import random
 
 from rich.text import Text
 
-from tui.themes import DIM, LILAC, PINK
+from tui.themes import DIM, LILAC, MODE_COLOUR, PINK
 
 EARS = " /\\_/\\♡"  # the ♡ is a little bow on the ear
 SIT = " > ^ < "
@@ -223,8 +223,6 @@ def _startled():
 
 # ---- a little scene for each mode, played when you switch to it (in the mode's colour) ----
 
-MODE_COLOUR = {"code": PINK, "ask": LILAC, "learn": "#f0829b", "pair": "#a8b8ff", "plan": "#8fd8e8",
-               "chat": "#ffb8c8", "create": "#96dcaf"}
 
 MODE_ART = {
     "code": [  # at her laptop

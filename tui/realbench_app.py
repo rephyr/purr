@@ -28,12 +28,10 @@ from tui.window import BenchWindow
 from tui.themes import DIM, FAINT, LILAC, MINT, PEACH, PINK, ROSE, TEXT  # noqa: E402
 
 CSS = """
-#setup { align: center top; padding: 1 2; }
-#title { width: 100%; text-align: center; }
-#subtitle { width: 100%; text-align: center; color: #82788f; margin-bottom: 1; }
+#start { min-width: 22; }
 #choices { height: auto; }
 #picks { width: 44; height: auto; margin-right: 2; }
-#picks > Static { color: #c8a2f0; text-style: bold; margin: 1 0 0 1; }
+#picks > Static { color: $lilac; text-style: bold; margin: 1 0 0 1; }
 RadioSet { width: 100%; border: round $line; background: $panel; padding: 0 1; }
 RadioSet:focus { border: round $pink; }
 RadioSet > RadioButton.-selected { background: transparent; }
@@ -41,29 +39,18 @@ RadioSet RadioButton.-on > .toggle--label { color: $pink; text-style: bold; back
 RadioSet RadioButton > .toggle--label { background: transparent; }
 RadioSet:focus > RadioButton.-selected > .toggle--label { background: $hover; }
 #knobs { height: auto; margin-top: 1; }
-#knobs Static { width: auto; color: #82788f; padding: 1 1 0 1; }
+#knobs Static { width: auto; color: $dim; padding: 1 1 0 1; }
 #jobs { width: 7; border: round $line; background: $panel; }
 #edge { border: round $line; background: $panel; width: 10; }
 #edge:focus { border: round $pink; }
 #edge > .switch--slider { color: $pink; background: $line; }
 #preview { width: 1fr; height: auto; min-height: 20; border: round $line-hi; background: $panel;
            padding: 1 2; }
-#start { margin-top: 1; background: $button; color: #e9dff2; border: none; min-width: 22; }
-#start:focus { background: $pink; color: #15101c; text-style: bold; }
-#setuphint { width: 100%; text-align: center; color: #6f6580; margin-top: 1; }
 #setupcat { height: 3; margin-top: 2; padding-left: 2; }
 
-#run { display: none; padding: 0 2; }
-#run.show { display: block; }
-#setup.hide { display: none; }
 #runhead { height: 1; margin-top: 1; }
 #runtitle { width: auto; margin-right: 2; }
-#bar { width: 1fr; }
-#bar Bar > .bar--bar { color: $pink; background: $line; }
-#bar Bar > .bar--complete { color: #96dcaf; }
-#count { width: auto; margin-left: 2; }
 #tally { height: 1; margin: 1 0; }
-#middle { height: 1fr; }
 #leftside { width: 66; height: 1fr; }
 #bigscore { height: 9; border: round $line-hi; background: $panel; content-align: center middle; }
 #trials { width: 66; height: 1fr; border: round $line; background: $panel; scrollbar-size-horizontal: 0; }
@@ -72,14 +59,9 @@ RadioSet:focus > RadioButton.-selected > .toggle--label { background: $hover; }
 #livehead { height: 1; padding: 0 1; }
 #live { height: 1fr; border: round $line; background: $bg; padding: 0 1; scrollbar-size-vertical: 1;
         scrollbar-size-horizontal: 0; }
-#runner { height: 1; color: #6f6580; margin-top: 1; }
-#benchcat { height: 3; margin-top: 1; }
-#results { display: none; height: 1fr; padding: 0 1; }
-#run.results #results { display: block; }
-#run.results #middle { display: none; }
+#runner { height: 1; color: $hint; margin-top: 1; }
 #run.results #tally { display: none; }
 #run.results #runner { display: none; }
-#runhint { color: #6f6580; height: 1; }
 """
 
 ICON = {"setup": ("◌", DIM), "grading": ("⚖", LILAC), "passed": ("✓", MINT), "failed": ("✗", ROSE),
@@ -141,7 +123,7 @@ def floor_of(scores):
 
 class RealBenchApp(BenchWindow):
     TITLE = "purr bench · real"
-    CSS_PATH = "purr.tcss"
+    CSS_PATH = ["purr.tcss", "bench.tcss"]
     CSS = CSS
     BINDINGS = [
         Binding("q", "stop_or_quit", "stop / quit", priority=True),

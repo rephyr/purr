@@ -27,12 +27,9 @@ HARNESS_COLOUR = {"purr": PINK, "purr+refine": PEACH, "purr-nocheck": "#e7a6c9",
                   "opencode": LILAC}
 
 CSS = """
-#setup { align: center top; padding: 1 2; }
-#title { width: 100%; text-align: center; margin-bottom: 0; }
-#subtitle { width: 100%; text-align: center; color: #82788f; margin-bottom: 1; }
 #lists { height: auto; max-height: 30; }
 .column { width: 1fr; height: auto; margin: 0 1; }
-.column > Static { color: #c8a2f0; text-style: bold; margin-bottom: 1; }
+.column > Static { color: $lilac; text-style: bold; margin-bottom: 1; }
 SelectionList { height: auto; max-height: 24; border: round $line; background: $panel; }
 SelectionList:focus { border: round $pink; }
 SelectionList > .option-list--option-highlighted { background: $hover; }
@@ -42,38 +39,22 @@ SelectionList > .selection-list--button-selected { color: $pink; background: tra
 SelectionList > .selection-list--button-highlighted { color: $line-hi; background: transparent; }
 SelectionList > .selection-list--button-selected-highlighted { color: $pink; background: transparent; text-style: bold; }
 #options { height: auto; margin-top: 1; }
-#options Static { width: auto; color: #82788f; padding: 1 1 0 0; }
+#options Static { width: auto; color: $dim; padding: 1 1 0 0; }
 #runs { width: 8; border: round $line; background: $panel; }
-#start { margin-top: 1; background: $button; color: #e9dff2; border: none; min-width: 20; }
-#start:focus { background: $pink; color: #15101c; text-style: bold; }
-#setuphint { width: 100%; text-align: center; color: #6f6580; margin-top: 1; }
 
-#run { display: none; padding: 0 2; }
-#run.show { display: block; }
-#setup.hide { display: none; }
 #runhead { height: auto; margin: 1 0; }
-#bar { width: 1fr; }
-#bar Bar > .bar--bar { color: $pink; background: $line; }
-#bar Bar > .bar--complete { color: #96dcaf; }
-#count { width: auto; margin-left: 2; }
-#middle { height: 1fr; }
 #runs_table { width: 1fr; height: 1fr; border: round $line; background: $panel; }
 #board { width: 46; height: 1fr; margin-left: 1; padding: 0 1; border: round $line; }
-#benchcat { height: 3; margin-top: 1; }
-#results { display: none; height: 1fr; padding: 0 1; }
 #watch { display: none; width: 2fr; height: 1fr; margin-left: 1; padding: 0 1; border: round $line;
          background: $bg; scrollbar-size-vertical: 1; }
 #run.watching #watch { display: block; }
 #run.watching #board { display: none; }
-#run.results #results { display: block; }
-#run.results #middle { display: none; }
-#runhint { color: #6f6580; height: 1; }
 """
 
 
 class BenchApp(BenchWindow):
     TITLE = "purr bench"
-    CSS_PATH = "purr.tcss"
+    CSS_PATH = ["purr.tcss", "bench.tcss"]
     CSS = CSS  # the bench's own layout, on top of purr.tcss
     BINDINGS = [
         Binding("q", "stop_or_quit", "stop / quit", priority=True),
