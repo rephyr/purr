@@ -744,6 +744,11 @@ def parse(argv):
     ap.add_argument("--plain", action="store_true", help="print lines instead of the full-screen window")
     ap.add_argument("--publish", nargs="?", const="latest", metavar="FOLDER",
                     help="file a finished run (default: the latest) under benchmarks/purr-bench/ in the repo")
+    ap.add_argument("--real", nargs="?", const="pick", choices=["pick", "terminal-bench", "deepswe"],
+                    help="the real benchmarks instead (Terminal-Bench, DeepSWE), the way other harnesses are scored")
+    ap.add_argument("--size", choices=["quick", "one", "full"], help="with --real: the quick 20, every task once, or x3")
+    ap.add_argument("--jobs", type=int, default=6, help="with --real: tasks at once (default 6)")
+    ap.add_argument("--edge-cases", action="store_true", help="with --real: purr's extra edge-case check on")
     ap.add_argument("--you", action="store_true", help="do the tasks yourself, for fun (your row joins the latest results)")
     ap.add_argument("--new", action="store_true", help="with --you: a results folder of your own")
     return ap.parse_args(argv)
@@ -910,6 +915,18 @@ def publish(folder="latest"):
     return 0
 
 
+def real(config, args, window):
+    """Terminal-Bench / DeepSWE: the window watches tbench/fair.sh; plain mode just runs it."""
+    from . import realbench
+    suite = args.real if args.real in realbench.SUITES else None
+    if window:
+        from tui.realbench_app import RealBenchApp
+        return RealBenchApp(config, suite, args.size, args.jobs, args.edge_cases).run() or 0
+    cmd = realbench.command(suite or "terminal-bench", args.size or "quick", args.edge_cases)
+    ui.say(ui.DIM, f"  {' '.join(cmd)}   (PURR_JOBS={args.jobs})")
+    return subprocess.call(cmd, cwd=realbench.ROOT, env={**os.environ, "PURR_JOBS": str(args.jobs)})
+
+
 def main(argv, config, window=False):
     args = parse(argv)
     if args.publish:
@@ -917,9 +934,13 @@ def main(argv, config, window=False):
     if args.you:  # you play: no models, nothing on the GPU
         from .play import play
         return play(args)
+    if args.real:
+        return real(config, args, window and not args.plain)
     if window and not args.plain:
         from tui.bench_app import BenchApp
-        return BenchApp(config, args).run() or 0
+        if BenchApp(config, args).run() == "real":  # r on its setup screen
+            return real(config, args, True)
+        return 0
 
     tasks = pick_tasks(args.tasks.split(",") if args.tasks else None, args.vague, args.level)
     harnesses = [h for h in args.harness.split(",") if h in HARNESSES]

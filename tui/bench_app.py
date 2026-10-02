@@ -84,6 +84,7 @@ class BenchApp(App):
         Binding("s", "show('results')", "scoreboard"),
         Binding("l", "show('log')", "live log"),
         Binding("w", "watch", "watch the run"),
+        Binding("r", "real", "real benchmarks"),
     ]
 
     def __init__(self, config, args):
@@ -132,7 +133,8 @@ class BenchApp(App):
                         yield Input(str(self.args.runs), type="integer", id="runs")
             with Center():
                 yield Button("start ✧", id="start")
-            yield Static("space ticks · tab moves between lists · enter on start · q quits", id="setuphint")
+            yield Static("space ticks · tab moves between lists · enter on start · "
+                         "r real benchmarks (Terminal-Bench, DeepSWE) · q quits", id="setuphint")
         with Vertical(id="run"):
             with Horizontal(id="runhead"):
                 yield ProgressBar(total=1, show_eta=False, show_percentage=False, id="bar")
@@ -537,6 +539,11 @@ class BenchApp(App):
     def action_quit_now(self):
         bench.STOP.set()
         self.exit()
+
+    def action_real(self):
+        """Over to Terminal-Bench / DeepSWE (tui/realbench_app.py), from the setup screen only."""
+        if not self.started and not (self.focused and isinstance(self.focused, Input)):
+            self.exit("real")
 
     def action_open_report(self):
         if self.report:
