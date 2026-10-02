@@ -186,6 +186,14 @@ class EmptyReplyTest(unittest.TestCase):
         self.assertEqual(calls["n"], 2)
         self.assertIn("empty reply -> nudged to continue", a.tools.repairs)
 
+    def test_empty_reply_is_saved_as_text_not_null(self):
+        # Ollama answers 400 "invalid message content type: <nil>" to a null without tool calls
+        a = agent()
+        scripted(a, [reply(""), reply("All done.")])
+        a.turn("check x")
+        quiet = [m for m in a.messages if m["role"] == "assistant" and not m.get("tool_calls")]
+        self.assertTrue(all(m["content"] is not None for m in quiet))
+
     def test_at_most_twice(self):
         a = agent()
         calls = scripted(a, [reply("")] * 5)

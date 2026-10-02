@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 os.environ["PURR_STATE"] = tempfile.mkdtemp()
@@ -89,7 +90,7 @@ class FinalCheckTestsTest(unittest.TestCase):
                      reply("Done!"), reply("ok")])
         a.turn("fix add")
         check = next(m["content"] for m in a.messages if "read the user's request again" in (m.get("content") or ""))
-        self.assertIn("purr ran the tests itself", check)
+        self.assertIn("ran the tests itself", check)
         self.assertIn("exit code 0", check)  # 2 * 2 == 4: it passes, by luck
 
     def test_command_guess(self):
@@ -100,6 +101,16 @@ class FinalCheckTestsTest(unittest.TestCase):
         (root / ".purr").mkdir()
         (root / ".purr/test_command").write_text("make check\n")
         self.assertEqual(checks.test_command(root), "make check")
+
+    def test_pytest_only_looks_in_tests_folder(self):
+        # at the root it also collected purr's bench tasks, whose hidden tests fail on purpose
+        root = Path(tempfile.mkdtemp())
+        (root / "tests").mkdir()
+        (root / "tests/test_x.py").write_text("")
+        with mock.patch.object(checks, "_has_pytest", return_value=True):
+            self.assertTrue(checks.test_command(root).endswith(" tests"))
+            (root / "test_y.py").write_text("")
+            self.assertFalse(checks.test_command(root).endswith(" tests"))
 
 
 class ReadFirstTest(unittest.TestCase):
