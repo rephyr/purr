@@ -128,6 +128,19 @@ class OutsideTest(unittest.TestCase):
 class PlayTest(unittest.TestCase):
     """purr bench --you: you do a task, the hidden tests grade it, your row joins the table."""
 
+    def test_purr_hears_its_time_limit(self):
+        from unittest import mock
+
+        from harness.agent import Agent
+        from tests.test_limits import CONFIG
+        heard = []
+        task = bench.load_tasks({"rename"})[0]
+        work = Path(tempfile.mkdtemp()) / "rename"
+        shutil.copytree(task["dir"] / "files", work)
+        with mock.patch.object(Agent, "turn", lambda agent, text: heard.append(agent.time_limit)):
+            bench.run_purr(CONFIG, "small", task, work, Path(tempfile.mkdtemp()), 600)
+        self.assertEqual(heard, [540.0])  # the run's limit, less 10%
+
     def test_you_get_graded_and_join_the_table(self):
         import io
         from unittest import mock
