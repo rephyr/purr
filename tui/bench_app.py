@@ -24,7 +24,7 @@ from harness import bench, ui
 from harness.agent import STATE_DIR
 from tui import cat, themes
 
-PINK, LILAC, MINT, ROSE, PEACH, TEXT, DIM = "#f5a9d0", "#c8a2f0", "#96dcaf", "#f0829b", "#ffb8c8", "#e9dff2", "#82788f"
+from tui.themes import DIM, FAINT, LILAC, MINT, PEACH, PINK, ROSE, TEXT  # noqa: E402
 HARNESS_COLOUR = {"purr": PINK, "purr+refine": PEACH, "purr-nocheck": "#e7a6c9", "purr-bare": "#d99fc0",
                   "opencode": LILAC}
 
@@ -345,7 +345,7 @@ class BenchApp(App):
                              (s["harness"], HARNESS_COLOUR.get(s["harness"], TEXT)))
 
     def _ranking(self, rank):
-        t = Table(box=box.ROUNDED, border_style="#4a3a5c", show_header=True, header_style=f"bold {LILAC}",
+        t = Table(box=box.ROUNDED, border_style=themes.colour(self, "line-hi"), show_header=True, header_style=f"bold {LILAC}",
                   title=Text("♛ ranking", style=f"bold {PINK}"), title_justify="left", expand=True, padding=(0, 1))
         for col, just in (("", "right"), ("who", "left"), ("solved", "left"), ("hidden tests", "left"),
                           ("avg time", "right"), ("tok/s", "right"), ("mistakes", "right")):
@@ -357,11 +357,11 @@ class BenchApp(App):
             colour = HARNESS_COLOUR.get(s["harness"], TEXT)
             per = 1 if s["runs"] <= 16 else s["runs"] / 16  # long benches: one heart per few runs
             hearts.append("♥" * round(s["solved"] / per), style=colour)
-            hearts.append("♡" * (round(s["runs"] / per) - round(s["solved"] / per)), style="#4f465c")
+            hearts.append("♡" * (round(s["runs"] / per) - round(s["solved"] / per)), style=FAINT)
             hearts.append(f" {s['solved']}/{s['runs']}", style=colour)
             pct = s["passed"] / max(s["total"], 1)
             bar = Text("█" * round(pct * 12), style=MINT)
-            bar.append("░" * (12 - round(pct * 12)), style="#3d3349")
+            bar.append("░" * (12 - round(pct * 12)), style=themes.colour(self, "line"))
             bar.append(f" {100 * pct:.0f}%", style=MINT)
             avg = s["seconds"] / s["runs"]
             speed = bench.speed(s) or "–"
@@ -372,9 +372,9 @@ class BenchApp(App):
         return t
 
     def _stats(self, rank):
-        t = Table(box=box.SIMPLE_HEAD, border_style="#4a3a5c", header_style=f"bold {LILAC}",
+        t = Table(box=box.SIMPLE_HEAD, border_style=themes.colour(self, "line-hi"), header_style=f"bold {LILAC}",
                   title=Text("✧ every number", style=f"bold {PINK}"), title_justify="left", expand=True,
-                  padding=(0, 1), row_styles=["", "on #221b2a"])
+                  padding=(0, 1), row_styles=["", f"on {themes.colour(self, 'panel')}"])
         cols = [("tokens", "right"), ("calls", "right"), ("tool\ncalls", "right"),
                 ("tool\nerrors", "right"), ("failed\nedits", "right"), ("made-up\ntools", "right"),
                 ("made-up\nfiles", "right"), ("calls\nas text", "right"), ("false\n'done'", "right"),
@@ -398,7 +398,7 @@ class BenchApp(App):
         return t
 
     def _grid(self, rank):
-        t = Table(box=box.ROUNDED, border_style="#4a3a5c", header_style=f"bold {LILAC}",
+        t = Table(box=box.ROUNDED, border_style=themes.colour(self, "line-hi"), header_style=f"bold {LILAC}",
                   title=Text("♡ task by task", style=f"bold {PINK}"), title_justify="left", expand=True,
                   padding=(0, 1))
         t.add_column("task")

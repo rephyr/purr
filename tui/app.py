@@ -31,17 +31,10 @@ from harness.agent import STATE_DIR, Agent, list_sessions
 
 HISTORY = STATE_DIR / "history"
 
-PINK = "#f5a9d0"
-LILAC = "#c8a2f0"
-DIM = "#82788f"
-MINT = "#96dcaf"
-ROSE = "#f0829b"
-PEACH = "#ffb8c8"  # warnings and "paid": soft peach-pink, not yellow
-TEXT = "#e9dff2"
 from harness import VERSION  # noqa: E402
+from tui.themes import CYAN, DIM, LILAC, MINT, PEACH, PINK, ROSE, TEXT  # noqa: E402,F401 - PEACH: warnings, "paid"
 ATTACHED = re.compile(r'\n\n<file path="[^"]*">\n.*?\n</file>', re.S)
 MENTION_AT_CURSOR = re.compile(r"(?:^|\s)@(\S*)$")
-CYAN = "#8fd8e8"
 TEST_COMMAND = re.compile(r"\b(pytest|unittest|tests?|jest|vitest|cargo test|go test|npm test|gut)\b")
 # tool name -> (icon, verb, colour) for the lines in the chat
 TOOL_LOOK = {

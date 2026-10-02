@@ -26,8 +26,7 @@ from harness import realbench, ui
 from harness.agent import STATE_DIR
 from tui import cat, themes
 
-PINK, LILAC, MINT, ROSE, PEACH, TEXT, DIM = "#f5a9d0", "#c8a2f0", "#96dcaf", "#f0829b", "#ffb8c8", "#e9dff2", "#82788f"
-FAINT = "#4f465c"
+from tui.themes import DIM, FAINT, LILAC, MINT, PEACH, PINK, ROSE, TEXT  # noqa: E402
 
 CSS = """
 #setup { align: center top; padding: 1 2; }
@@ -128,11 +127,11 @@ def landmarks(entries):
     return rows + entries[-1:] if entries else rows
 
 
-def bar(pct, width=34, colour=LILAC, lo=0.0):
+def bar(pct, width=34, colour=LILAC, lo=0.0, empty="#3d3349"):
     """A bar from lo% to 100%: scores bunched together (65-74%) still look different."""
     filled = max(1, round((pct - lo) / (100 - lo) * width)) if pct > lo else 0
     t = Text("━" * filled, style=f"bold {colour}")
-    t.append("╌" * (width - filled), style="#3d3349")
+    t.append("╌" * (width - filled), style=empty)
     return t
 
 
@@ -267,7 +266,7 @@ class RealBenchApp(App):
             lo = floor_of([p for _, _, p in before])
             for version, date, pct in before[-6:]:
                 t.append(f"  {version[:20]:<21}", style=TEXT)
-                t.append_text(bar(pct, 26, PINK, lo))
+                t.append_text(bar(pct, 26, PINK, lo, empty=themes.colour(self, "line")))
                 t.append(f" {pct:.1f}%\n", style=PINK)
             t.append("\nquick runs compare purr versions; the other harnesses only have whole-set scores\n",
                      style=DIM)
@@ -278,7 +277,7 @@ class RealBenchApp(App):
             for e in landmarks(entries):
                 t.append(f"  #{e['rank']:<4}", style=DIM)
                 t.append(f"{(e['agent'] + ' · ' + e['model'])[:30]:<31}", style=TEXT)
-                t.append_text(bar(e["score"], 20, LILAC))
+                t.append_text(bar(e["score"], 20, LILAC, empty=themes.colour(self, "line")))
                 t.append(f" {e['score']:.1f}%\n", style=LILAC)
             if size == "submit":
                 t.append("\n5 tries a task and purr's web tool off, as the leaderboard asks; then\n", style=DIM)
@@ -290,7 +289,7 @@ class RealBenchApp(App):
             t.append(f"same model, published · bars start at {lo}%\n", style=DIM)
             for harness, pct in refs:
                 t.append(f"  {harness[:28]:<29}", style=TEXT)
-                t.append_text(bar(pct, 26, LILAC, lo))
+                t.append_text(bar(pct, 26, LILAC, lo, empty=themes.colour(self, "line")))
                 t.append(f" {pct:.1f}%\n", style=LILAC)
         self.query_one("#preview", Static).update(t)
 
@@ -521,7 +520,7 @@ class RealBenchApp(App):
                      key=lambda t: (t["state"], t["task"]))
         if not bad:
             return None
-        t = Table(box=box.SIMPLE_HEAD, border_style="#4a3a5c", header_style=f"bold {LILAC}", expand=True,
+        t = Table(box=box.SIMPLE_HEAD, border_style=themes.colour(self, "line-hi"), header_style=f"bold {LILAC}", expand=True,
                   padding=(0, 1), title=Text("✗ didn't pass", style=f"bold {PINK}"), title_justify="left")
         for col, just in (("task", "left"), ("how", "left"), ("time", "right"), ("cost", "right")):
             t.add_column(col, justify=just)
@@ -535,7 +534,7 @@ class RealBenchApp(App):
 
     def standings(self, pct):
         suite, size = self.job_run.suite, self.job_run.size
-        t = Table(box=box.ROUNDED, border_style="#4a3a5c", show_header=False, padding=(0, 1),
+        t = Table(box=box.ROUNDED, border_style=themes.colour(self, "line-hi"), show_header=False, padding=(0, 1),
                   title=Text("♛ where purr lands" if size != "quick" else "♛ quick runs so far", style=f"bold {PINK}"),
                   title_justify="left")
         t.add_column("who", no_wrap=True, min_width=30)
@@ -554,7 +553,7 @@ class RealBenchApp(App):
             rows.append(("purr (this run) ♡", pct, True))
         lo = 0 if suite == "terminal-bench-2" and size != "quick" else floor_of([r[1] for r in rows])
         for who, score, mine in sorted(rows, key=lambda r: -r[1]):
-            t.add_row(Text(who, style=f"bold {PINK}" if mine else TEXT), bar(score, 44, PINK if mine else LILAC, lo),
+            t.add_row(Text(who, style=f"bold {PINK}" if mine else TEXT), bar(score, 44, PINK if mine else LILAC, lo, empty=themes.colour(self, "line")),
                       Text(f"{score:.1f}%", style=f"bold {PINK}" if mine else LILAC))
         note = f"bars start at {lo}%"
         if size != "quick" and suite == "terminal-bench-2":
@@ -565,7 +564,7 @@ class RealBenchApp(App):
         return t
 
     def task_grid(self):
-        t = Table(box=box.ROUNDED, border_style="#4a3a5c", show_header=False, expand=True, padding=(0, 1),
+        t = Table(box=box.ROUNDED, border_style=themes.colour(self, "line-hi"), show_header=False, expand=True, padding=(0, 1),
                   title=Text("♡ task by task", style=f"bold {PINK}"), title_justify="left")
         cols = 3
         for _ in range(cols):

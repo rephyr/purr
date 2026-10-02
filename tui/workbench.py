@@ -24,10 +24,9 @@ from textual.widgets.option_list import Option
 from textual.widgets.text_area import TextAreaTheme
 
 from harness import ui
-from tui import diffview
+from tui import diffview, themes
 
-PINK, LILAC, MINT, PEACH, ROSE = "#f5a9d0", "#c8a2f0", "#96dcaf", "#ffb8c8", "#f0829b"
-TEXT, DIM, FAINT = "#e9dff2", "#82788f", "#5e5469"
+from tui.themes import DIM, FAINT, LILAC, MINT, PEACH, PINK, ROSE, TEXT  # noqa: E402
 
 # folders nobody wants to browse
 HIDDEN = {".git", "__pycache__", "node_modules", ".venv", "venv", ".mypy_cache", ".pytest_cache",
@@ -160,7 +159,7 @@ class Workbench(Screen):
             "purr", base_style=Style(color=TEXT, bgcolor=bg), gutter_style=Style(color=FAINT, bgcolor=bg),
             cursor_line_style=Style(bgcolor=self.app.get_css_variables().get("panel", "#262030")),
             cursor_line_gutter_style=Style(color=PINK, bgcolor=self.app.get_css_variables().get("panel", "#262030")),
-            selection_style=Style(bgcolor="#4a3a5c"), cursor_style=Style(color=bg, bgcolor=PINK),
+            selection_style=Style(bgcolor=themes.colour(self.app, "line-hi")), cursor_style=Style(color=bg, bgcolor=PINK),
             syntax_styles={k: Style.parse(v) for k, v in SYNTAX.items()}))
         editor.theme = "purr"
         if self.start and self.start.is_file():

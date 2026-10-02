@@ -11,7 +11,9 @@ from pathlib import Path
 
 from textual.theme import Theme
 
+# purr's colours, the same in every theme (only the backgrounds change): every window imports them from here
 PINK, LILAC, PEACH, ROSE, MINT, TEXT = "#f5a9d0", "#c8a2f0", "#ffb8c8", "#f0829b", "#96dcaf", "#e9dff2"
+DIM, FAINT, CYAN = "#82788f", "#5e5469", "#8fd8e8"
 
 # name -> background colours, darkest to lightest
 PALETTES = {
@@ -71,3 +73,12 @@ def make(name):
                    "border": c["line-hi"], "block-cursor-background": PINK,
                    "input-selection-background": c["line-hi"], "footer-background": c["panel"]},
     )
+
+
+def colour(app, name):
+    """A theme colour (line, line-hi, panel, ...) for Rich tables and bars, in the app's current
+    theme: hardcoded, they stayed plum in every other theme."""
+    try:
+        return app.get_css_variables().get(name) or PALETTES["plum"][name]
+    except Exception:  # noqa: BLE001 - not mounted yet: plum's
+        return PALETTES["plum"][name]
