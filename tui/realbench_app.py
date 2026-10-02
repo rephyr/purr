@@ -5,7 +5,6 @@ The run is tbench/fair.sh (harness/realbench.py starts it and reads Harbor's job
 only shows it. q stops (Harbor cancels the trials and cleans up), q again quits.
 """
 
-import json
 import subprocess
 import threading
 import time
@@ -16,15 +15,15 @@ from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.widgets import (Button, DataTable, Input, ProgressBar, RadioButton, RadioSet, RichLog, Static,
                              Switch)
 
 from harness import realbench, ui
-from harness.agent import STATE_DIR
 from tui import cat, themes
+from tui.window import BenchWindow
 
 from tui.themes import DIM, FAINT, LILAC, MINT, PEACH, PINK, ROSE, TEXT  # noqa: E402
 
@@ -140,7 +139,7 @@ def floor_of(scores):
     return max(0, (int(min(scores)) - 10) // 10 * 10) if scores else 0
 
 
-class RealBenchApp(App):
+class RealBenchApp(BenchWindow):
     TITLE = "purr bench · real"
     CSS_PATH = "purr.tcss"
     CSS = CSS
@@ -154,23 +153,10 @@ class RealBenchApp(App):
     ]
 
     def __init__(self, config, suite=None, size=None, jobs=6, edge_cases=False):
-        super().__init__()
-        self.config = config
+        super().__init__(config)
         self.choice = {"suite": suite or "terminal-bench", "size": size or "quick"}
         self.go_now = bool(suite and size)
         self.jobs, self.edge_cases = jobs, edge_cases
-        for name in themes.PALETTES:
-            self.register_theme(themes.make(name))
-        try:
-            choice = (STATE_DIR / "theme").read_text().strip()
-        except OSError:
-            choice = config.get("theme", themes.DEFAULT)
-        self.theme = f"purr-{themes.resolve(choice)}"
-        try:
-            self.pet = json.loads((STATE_DIR / "cat.json").read_text())
-        except (OSError, ValueError):
-            self.pet = {"name": config.get("cat_name", "Mochi")}
-        self.name_ = self.pet.get("name", "Mochi")
         self.job_run = None
         self.trials, self.rows = [], {}
         self.selected, self.follow = None, True
@@ -178,8 +164,6 @@ class RealBenchApp(App):
         self.finished_names = set()
         self.final = None  # (mood, headline, detail) once it's over
         self.published = False
-        self.cat_mood, self.cat_label, self.cat_detail, self.cat_tick, self.cat_until = "sleeping", "", "", 0, 0.0
-        self.night = themes.is_night()
 
     # ---- layout ----
 
@@ -615,20 +599,13 @@ class RealBenchApp(App):
             self.notify(out[-1] if out else "publishing failed", severity="error", timeout=10)
 
     def action_open_job(self):
-        if self.job_run and self.job_run.job:
-            subprocess.Popen(["xdg-open", str(self.job_run.job)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if self.job_run:
+            self.open_path(self.job_run.job)
 
     # ---- Mochi ----
 
-    def mood(self, mood, detail, hold=0.0, label=None):
-        if mood != self.cat_mood or label:
-            self.cat_tick = 0 if mood != self.cat_mood else self.cat_tick
-            self.cat_label = label or cat.label_for(mood, self.name_)
-        self.cat_mood, self.cat_detail = mood, detail
-        self.cat_until = time.monotonic() + hold if hold else 0.0
-
     def tick(self):
-        if not self.screen.query("#benchcat"):  # closing: the widgets are already gone
+        if self.closing():
             return
         self.cat_tick += 1
         if not self.job_run:
