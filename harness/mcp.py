@@ -38,17 +38,20 @@ class Server:
         self._lock = threading.Lock()  # helpers may call at the same time: one request at a time
 
     def start(self):
-        log = open(os.devnull, "w")
         self.proc = subprocess.Popen(self.command, cwd=self.cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=log, text=True, bufsize=1,
+                                     stderr=subprocess.DEVNULL, text=True, bufsize=1,
                                      env={**os.environ, "PROJECT_ROOT": str(self.cwd), **self.env})
         self._lines = queue.Queue()  # a fresh one: a restarted server's old reader mustn't feed this one
         threading.Thread(target=self._read, args=(self.proc, self._lines), daemon=True).start()
-        hello = self.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
-                                            "clientInfo": {"name": "purr", "version": "0.1"}}, START_TIMEOUT)
-        self.instructions = hello.get("instructions", "")
-        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        tools = self.request("tools/list", {}, START_TIMEOUT).get("tools", [])
+        try:
+            hello = self.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
+                                                "clientInfo": {"name": "purr", "version": "0.1"}}, START_TIMEOUT)
+            self.instructions = hello.get("instructions", "")
+            self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            tools = self.request("tools/list", {}, START_TIMEOUT).get("tools", [])
+        except Exception:
+            self.proc.kill()  # a server that fails to start mustn't keep running in the background
+            raise
         self.tools = [t for t in tools if self.allow is None or t["name"] in self.allow]
 
     @staticmethod
@@ -157,6 +160,11 @@ class Mcp:
         if name not in self.by_tool:
             return f"error: no MCP tool called {name}"
         server, _ = self.by_tool[name]
+        if server.proc is not None and server.proc.poll() is not None:  # it crashed: start it again
+            try:
+                server.start()
+            except Exception:  # noqa: BLE001 - say so instead of failing every call the same way
+                return f"error: the MCP server {server.name} stopped and wouldn't start again"
         try:
             return server.call(name, args)
         except McpError as e:

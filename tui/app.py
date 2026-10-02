@@ -1011,22 +1011,25 @@ class PurrApp(App):
     async def end_reply(self):
         await self._close_block_async()
 
-    async def _close_block_async(self):
-        if self.md_stream is not None:
-            await self.md_stream.stop()
-            self.md_stream = None
+    async def _close_block_async(self, block=None):
+        """Finish a streamed block: `block` is (stream, widget, text) when _close_block handed it
+        over; otherwise the current one, whose fields are reset first."""
+        if block is None:
+            block = (self.md_stream, self.cur_widget, self.cur_text)
+            self.md_stream, self.cur_kind, self.cur_widget, self.cur_text = None, None, None, ""
+        stream, widget, text = block
+        if stream is not None:
+            await stream.stop()
             # the stream can drop its last piece when stopped, so set the full text once
-            await self.cur_widget.update(self.cur_text)
+            await widget.update(text)
             self._follow()
-        self.cur_kind = self.cur_widget = None
-        self.cur_text = ""
 
     def _close_block(self):
+        # the closing runs later: hand it its own copies and reset now, or the next block's first
+        # pieces would land in this one (or this close would wipe the next block)
         if self.md_stream is not None:
-            self.call_later(self._close_block_async)
-        else:
-            self.cur_kind = self.cur_widget = None
-            self.cur_text = ""
+            self.call_later(self._close_block_async, (self.md_stream, self.cur_widget, self.cur_text))
+        self.md_stream, self.cur_kind, self.cur_widget, self.cur_text = None, None, None, ""
 
     def replay(self):
         """Draw a loaded chat: your messages, the answers and the tool lines."""

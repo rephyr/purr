@@ -40,7 +40,7 @@ def plain_pr(agent):
     ui.say(ui.DIM, "  writing the pull request…")
     title, body = pr.draft(agent)
     ui.say(ui.LILAC, f"\n  {title}\n")
-    ui.say(ui.TEXT if hasattr(ui, "TEXT") else ui.RESET, "\n".join("  " + l for l in body.splitlines()))
+    ui.say(ui.RESET, "\n".join("  " + l for l in body.splitlines()))
     ui.say(ui.DIM, "\n  files: " + ", ".join(f[3:] for f in files))
     ui.say(ui.DIM, f"  co-author: purr-{agent.model_name}")
     ans = input(f"{ui.YELLOW}  push and open the pull request?  [y]es  [t]itle  [n]o {ui.RESET}").strip().lower()

@@ -153,6 +153,9 @@ def main(argv):
     name, provider, display, org = MODELS[hosted]
     (folder / "metadata.yaml").write_text(METADATA.format(model_name=name, provider=provider,
                                                           model_display=display, model_org=org))
+    for old in folder.iterdir():  # one job a submission: an earlier run's copy would go along too
+        if old.is_dir() and old.name != job.name and (old / "config.json").exists():
+            shutil.rmtree(old)
     if not (folder / job.name).exists():
         shutil.copytree(job, folder / job.name)
     print(f"\nready: purr {version}, {model}\n  {folder}\n")
