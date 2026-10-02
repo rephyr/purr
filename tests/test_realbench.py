@@ -258,6 +258,11 @@ class WindowTest(unittest.IsolatedAsyncioTestCase):
         # it once kept its run in self.run, which hid App.run: purr bench --real crashed at once
         app = realbench_app.RealBenchApp({"models": {}, "providers": {}})
         self.assertTrue(callable(app.run))
+        # nor any other of Textual's own methods (it once had its own watch(), hiding DOMNode.watch)
+        from textual.app import App
+        for name in ("run", "watch", "exit", "notify", "refresh", "query"):
+            self.assertIs(getattr(realbench_app.RealBenchApp, name), getattr(App, name), name)
+        self.assertEqual(realbench_app._mtime(Path("/no/such/log")), 0.0)
 
     async def test_from_setup_to_mochis_verdict(self):
         job = make_job()
