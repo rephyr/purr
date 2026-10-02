@@ -153,7 +153,7 @@ def readme(results):
     lines += ["### Full runs: all 89 tasks, 3 attempts each", ""] + head
     lines += [row(r, full=True) for r in sorted(results, key=key) if r.get("profile") == "full"] or ["| (none yet) |"]
     lines += ["", "### Quick runs: the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each", "",
-              "Cheap (~$1-2) and quick, for seeing whether a purr version got better or worse. With 20",
+              "Cheap (well under $1 with DeepSeek V4.1 Flash) and quick, for seeing whether a purr version got better or worse. With 20",
               "tasks and one try each the margin is wide (see ±): compare quick runs with each other, not",
               "with the full runs or the leaderboards.", ""] + quick_head
     lines += [row(r, full=False) for r in sorted(results, key=key) if r.get("profile") == "quick"] or ["| (none yet) |"]
