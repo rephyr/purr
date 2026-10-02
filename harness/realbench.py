@@ -13,6 +13,8 @@ import re
 import signal
 import subprocess
 import time
+import tomllib
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -57,6 +59,57 @@ ESTIMATES = {**{(s, "quick"): ("about 1 hour", "about $0.70") for s in ("termina
              ("deepswe", "one"): ("4-5 hours", "about $18-23"),
              ("deepswe", "full"): ("about 14 hours", "about $55-70")}
 
+# who answers: DeepSeek V4.1 Flash on OpenRouter (tbench/fair.sh, the fair settings) or a model on
+# this machine (tbench/local.sh: Ollama, one task at a time, free)
+DEEPSEEK = "deepseek"
+LOCAL_SIZES = ("quick", "one")  # local.sh runs the quick set or every task once
+LOCAL_SUITES = ("terminal-bench", "terminal-bench-2")  # DeepSWE needs its offline network setup: fair.sh only
+LOCAL_ESTIMATES = {"quick": ("4-7 hours (one task at a time)", "free: your GPU"),
+                   "one": ("about a day (one task at a time)", "free: your GPU")}
+LOCAL_MIN_CONTEXT = 65536  # Terminal-Bench chats run long: a 32k copy fills up and loses the task
+OLLAMA = "http://127.0.0.1:11434/api/tags"
+
+# how purr runs: as it is, or one of the bench options in tbench/purr_agent.py
+VARIANTS = {"purr": {"what": "purr as it is", "ak": []},
+            "minimal": {"what": "minimal: DSH Minimal's setup", "ak": ["--ak", "minimal=true"]},
+            "thinking": {"what": "purr, all thinking kept", "ak": ["--ak", "keep_reasoning=all"]}}
+
+
+def local_models():
+    """The Ollama models purr's config lists with room for a benchmark (64k+ context) that Ollama
+    has right now: their Ollama names, the one local.sh uses by default (ornith) first. [] without Ollama."""
+    try:
+        with urllib.request.urlopen(OLLAMA, timeout=2) as resp:
+            have = {m["name"].removesuffix(":latest") for m in json.loads(resp.read())["models"]}
+        config = tomllib.loads((ROOT / "config.toml").read_text())
+    except (OSError, ValueError, KeyError):
+        return []
+    names = {spec["id"] for spec in config.get("models", {}).values()
+             if spec.get("provider") == "ollama" and spec.get("context", 0) >= LOCAL_MIN_CONTEXT
+             and spec.get("id", "").removesuffix(":latest") in have}
+    return sorted(names, key=lambda n: (not n.startswith("ornith"), n))
+
+
+def problem(suite, size, model=DEEPSEEK):
+    """Why this pick can't run, or None."""
+    only = SIZES[size].get("only")
+    if only and suite != only:
+        return f"{size} is for {SUITES[only]['bench']} only"
+    if model != DEEPSEEK and (suite not in LOCAL_SUITES or size not in LOCAL_SIZES):
+        return "a local model runs Terminal-Bench, quick or one"
+    return None
+
+
+def estimate(suite, size, model=DEEPSEEK):
+    """(time, cost) as words."""
+    if model != DEEPSEEK:
+        return LOCAL_ESTIMATES.get(size, ("not measured yet", "free: your GPU"))
+    return ESTIMATES.get((suite, size), ("not measured yet", "not measured yet"))
+
+
+def model_name(model):
+    return "DeepSeek V4.1 Flash" if model == DEEPSEEK else model
+
 
 def tasks_in(suite, size):
     bench = PUBLISH.BENCHES[SUITES[suite]["bench"]]
@@ -82,40 +135,51 @@ def place(pct):
     return 1 + sum(e["score"] > pct for e in entries), len(entries) + 1
 
 
-def references(suite):
-    """The published scores with the same model: [(harness, pass@1)], best first."""
+def references(suite, model=DEEPSEEK):
+    """The published scores with the same model: [(harness, pass@1)], best first. A local model's
+    are its makers' (Ornith-1.5-9B for ornith-9b-128k)."""
     bench = SUITES[suite]["bench"]
+
+    def same(ref):
+        if model == DEEPSEEK:
+            return ref["model"] == "DeepSeek V4.1 Flash"
+        return ref["model"].split("-")[0].lower() in model.lower()
     return sorted(((r["harness"], r["pass@1"]) for r in PUBLISH.REFERENCE
-                   if r["benchmark"].startswith(bench) and r["model"] == "DeepSeek V4.1 Flash"), key=lambda x: -x[1])
+                   if r["benchmark"].startswith(bench) and same(r)), key=lambda x: -x[1])
 
 
-def previous(suite, size):
-    """Earlier published runs of the same kind: [(purr version, date, pass@1)], oldest first."""
+def previous(suite, size, model=DEEPSEEK):
+    """Earlier published runs of the same kind with the same model: [(purr version and variant,
+    date, pass@1)], oldest first."""
     out = []
     for f in sorted((ROOT / "benchmarks" / SUITES[suite]["page"] / "results").glob("*.json")):
         try:
             s = json.loads(f.read_text())["summary"]
         except (OSError, ValueError, KeyError):
             continue
-        if (s.get("profile") == size and PUBLISH.bench_name(s.get("dataset")) == SUITES[suite]["bench"]
-                and not PUBLISH.is_local(s)):  # the window runs DeepSeek: compare with DeepSeek runs
-            out.append((str(s["purr"]), s["date"], s["pass@1"]))
+        same_model = (not PUBLISH.is_local(s) if model == DEEPSEEK else s.get("model") == f"ollama/{model}")
+        if s.get("profile") == size and PUBLISH.bench_name(s.get("dataset")) == SUITES[suite]["bench"] and same_model:
+            out.append((PUBLISH.label(s), s["date"], s["pass@1"]))
     return out
 
 
-def command(suite, size, edge_cases=False):
-    cmd = [str(ROOT / "tbench" / "fair.sh"), *SUITES[suite]["flag"], *SIZES[size]["flag"]]
-    if size == "submit" and suite != SIZES["submit"]["only"]:
-        raise ValueError("a leaderboard entry is Terminal-Bench 2.0 only")
-    return cmd + (["--ak", "edge_cases=true"] if edge_cases else [])
+def command(suite, size, edge_cases=False, model=DEEPSEEK, variant="purr"):
+    why = problem(suite, size, model)
+    if why:
+        raise ValueError(why)
+    extra = VARIANTS[variant]["ak"] + (["--ak", "edge_cases=true"] if edge_cases else [])
+    if model == DEEPSEEK:
+        return [str(ROOT / "tbench" / "fair.sh"), *SUITES[suite]["flag"], *SIZES[size]["flag"], *extra]
+    return [str(ROOT / "tbench" / "local.sh"), *(["--one"] if size == "one" else []), *extra]
 
 
 class Run:
-    """fair.sh going in the background: its own output (the checks, Harbor's lines) and its job folder."""
+    """fair.sh (or local.sh) going in the background: its own output (the checks, Harbor's lines)
+    and its job folder."""
 
-    def __init__(self, suite, size, jobs=6, edge_cases=False):
-        self.suite, self.size = suite, size
-        self.cmd = command(suite, size, edge_cases)
+    def __init__(self, suite, size, jobs=6, edge_cases=False, model=DEEPSEEK, variant="purr"):
+        self.suite, self.size, self.model, self.variant = suite, size, model, variant
+        self.cmd = command(suite, size, edge_cases, model, variant)
         self.jobs = jobs
         self.started = time.time()
         self.lines = []  # fair.sh's output, ANSI stripped
@@ -128,6 +192,8 @@ class Run:
     def start(self):
         env = {**os.environ, **SUITES[self.suite].get("env", {}), "PURR_JOBS": str(self.jobs),
                "PURR_JOB": self.job_name, "PYTHONUNBUFFERED": "1", "NO_COLOR": "1"}
+        if self.model != DEEPSEEK:
+            env["PURR_LOCAL_MODEL"] = self.model
         self.proc = subprocess.Popen(self.cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      stdin=subprocess.DEVNULL, env=env, start_new_session=True)
         return self.proc
@@ -249,7 +315,7 @@ def tail(path, size=48_000):
 
 # ---- how it went ----
 
-def verdict(suite, size, pct, finished, total, stopped=False, name="Mochi"):
+def verdict(suite, size, pct, finished, total, stopped=False, name="Mochi", model=DEEPSEEK):
     """(mood, headline, detail) for the end: next to the published harnesses for a whole run, next
     to the last quick run for a quick one."""
     if not finished or pct is None:
@@ -258,7 +324,7 @@ def verdict(suite, size, pct, finished, total, stopped=False, name="Mochi"):
     if stopped or finished < total:
         return "startled", f"{name} saw {pct:.1f}% before it stopped{part}", "a stopped run isn't comparable"
     if size == "quick":
-        before = previous(suite, size)
+        before = previous(suite, size, model)
         if not before:
             return "happy", f"{pct:.1f}% on the quick set: {name}'s first one", "this is the baseline to beat ♡"
         version, _, last = before[-1]
@@ -271,7 +337,7 @@ def verdict(suite, size, pct, finished, total, stopped=False, name="Mochi"):
                 "within the noise of 20 tasks"
         return "sad", f"{pct:.1f}%: down {-diff:.0f} points from purr {version}", \
             "worth reading which tasks broke"
-    if suite == "terminal-bench-2":  # the leaderboard is the comparison
+    if suite == "terminal-bench-2" and model == DEEPSEEK:  # the leaderboard is the comparison
         rank, out_of = place(pct)
         where = f"#{rank} of {out_of} on the Terminal-Bench 2.0 leaderboard"
         if rank <= 10:
@@ -281,7 +347,7 @@ def verdict(suite, size, pct, finished, total, stopped=False, name="Mochi"):
         if rank <= out_of // 2:
             return "happy", f"{pct:.1f}%: {where}", "the top half ♡"
         return "purring", f"{pct:.1f}%: {where}", "the failed tasks say what to fix next"
-    refs = references(suite)
+    refs = references(suite, model)
     beaten = [h for h, s in refs if s < pct]
     if refs and len(beaten) == len(refs):
         return "celebrating", f"{pct:.1f}%: purr beat every harness on the list!", \
