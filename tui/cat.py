@@ -29,14 +29,19 @@ def _frames(lines_per_frame):
 
 
 def _sleeping():
-    zs = [("", "  z"), ("   z", "  Z"), ("    Z", "   z"), ("     z", ""), ("", "")]
-    return _frames([[(EARS, z0), ("( -ω- )", z1), ' (")(")~'] for z0, z1 in zs])
+    # z's drift up, then a tail twitch before she settles back into the loop
+    zs = [("", "  z"), ("   z", "  Z"), ("    Z", "   z"), ("     z", ""), ("", ""),
+          ("   z", ""), ("", " z"), ("  z", "")]
+    tails = [' (")(")~', ' (")(")~', ' (")(")~', ' (")(")~', ' (")(")~',
+             ' (")(") ', ' (")(")~', ' (")(")~']
+    return _frames([[(EARS, z0), ("( -ω- )", z1), tail] for (z0, z1), tail in zip(zs, tails)])
 
 
 def _thinking():
-    bubbles = [" .", " . o", " . o O", " . o O", " . o O"]
-    faces = ["( •ω• )", "( •ω• )", "( •ω• )", "( -ω- )", "( •ω• )"]
-    return _frames([[(EARS, b), f, SIT] for b, f in zip(bubbles, faces)])
+    bubbles = [" .", " . o", " . o O", " . o O", " . o O", " . o O", " . o", " ."]
+    faces = ["( •ω• )", "( •ω• )", "( •ω• )", "( -ω- )", "( •ω• )", "( •ω•)", "( •ω• )", "( •ω• )"]
+    tails = [SIT, SIT, SIT, SIT, SIT + "~", SIT, SIT, SIT]
+    return _frames([[(EARS, b), f, t] for b, f, t in zip(bubbles, faces, tails)])
 
 
 def _exploring():
@@ -139,11 +144,89 @@ def _petted():
     ])
 
 
+def _grooming():
+    """Tidying up: a paw raised and licked clean, then an ear smoothed down."""
+    return _frames([
+        [(EARS, "  ."), ("( -ω- )/", ""), SIT],
+        [(EARS, "   ."), ("( -ω- )/", " ~"), (SIT, "")],
+        [(EARS, ""), ("( •ω• )", ""), SIT],
+        [(EARS, "  ."), ("( -ω- )", " ~"), SIT],
+    ])
+
+
+def _listening():
+    """You're typing: ears up, head tilted, waiting for the rest of the sentence."""
+    return _frames([
+        [(EARS, ""), "( •ω• )", SIT],
+        [(EARS, "  ♪"), ("(•ω• )", ""), SIT],
+        [(EARS, ""), "( •ω• )", (SIT, " .")],
+        [(EARS, "  ♪"), ("( •ω•)", ""), SIT],
+    ])
+
+
+def _greeting():
+    """Hello when purr opens: she waves a paw."""
+    return _frames([
+        [(EARS, "  ♡"), ("\\( •ω• )/", ""), SIT],
+        [(EARS, "   ♡"), ("( •ω• )/", " ~"), (SIT, "")],
+        [(EARS, "  ♡"), ("\\( •ω• )/", ""), SIT],
+        [(EARS, " ♡"), ("( •ω• )", " ~"), SIT],
+    ])
+
+
+def _yawning():
+    """A big yawn now and then while she's idle."""
+    return _frames([
+        [(EARS, "  o"), ("( •ω• )", ""), SIT],
+        [(EARS, "   o"), ("( •o• )", ""), SIT],
+        [(EARS, "    o"), ("( •O• )", " ~yawn"), SIT],
+        [(EARS, ""), ("( -ω- )", " ~yawn"), SIT],
+    ])
+
+
+def _watching():
+    """Idle but alert: watching the room with a slow tail flick."""
+    return _frames([
+        [(EARS, ""), "( •ω• )", (SIT, " ~")],
+        [(EARS, ""), ("(•ω• )", ""), SIT],
+        [(EARS, ""), "( •ω• )", (SIT, "  ~")],
+        [(EARS, ""), ("( •ω•)", ""), SIT],
+    ])
+
+
+def _purring():
+    """Deep purrs when she's really happy: eyes shut, kneading the air."""
+    return _frames([
+        [(EARS, " ♡ ♡"), ("( -ω- )", " prrr"), (SIT, "~")],
+        [(EARS, "  ♡  ♡"), ("( -ω- )", " prrr~"), (SIT, "~ ~")],
+        [(EARS, " ♡ ♡"), ("( -ω- )", " prrrr"), (SIT, "~")],
+    ])
+
+
+def _celebrating():
+    """A milestone: a bigger confetti burst than 'proud'."""
+    return _frames([
+        [(EARS, " ✧ ⋆"), ("( ^ω^ )", " ♡ ✧"), (SIT, "  ⋆ ✧")],
+        [(EARS, "  ✧ ⋆ ✧"), ("( ^ω^ )", "  ♡  ✧ ⋆"), (SIT, " ⋆  ✧ ⋆")],
+        [(EARS, " ✧  ⋆  ✧"), ("( >ω< )", " ♡   ✧  ⋆"), (SIT, "  ✧   ⋆")],
+        [(EARS, "  ⋆ ✧"), ("( ^ω^ )", "   ♡ ✧"), (SIT, " ✧ ⋆")],
+    ])
+
+
+def _startled():
+    """Stopped or surprised: ears back, eyes wide."""
+    return _frames([
+        [(EARS, "  !"), ("( OωO )", ""), SIT],
+        [(EARS, " !!"), ("( OωO )", " ~"), (SIT, "")],
+        [(EARS, "  !"), ("( •ω• )", ""), SIT],
+    ])
+
+
 # mood -> (label, ticks per frame, frames). A tick is 0.12 s.
 MOODS = {
     "sleeping": ("napping", 5, _sleeping()),
     "thinking": ("thinking", 3, _thinking()),
-    "tidying": ("tidying up", 3, _thinking()),
+    "tidying": ("tidying up", 3, _grooming()),
     "exploring": ("exploring", 2, _exploring()),
     "building": ("building", 3, _building()),
     "running": ("running", 3, _running()),
@@ -155,6 +238,13 @@ MOODS = {
     "sad": ("tests failed", 4, _sad()),
     "waking": ("waking up", 3, _waking()),
     "petted": ("prrr~", 3, _petted()),
+    "listening": ("listening…", 3, _listening()),
+    "greeting": ("hello!", 3, _greeting()),
+    "yawning": ("yawning", 4, _yawning()),
+    "watching": ("watching", 4, _watching()),
+    "purring": ("purrr~", 3, _purring()),
+    "celebrating": ("milestone!", 2, _celebrating()),
+    "startled": ("!?", 3, _startled()),
 }
 
 # what she says she's doing; one is picked at random each time the mood changes
@@ -177,6 +267,13 @@ VERBS = {
     "sad": ["tests failed…", "oh no, red tests", "a little sad"],
     "waking": ["{name} is waking up", "{name} is stretching"],
     "petted": ["prrr~ {name} loves you", "{name} is purring", "prrr~"],
+    "listening": ["{name} is listening", "{name} is all ears", "{name} is waiting for the rest"],
+    "greeting": ["hello! {name} is here", "{name} says hi", "purr is awake"],
+    "yawning": ["{name} is yawning", "{name} is a sleepy loaf", "{name} could nap"],
+    "watching": ["{name} is watching", "{name} is keeping an eye out", "{name} is on lookout"],
+    "purring": ["purrr~ {name} is blissful", "{name} is kneading the air", "purrr~"],
+    "celebrating": ["{name} is celebrating", "milestone! ♡", "look how far we've come"],
+    "startled": ["!?", "{name} got a fright", "oh!"],
 }
 
 
@@ -214,6 +311,7 @@ def shimmer(text, phase, colours=(PINK, LILAC, "#ffc2e2", PINK)):
 
 
 STARS = ["  ⋆    ✧", "  ✧    ⋆", "   ⋆     ", "     ✧  ⋆"]  # twinkling at night
+FIREFLIES = ["  ·   ✧", " ·   ✧ ", "  ✧  · ", " ✧   · "]  # drifting in the dark
 
 
 def render(mood, tick, detail="", stats=(), sleepy_stats=False, label=None, night=False):
@@ -247,7 +345,11 @@ def render(mood, tick, detail="", stats=(), sleepy_stats=False, label=None, nigh
         if night and row == 0:
             cat = cat.replace("♡", "☾")
         if mood == "sleeping" and row == 2:
-            extra = STARS[(tick // 6) % len(STARS)] if night else "   ☀"
+            if night:
+                sky = FIREFLIES if (tick // 24) % 2 else STARS  # stars, then fireflies
+                extra = sky[(tick // 6) % len(sky)]
+            else:
+                extra = "   ☀"
         for ch in cat:
             t.append(ch, style=(MOON if ch == "☾" else HOT) if ch in "♡☾" else PINK)
         t.append(extra, style=HOT if "♡" in extra else SUN if "☀" in extra else LILAC)
