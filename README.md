@@ -329,6 +329,15 @@ sniffles as tasks get graded, and at the end reacts to the score: next to the pu
 for a whole run, next to the last quick run for a quick one. **p** publishes it to `benchmarks/`.
 `purr bench --real deepswe --size quick --jobs 8` skips the picking; `--plain` just runs fair.sh.
 
+**For the leaderboard:** `tbench/fair.sh --submit` runs the official Terminal-Bench 2.0 leaderboard's
+own dataset (Harbor Hub: `terminal-bench/terminal-bench-2`) the way a submission has to be run: every
+task 5 times, the tasks' own time limits, no overrides, and purr's web tool off (the rules: no looking
+at the benchmark's site or repo). `tbench/submit.py <job>` then checks the finished run against every
+rule the leaderboard's bot and reviewers check (and that no API key is anywhere in it), writes the
+`metadata.yaml`, and says the two steps that need your accounts: `harbor upload <job> --public`, and
+the submission itself. With DeepSeek V4.1 Flash that's 445 tries, about $5 off-peak (evenings and
+nights here) and a night of running.
+
 ## Published results
 
 - [`benchmarks/terminal-bench/`](benchmarks/terminal-bench/): Terminal-Bench, the official numbers

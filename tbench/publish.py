@@ -111,6 +111,8 @@ def is_local(r):
 def bench_name(dataset):
     """ "Terminal-Bench 2.1", "Terminal-Bench 2.0", "DeepSWE 1.1", or None (a dataset we don't publish)."""
     name, _, version = str(dataset).partition("@")
+    if name == "terminal-bench/terminal-bench-2":  # the same 89 tasks as Harbor Hub's leaderboard package
+        return "Terminal-Bench 2.0"
     if name == "terminal-bench" and not version.startswith("2.0"):
         return None  # 4.0 and later have the same name
     return next((b for b, c in BENCHES.items() if c["dataset"] == name), None)
@@ -125,8 +127,8 @@ def profile(dataset, trials):
         return None
     if tasks == set(bench["quick"]) and per_task == 1:
         return "quick"
-    if len(tasks) == bench["tasks"] and per_task == 3:
-        return "full"
+    if len(tasks) == bench["tasks"] and per_task >= 3 and per_task == int(per_task):
+        return "full"  # 3 tries, or the leaderboard's 5
     if len(tasks) == bench["tasks"] and per_task == 1:
         return "one"
     return None
@@ -245,7 +247,7 @@ def readme(results, page="terminal-bench"):
         one = [row(r, full=False) for r in mine if r.get("profile") == "one"]
         quick = [row(r, full=False) for r in mine if r.get("profile") == "quick"]
         if main or full:
-            lines += [f"### {bench}: full runs, all {n} tasks, 3 attempts each (`tbench/fair.sh {flag}`)".replace(" `)", "`)"),
+            lines += [f"### {bench}: full runs, all {n} tasks, 3 or more attempts each (`tbench/fair.sh {flag}`)".replace(" `)", "`)"),
                       ""] + head
             lines += full or ["| (none yet) |"]
             lines += [""]
