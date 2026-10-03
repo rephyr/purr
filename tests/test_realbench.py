@@ -35,6 +35,7 @@ def graded(job, name, reward, ex=None, cost=0.01):
     d.mkdir()
     (d / "result.json").write_text(json.dumps({
         "task_name": "terminal-bench/" + name.split("__")[0],
+        "trial_name": name,
         "verifier_result": {"rewards": {"reward": reward}} if reward is not None else None,
         "exception_info": {"exception_type": ex} if ex else None, "agent_result": {"cost_usd": cost},
         "agent_execution": {"started_at": "2026-10-02T10:00:00Z", "finished_at": "2026-10-02T10:02:30Z"}}))
@@ -251,6 +252,32 @@ class LocalModelTest(unittest.TestCase):
     def test_the_window_compares_deepseek_with_deepseek(self):
         self.assertNotIn(47.0, [s for _, s in realbench.references("terminal-bench")])  # Ornith's, not DeepSeek's
         self.assertEqual(realbench.references("terminal-bench", "ornith-9b-128k"), [("Claude Code", 47.0)])
+
+
+class VersusTest(unittest.TestCase):
+    def test_two_runs_task_by_task_and_other_harnesses_not_published(self):
+        import contextlib
+        import io
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tbench"))
+        import versus
+        mine, theirs = make_job(), make_job()
+        (mine / "config.json").write_text(json.dumps({"agents": [{"name": "tbench.purr_agent:PurrAgent"}]}))
+        (theirs / "config.json").write_text(json.dumps({"agents": [{"name": "opencode"}]}))
+        for job, rewards in ((mine, (1.0, 1.0, 0.0)), (theirs, (1.0, 0.0, 0.0))):
+            for task, reward in zip(("a", "b", "c"), rewards):
+                graded(job, f"{task}__1", reward)
+        graded(mine, "d__1", None, ex="CancelledError")  # stopped: not compared
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(versus.main([str(mine), str(theirs)]), 0)
+        text = out.getvalue()
+        self.assertIn("purr: 2 of 3 (66.7%)", text)
+        self.assertIn("opencode: 1 of 3 (33.3%)", text)
+        self.assertIn("<<", text)  # b: one passed, the other didn't
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(realbench.PUBLISH.main([str(theirs)]), 1)
+        self.assertIn("isn't purr", out.getvalue())
 
 
 @unittest.skipIf(realbench_app is None, "needs textual (uv sync)")

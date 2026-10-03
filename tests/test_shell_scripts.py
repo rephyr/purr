@@ -121,6 +121,33 @@ class FairShTest(unittest.TestCase):
         self.assertIsNone(argv)
 
 
+class CompareShTest(unittest.TestCase):
+    def test_opencode_gets_the_fair_settings_on_the_quick_20(self):
+        import json
+        rc, argv, err = run("compare.sh", "opencode", "--quick")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(after(argv, "-a"), "opencode")
+        self.assertEqual(after(argv, "-m"), "openrouter/deepseek/deepseek-v4.1-flash")
+        self.assertEqual(len(picked(argv)), 20)
+        self.assertTrue(all(t.startswith("terminal-bench/") for t in picked(argv)))
+        setting = after(argv, "--ak")
+        self.assertTrue(setting.startswith("opencode_config="))
+        config = json.loads(setting.split("=", 1)[1])
+        self.assertEqual(config["agent"]["build"], {"temperature": 1.0, "top_p": 0.95, "steps": 500})
+        model = config["provider"]["openrouter"]["models"]["deepseek/deepseek-v4.1-flash"]
+        self.assertEqual(model["options"]["provider"], {"only": ["deepseek"], "allow_fallbacks": False})
+        self.assertEqual(model["limit"]["output"], 65536)
+
+    def test_an_unknown_harness_stops(self):
+        rc, argv, err = run("compare.sh", "aider", "--quick")
+        self.assertNotEqual(rc, 0)
+        self.assertIsNone(argv)
+
+    def test_purr_itself_is_still_the_default(self):
+        rc, argv, err = run("fair.sh", "--quick")
+        self.assertEqual(after(argv, "-a"), "tbench.purr_agent:PurrAgent")
+
+
 class LocalShTest(unittest.TestCase):
     def test_the_quick_20_unless_told_otherwise(self):
         for args in ((), ("-n", "2"), ("--ak", "edge_cases=true")):
