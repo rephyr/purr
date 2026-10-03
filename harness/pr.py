@@ -90,32 +90,43 @@ def slug(title):
 
 def create(agent, title, body):
     """Branch, commit, push, open the PR. Returns the PR's URL. Raises RuntimeError on failure."""
-    root = agent.root
+    return open_pr(agent.root, agent.config, agent.model_name, title, body)
+
+
+def open_pr(root, config, model, title, body, new_branch=False, back=False):
+    """Everything not committed in root into a pull request, co-authored by purr-<model>. Returns
+    its URL; raises RuntimeError on failure. new_branch: a branch of its own even off a feature
+    branch (a benchmark report); back: then return to the branch you were on, so the checkout is
+    clean again (the next benchmark run refuses uncommitted changes)."""
     if not changed_files(root):
         raise RuntimeError("nothing to commit")
-    branch = git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    start = branch = git(root, "rev-parse", "--abbrev-ref", "HEAD")
     default = git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").removeprefix("origin/") or "main"
-    if branch in (default, "main", "master", "HEAD"):  # never commit straight onto main
+    if new_branch or branch in (default, "main", "master", "HEAD"):  # never commit straight onto main
         branch = slug(title)
         if git(root, "rev-parse", "--verify", "--quiet", branch):
             branch += "-2"
         git(root, "checkout", "-b", branch, check=True)
-    # GitHub shows a co-author's avatar when the email belongs to an account: give purr its own
-    # account with a cute picture and put its noreply email in config.toml (co_author_email)
-    email = agent.config.get("co_author_email", CO_AUTHOR_EMAIL)
-    co_author = f"Co-Authored-By: purr-{agent.model_name} <{email}>"
-    title = with_model(title, agent.model_name)
-    git(root, "add", "-A", check=True)
-    git(root, "commit", "-m", title, "-m", body, "-m", f"Model: {agent.model_name}\n{co_author}", check=True)
-    git(root, "push", "-u", "origin", branch, check=True)
-    badge = agent.config.get("co_author_github")  # its picture in the PR, if it has an account
-    pic = f'<img src="https://github.com/{badge}.png" width="20" height="20"> ' if badge else "🐾 "
-    pr_body = f"{body}\n\n---\n{pic}made with purr ({agent.model_name})"
-    cmd = ["gh", "pr", "create", "--title", title, "--body", pr_body, "--head", branch]
-    tag = label(root, agent.model_name)
-    if tag:
-        cmd += ["--label", tag]
-    r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=120)
-    if r.returncode:
-        raise RuntimeError(f"pushed {branch}, but gh pr create failed: {(r.stderr or r.stdout).strip()[:300]}")
-    return r.stdout.strip().splitlines()[-1]
+    try:
+        # GitHub shows a co-author's avatar when the email belongs to an account: give purr its own
+        # account with a cute picture and put its noreply email in config.toml (co_author_email)
+        email = config.get("co_author_email", CO_AUTHOR_EMAIL)
+        co_author = f"Co-Authored-By: purr-{model} <{email}>"
+        title = with_model(title, model)
+        git(root, "add", "-A", check=True)
+        git(root, "commit", "-m", title, "-m", body, "-m", f"Model: {model}\n{co_author}", check=True)
+        git(root, "push", "-u", "origin", branch, check=True)
+        badge = config.get("co_author_github")  # its picture in the PR, if it has an account
+        pic = f'<img src="https://github.com/{badge}.png" width="20" height="20"> ' if badge else "🐾 "
+        pr_body = f"{body}\n\n---\n{pic}made with purr ({model})"
+        cmd = ["gh", "pr", "create", "--title", title, "--body", pr_body, "--head", branch]
+        tag = label(root, model)
+        if tag:
+            cmd += ["--label", tag]
+        r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=120)
+        if r.returncode:
+            raise RuntimeError(f"pushed {branch}, but gh pr create failed: {(r.stderr or r.stdout).strip()[:300]}")
+        return r.stdout.strip().splitlines()[-1]
+    finally:
+        if back and branch != start:
+            git(root, "checkout", start)

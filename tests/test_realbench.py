@@ -254,6 +254,32 @@ class LocalModelTest(unittest.TestCase):
         self.assertEqual(realbench.references("terminal-bench", "ornith-9b-128k"), [("Claude Code", 47.0)])
 
 
+class ReportPrTest(unittest.TestCase):
+    def test_publish_with_pr_publishes_every_job_then_opens_one_pr(self):
+        jobs = []
+        for _ in range(2):
+            job = make_job()
+            (job / "config.json").write_text(json.dumps({"agents": [{"name": "tbench.purr_agent:PurrAgent"}]}))
+            jobs.append(str(job))
+        made = []
+        summary = {"dataset": "terminal-bench/terminal-bench-2-1", "profile": "one", "pass@1": 88.8, "stderr": 3.3,
+                   "tasks": 89, "trials": 89, "errors": 0, "timeouts": 2, "cost_usd": 3.1, "median_agent_minutes": 4.2,
+                   "model": "openrouter/deepseek/deepseek-v4.1-flash", "purr": "0.4.0+abc", "settings": {}}
+        with mock.patch.object(realbench.PUBLISH, "publish", return_value=summary) as one, \
+                mock.patch("harness.pr.open_pr", side_effect=lambda *a, **k: made.append((a, k)) or "https://pr/1"), \
+                mock.patch("harness.pr.changed_files", return_value=["M benchmarks/terminal-bench/README.md"]):
+            self.assertEqual(realbench.PUBLISH.main(["--pr", *jobs]), 0)
+        self.assertEqual(one.call_count, 2)
+        (root, config, model, title, body), kwargs = made[0]
+        self.assertEqual(model, "claude-opus-5.5")
+        self.assertIn("Benchmarks: 2 runs", title)
+        self.assertIn("**88.8%** ± 3.3 over 89 tasks", body)
+        self.assertIn("M benchmarks/terminal-bench/README.md", body)
+        self.assertEqual(kwargs, {"new_branch": True, "back": True})
+        with mock.patch.object(realbench.PUBLISH, "publish", return_value=summary):
+            self.assertEqual(realbench.PUBLISH.main(jobs), 1)  # several jobs only with --pr
+
+
 class VersusTest(unittest.TestCase):
     def test_two_runs_task_by_task_and_other_harnesses_not_published(self):
         import contextlib

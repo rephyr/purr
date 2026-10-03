@@ -558,7 +558,7 @@ class RealBenchApp(BenchWindow):
 
     def hint(self):
         publishable = any(r["ok"] and not r["published"] for r in self.ran)
-        hint = ("p publishes " + ("them" if sum(r["ok"] for r in self.ran) > 1 else "it") + " to the repo · "
+        hint = ("p publishes " + ("them" if sum(r["ok"] for r in self.ran) > 1 else "it") + " and opens a pull request · "
                 if publishable else "")
         if self.next_at:
             wait = max(0, round(self.next_at - time.monotonic()))
@@ -708,19 +708,22 @@ class RealBenchApp(BenchWindow):
 
     @work(thread=True)
     def publish_in_background(self, runs):
-        """publish.py takes a few seconds a run: not on the window's own thread, or it freezes meanwhile."""
-        for r in runs:
-            res = subprocess.run(["python3", str(realbench.ROOT / "tbench" / "publish.py"), str(r["job"])],
-                                 capture_output=True, text=True, cwd=realbench.ROOT)
-            self.call_from_thread(self.published_it, r, res.returncode, (res.stdout + res.stderr).strip().splitlines())
+        """publish.py writes every run, then wraps everything not committed into one pull request
+        (co-authored by purr-harness): seconds of git and gh, not on the window's own thread."""
+        res = subprocess.run(["python3", str(realbench.ROOT / "tbench" / "publish.py"), "--pr",
+                              *[str(r["job"]) for r in runs]], capture_output=True, text=True, cwd=realbench.ROOT)
+        self.call_from_thread(self.published_it, runs, res.returncode, (res.stdout + res.stderr).strip().splitlines())
 
-    def published_it(self, run, code, out):
+    def published_it(self, runs, code, out):
+        url = next((line.split(": ", 1)[1] for line in out if line.startswith("pull request: ")), None)
         if code == 0:
-            self.mood("celebrating", "published: commit benchmarks/ to share it", hold=6)
-            self.notify(out[0] if out else "published ♡", timeout=8)
+            self.mood("celebrating", "published: the pull request is up ♡", hold=6)
+            self.notify(f"pull request: {url}" if url else (out[-1] if out else "published ♡"), timeout=12)
         else:
-            run["published"] = False  # it can be tried again
-            self.notify(out[-1] if out else "publishing failed", severity="error", timeout=10)
+            if not any(line.startswith("published, but") for line in out):
+                for r in runs:
+                    r["published"] = False  # it can be tried again
+            self.notify(out[-1] if out else "publishing failed", severity="error", timeout=12)
         self.hint()
 
     def action_open_job(self):

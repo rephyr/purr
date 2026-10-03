@@ -54,6 +54,23 @@ class PRTest(unittest.TestCase):
                                 capture_output=True, text=True).stdout.strip()
         self.assertEqual(branch, "purr/make-x-two")  # never straight onto main
 
+    def test_a_report_gets_its_own_branch_and_the_checkout_goes_back(self):
+        root = self.a.root
+        sh(root, "git", "checkout", "-q", "-b", "feature")  # even off a feature branch
+        with self.assertRaises(RuntimeError) as err:  # no GitHub here, so gh pr create fails after the push
+            pr.open_pr(root, {"co_author_email": "1+purr-harness@users.noreply.github.com"}, "claude-opus-5.5",
+                       "Benchmark: Terminal-Bench 2.1 one 88.8%", "- the run", new_branch=True, back=True)
+        self.assertIn("pushed purr/benchmark-terminal-bench-2-1-one-88-8", str(err.exception))
+        branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root,
+                                capture_output=True, text=True).stdout.strip()
+        self.assertEqual(branch, "feature")  # back where it was
+        self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True,
+                                        text=True).stdout.strip(), "")  # clean for the next run
+        msg = subprocess.run(["git", "log", "-1", "--format=%B", "purr/benchmark-terminal-bench-2-1-one-88-8"],
+                             cwd=root, capture_output=True, text=True).stdout
+        self.assertIn("Co-Authored-By: purr-claude-opus-5.5 <1+purr-harness@users.noreply.github.com>", msg)
+        self.assertIn("· claude-opus-5.5", msg.splitlines()[0])
+
     def test_model_is_added_once(self):
         self.assertEqual(pr.with_model("Fix it · m", "m"), "Fix it · m")
         self.assertEqual(pr.with_model("Fix it", "m"), "Fix it · m")
