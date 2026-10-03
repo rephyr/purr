@@ -393,6 +393,10 @@ def main(argv):
         print(__doc__)
         return 1
     job, config, trials = load_job(argv[0])
+    agent = (config.get("agents") or [{}])[0].get("name", "")
+    if agent and agent != "tbench.purr_agent:PurrAgent":
+        print(f"not published: {agent} isn't purr (tbench/compare.sh); tbench/versus.py sets it next to a purr run")
+        return 1
     if not trials:
         print(f"no trials in {job}")
         return 1

@@ -34,5 +34,6 @@ export PYTHONPATH="$PURR${PYTHONPATH:+:$PYTHONPATH}"
 if [ "${1:-}" = "resume" ]; then
     exec harbor jobs resume -p "$2" -f RuntimeError
 fi
+# PURR_HARBOR_AGENT: another harness instead of purr (tbench/compare.sh), with the same key and model
 exec harbor run -d "${PURR_DATASET:-terminal-bench/terminal-bench@4.0.0}" -e docker \
-    -a tbench.purr_agent:PurrAgent -m "$MODEL" -o "$HOME/.local/state/purr/tbench" "$@"
+    -a "${PURR_HARBOR_AGENT:-tbench.purr_agent:PurrAgent}" -m "$MODEL" -o "$HOME/.local/state/purr/tbench" "$@"
