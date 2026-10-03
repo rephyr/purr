@@ -396,10 +396,10 @@ REPORT_MODEL = "claude-opus-5.5"  # the co-author model on report PRs (config.to
 def report_pr(summaries):
     """One pull request with everything not committed: the runs just published, their pages, and
     whatever else was waiting. Returns its URL; raises RuntimeError when it can't."""
-    import tomllib
     sys.path.insert(0, str(ROOT))
     from harness import pr
-    config = tomllib.loads((ROOT / "config.toml").read_text())
+    from harness import settings
+    config = settings.load(discover=False)
     model = config.get("report_model", REPORT_MODEL)
     files = pr.changed_files(ROOT) or []
     runs = [f"{bench_name(s['dataset'])} {s['profile']} {s['pass@1']}%" for s in summaries]

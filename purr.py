@@ -12,7 +12,7 @@ HERE = Path(__file__).resolve().parent
 VENV_PYTHON = HERE / ".venv/bin/python"
 sys.path.insert(0, str(HERE))
 
-from harness import commands, ui  # noqa: E402
+from harness import commands, settings, ui  # noqa: E402
 from harness.agent import STATE_DIR, Agent, list_sessions  # noqa: E402
 
 HISTORY = STATE_DIR / "history"
@@ -184,21 +184,22 @@ def main():
                 if VENV_PYTHON.exists() and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
                     os.execv(VENV_PYTHON, [str(VENV_PYTHON), __file__, *sys.argv[1:]])
                 window = False
-        return bench.main(sys.argv[2:], tomllib.loads((HERE / "config.toml").read_text()), window=window)
+        return bench.main(sys.argv[2:], settings.load(), window=window)
     ap = argparse.ArgumentParser(prog="purr", description="tiny coding agent")
     ap.add_argument("folder", nargs="?", default=".", help="project folder (default: here)")
-    ap.add_argument("-m", "--model", help="model name from config.toml")
+    ap.add_argument("-m", "--model", help="model name (/models lists them)")
     ap.add_argument("-p", "--prompt", help="do one task and exit (plain mode)")
     ap.add_argument("--plain", action="store_true", help="simple scrolling mode instead of the full-screen one")
     ap.add_argument("-c", "--continue", dest="resume", action="store_true",
                     help="carry on the last chat in this folder")
     ap.add_argument("--yes", action="store_true", help="allow edits and commands without asking")
     ap.add_argument("--key", metavar="PROVIDER", help="save an API key for a provider (asks for it, hidden)")
+    ap.add_argument("--version", action="version", version=f"purr {__import__('harness').VERSION}")
     ap.add_argument("--time-limit", type=float, metavar="SECONDS",
                     help="how long a task may take: purr says so, and reminds the model at half and 4/5 time")
     args = ap.parse_args()
     if args.key:
-        return save_key(args.key, tomllib.loads((HERE / "config.toml").read_text()))
+        return save_key(args.key, settings.load(discover=False))
 
     try:
         args.folder = str(Path(args.folder).resolve(strict=True))
@@ -218,7 +219,7 @@ def main():
             ui.say(ui.ROSE, "textual isn't installed: run `uv sync` in ~/projects/purr, or use --plain")
             return 1
 
-    config = tomllib.loads((HERE / "config.toml").read_text())
+    config = settings.load()
     model_name = args.model or config["default_model"]
 
     if use_tui:

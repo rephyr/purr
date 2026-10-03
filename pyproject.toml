@@ -1,11 +1,38 @@
 [project]
-name = "purr"
-version = "0.1.0"
-description = "tiny coding agent for the terminal"
+name = "purr-agent"
+dynamic = ["version"]
+description = "A cute terminal coding agent that gets more out of small local models"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "textual[syntax]",
 ]
 
-[tool.uv]
-package = false
+[project.scripts]
+purr = "purr:main"
+
+[project.urls]
+Homepage = "https://github.com/rephyr/purr"
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "harness/__init__.py"
+pattern = 'VERSION = "(?P<version>[^"]+)"'
+
+# purr.py, and its three folders next to it (harness: the agent, tui: the windows, servers: its own
+# MCP servers, run as files): installed side by side, as they are in the repo
+[tool.hatch.build.targets.wheel]
+packages = ["harness", "tui", "servers"]
+exclude = ["**/__pycache__"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"purr.py" = "purr.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["purr.py", "harness", "tui", "servers", "README.md", "LICENSE", "pyproject.toml", "install.sh"]
+exclude = ["**/__pycache__"]

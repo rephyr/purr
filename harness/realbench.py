@@ -13,7 +13,6 @@ import re
 import signal
 import subprocess
 import time
-import tomllib
 import urllib.request
 from pathlib import Path
 
@@ -81,7 +80,8 @@ def local_models():
     try:
         with urllib.request.urlopen(OLLAMA, timeout=2) as resp:
             have = {m["name"].removesuffix(":latest") for m in json.loads(resp.read())["models"]}
-        config = tomllib.loads((ROOT / "config.toml").read_text())
+        from harness import settings
+        config = settings.load()  # yours, and the models found on Ollama with their real context
     except (OSError, ValueError, KeyError):
         return []
     names = {spec["id"] for spec in config.get("models", {}).values()

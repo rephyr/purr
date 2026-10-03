@@ -156,7 +156,8 @@ class PurrAgent(BaseInstalledAgent):
         if not self.model_name or "/" not in self.model_name:
             raise ValueError("model must be provider/model, like openrouter/deepseek/deepseek-v4.1-flash")
         provider, model_id = self.model_name.split("/", 1)
-        mine = tomllib.loads((PURR / "config.toml").read_text())
+        from harness import settings
+        mine = settings.load()  # yours and purr's own, with the local models found right now
         if provider not in mine["providers"]:
             raise ValueError(f"purr has no provider {provider!r} (has: {', '.join(mine['providers'])})")
         # the same model's settings from purr's config if it has it (context, prices, body)
@@ -307,10 +308,12 @@ class PurrAgent(BaseInstalledAgent):
         access = self.model_connection
         env = dict(access.env)
         provider = self.model_name.split("/", 1)[0]
-        key_env = tomllib.loads((PURR / "config.toml").read_text())["providers"][provider].get("api_key_env")
+        from harness import settings
+        key_env = settings.load(discover=False)["providers"][provider].get("api_key_env")
         if key_env and access.api_key:
             env[key_env] = access.api_key
         env["PURR_STATE"] = "/logs/agent/purr-state"  # its chats land in the trial's logs
+        env["PURR_CONFIG"] = f"{REMOTE}/config.toml"  # exactly the config made for this trial
         limit = self.task_time_limit()
         timed = f"--time-limit {int(limit)} " if limit else ""
         await self.exec_as_agent(environment, command=(
