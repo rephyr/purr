@@ -38,7 +38,9 @@ Fine to set next to the reference scores below, keeping the ± in mind.
 
 | purr | date | pass@1 | timeouts | errors | cost | tokens in / cached / out | median time |
 |---|---|---|---|---|---|---|---|
-| (none yet) |
+| 0.5.0+0736578 † | 2026-10-03 | **80.9%** ± 4.2 | 1 | 1/89 | $4.52 | 134.3M / 128.3M / 4.6M | 5.7 min |
+
+† 0.5.0+0736578: qemu-alpine-ssh and qemu-startup can't be passed by anyone right now: their graders' old Debian mirror is gone, and even the tasks' own reference solutions score 0 (checked with Harbor's oracle). On the other 87 tasks: 72 passed (82.8%).
 
 ### Terminal-Bench 2.1: quick runs, the same 20 tasks (`tbench/quick-tasks.txt`), 1 attempt each (`tbench/fair.sh --quick`)
 
