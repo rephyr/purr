@@ -319,7 +319,8 @@ def readme(results, page="terminal-bench"):
         if main:
             lines += ["Cheap and quick, for seeing whether a purr version got better or worse. With 20 tasks and one",
                       "try each the margin is wide (see ±): compare quick runs with each other, not with the full",
-                      "runs or the leaderboards.", ""]
+                      "runs or the leaderboards. Since 2026-10-03 the set has git-multibranch instead of qemu-alpine-ssh,",
+                      "whose grader broke (even the reference solution scores 0): earlier quick runs scored it 0.", ""]
         lines += quick_head + (quick or ["| (none yet) |"]) + [""]
         if local:
             lines += [f"### {bench}: local models on this machine (`tbench/local.sh`)", "",
