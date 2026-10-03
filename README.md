@@ -16,8 +16,15 @@ curl -LsSf https://raw.githubusercontent.com/rephyr/purr/main/install.sh | sh
 
 That gets [uv](https://docs.astral.sh/uv/) if you don't have it and installs purr with it, in a Python
 of its own (nothing touches your system's). Already have uv: `uv tool install git+https://github.com/rephyr/purr`.
-Update with `uv tool upgrade purr-agent`. **On Arch:** `yay -S purr-agent` (or `purr-agent-git` for
-the latest commit; how they're made: [packaging/aur/](packaging/aur/)).
+Update with `uv tool upgrade purr-agent`. From PyPI (once it's there): `uv tool install purr-agent`.
+
+**On Arch:** the AUR packages (`purr-agent`, `purr-agent-git`) are ready but not on the AUR yet: AUR
+sign-ups are closed for now. Until then, build the same package yourself; pacman installs it and
+`pacman -R purr-agent-git` removes it:
+
+```
+git clone https://github.com/rephyr/purr && cd purr/packaging/aur/purr-agent-git && makepkg -si
+```
 
 **The first start** opens a little setup window (`purr setup`, or `/setup` inside purr, brings it back):
 
