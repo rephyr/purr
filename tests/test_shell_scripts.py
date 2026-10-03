@@ -136,6 +136,16 @@ class LocalShTest(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertEqual(picked(argv), [])
 
+    def test_replies_are_capped_and_more_time_is_asked_for(self):
+        rc, argv, err = run("local.sh")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("max_tokens=8192", argv)
+        self.assertNotIn("--agent-timeout-multiplier", argv)
+        rc, argv, err = run("local.sh", "--ak", "max_tokens=4096", PURR_TIME_MULT="3")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("max_tokens=8192", argv)  # yours wins
+        self.assertEqual(after(argv, "--agent-timeout-multiplier"), "3")
+
     def test_the_model_name_must_match_exactly(self):
         rc, argv, err = run("local.sh", PURR_LOCAL_MODEL="ornith-9b")  # only ornith-9b-128k exists
         self.assertNotEqual(rc, 0)

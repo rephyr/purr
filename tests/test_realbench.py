@@ -246,10 +246,11 @@ class LocalModelTest(unittest.TestCase):
         self.assertIn("| 0.4.0 | ornith-9b-128k | quick | 2026-10-03 | **40.0%**", page)
         quick = page.split("2.1: quick runs")[1].split("###")[0]
         self.assertIn("(none yet)", quick)  # not mixed in with the DeepSeek runs
-        self.assertIn("| Terminus-2 | Ornith-1.5-9B |", page)
+        self.assertIn("| Claude Code | Ornith-1.5-9B |", page)
 
     def test_the_window_compares_deepseek_with_deepseek(self):
-        self.assertNotIn("Terminus-2", [h for h, _ in realbench.references("terminal-bench")])
+        self.assertNotIn(47.0, [s for _, s in realbench.references("terminal-bench")])  # Ornith's, not DeepSeek's
+        self.assertEqual(realbench.references("terminal-bench", "ornith-9b-128k"), [("Claude Code", 47.0)])
 
 
 @unittest.skipIf(realbench_app is None, "needs textual (uv sync)")
@@ -389,10 +390,15 @@ class WindowTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(realbench.command("terminal-bench", "quick", variant="minimal")[0].endswith("fair.sh"))
         with self.assertRaises(ValueError):
             realbench.command("deepswe", "quick", model="ornith-9b-128k")
-        run = realbench.Run("terminal-bench", "quick", model="ornith-9b-128k")
+        run = realbench.Run("terminal-bench", "quick", model="ornith-9b-128k", time_mult=3.0)
         with mock.patch.object(realbench.subprocess, "Popen") as popen:
             run.start()
         self.assertEqual(popen.call_args.kwargs["env"]["PURR_LOCAL_MODEL"], "ornith-9b-128k")
+        self.assertEqual(popen.call_args.kwargs["env"]["PURR_TIME_MULT"], "3")
+        fair = realbench.Run("terminal-bench", "quick", time_mult=3.0)  # DeepSeek: the tasks' own limits
+        with mock.patch.object(realbench.subprocess, "Popen") as popen:
+            fair.start()
+        self.assertNotIn("PURR_TIME_MULT", popen.call_args.kwargs["env"])
 
 
 if __name__ == "__main__":

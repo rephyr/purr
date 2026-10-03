@@ -177,8 +177,9 @@ class Run:
     """fair.sh (or local.sh) going in the background: its own output (the checks, Harbor's lines)
     and its job folder."""
 
-    def __init__(self, suite, size, jobs=6, edge_cases=False, model=DEEPSEEK, variant="purr"):
+    def __init__(self, suite, size, jobs=6, edge_cases=False, model=DEEPSEEK, variant="purr", time_mult=1.0):
         self.suite, self.size, self.model, self.variant = suite, size, model, variant
+        self.time_mult = time_mult if model != DEEPSEEK else 1.0  # fair.sh runs keep the tasks' own limits
         self.cmd = command(suite, size, edge_cases, model, variant)
         self.jobs = jobs
         self.started = time.time()
@@ -194,6 +195,7 @@ class Run:
                "PURR_JOB": self.job_name, "PYTHONUNBUFFERED": "1", "NO_COLOR": "1"}
         if self.model != DEEPSEEK:
             env["PURR_LOCAL_MODEL"] = self.model
+            env["PURR_TIME_MULT"] = f"{self.time_mult:g}"
         self.proc = subprocess.Popen(self.cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      stdin=subprocess.DEVNULL, env=env, start_new_session=True)
         return self.proc
