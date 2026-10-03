@@ -44,7 +44,7 @@ class Limits:
     keep_recent_tools: int  # this many recent tool results stay complete
     repeat_limit: int       # identical tool calls before the turn is stopped
     hidden_tools: tuple = ()  # tools this model doesn't get offered
-    # purr's training wheels: "full" for local models (auto-refine, reminders, edge cases in the
+    # purr's training wheels: "full" for local models (auto-refine, checkpoints, step backs, edge cases in the
     # final check), "light" for API models, which bench showed don't need them (just slower)
     helpers: str = "full"
 

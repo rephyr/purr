@@ -191,18 +191,55 @@ class TamperTest(unittest.TestCase):
 
 
 class ReminderTest(unittest.TestCase):
-    def test_the_request_comes_back_every_8_calls(self):
+    def test_a_checkpoint_every_12_calls(self):
         a = agent()
-        for n in range(9):  # different files, or purr's loop guard would (rightly) step in
+        for n in range(13):  # different files, or purr's loop guard would (rightly) step in
             Path(a.root, f"x{n}.py").write_text(f"x = {n}\n")
-        steps = [reply("", tool=("read_file", {"path": f"x{n}.py"})) for n in range(9)] + [reply("done")]
+        steps = [reply("", tool=("read_file", {"path": f"x{n}.py"})) for n in range(13)] + [reply("done")]
         calls = scripted(a, steps)
         a.turn("look at x very carefully")
-        self.assertEqual(calls["n"], 10)
-        reminders = [m for m in a.messages if "a reminder of what the user asked" in (m.get("content") or "")]
-        self.assertEqual(len(reminders), 1)
-        self.assertIn("look at x very carefully", reminders[0]["content"])
+        self.assertEqual(calls["n"], 14)
+        checks = [m for m in a.messages if "checkpoint after 12 steps" in (m.get("content") or "")]
+        self.assertEqual(len(checks), 1)
+        self.assertIn("look at x very carefully", checks[0]["content"])
+        self.assertIn("switch to a different approach", checks[0]["content"])
 
+
+class StepBackTest(unittest.TestCase):
+    """Reworking the same file, or tweaking the numbers in one command, over and over."""
+
+    def steps(self, a, replies):
+        a.tools.trust_all = True
+        scripted(a, replies + [reply("done")])
+        a.turn("make solve.py find the answer")
+        return [m["content"] for m in a.messages if "write 3 short lines" in (m.get("content") or "")]
+
+    def test_the_same_file_rewritten_8_times(self):
+        a = agent()
+        writes = [reply("", tool=("write_file", {"path": "solve.py", "content": f"x = {n}\n"})) for n in range(9)]
+        backs = self.steps(a, writes)
+        self.assertEqual(len(backs), 1)
+        self.assertIn("`solve.py` 8 times", backs[0])
+
+    def test_numbers_tweaked_in_one_command(self):
+        a = agent()
+        runs = [reply("", tool=("run", {"command": f"python3 -c 'print({n} * 0.5)'"})) for n in range(7)]
+        backs = self.steps(a, runs)
+        self.assertEqual(len(backs), 1)
+        self.assertIn("the numbers in the same command", backs[0])
+
+    def test_running_the_tests_again_and_again_is_fine(self):
+        a = agent()
+        runs = []
+        for n in range(7):  # an edit, then the same test command: normal work
+            runs += [reply("", tool=("write_file", {"path": f"f{n}.py", "content": "x = 1\n"})),
+                     reply("", tool=("run", {"command": "python3 -m pytest -q test_2.py"}))]
+        self.assertEqual(self.steps(a, runs), [])
+
+    def test_api_models_dont_get_it(self):
+        a = agent("api")  # API models: the light training wheels
+        writes = [reply("", tool=("write_file", {"path": "solve.py", "content": f"x = {n}\n"})) for n in range(9)]
+        self.assertEqual(self.steps(a, writes), [])
 
 
 class CutOffTest(unittest.TestCase):

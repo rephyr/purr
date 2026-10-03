@@ -122,12 +122,14 @@ go straight into the tool result (`code_checks`); a rewrite with a `# ... rest u
 placeholder, or one that shrinks a big file to a fraction, is refused once; when the model wants
 to stop after changing files, purr runs the project's tests itself and asks it to check the
 request point by point (`final_check`, `final_check_tests`; `.purr/test_command` sets the
-command); every 8 steps it repeats the request (`reminders`); edits and overwrites need the
+command); every 12 steps a checkpoint repeats the request and asks whether the approach is
+getting closer (`reminders`); after 8 changes to the same file, or 6 versions of a command with
+only its numbers changed, it asks for a step back and a different approach (`step_back`); edits and overwrites need the
 file read first (`read_before_edit`); and an edit that removes or changes what a test checks
 gets a warning to fix the code instead (part of `code_checks`). `purr bench` counts the
 problems the checks caught, and `purr-bare` runs purr without any of them.
 
-The training wheels scale with the model: local models get auto-refine, reminders and the
+The training wheels scale with the model: local models get auto-refine, checkpoints, step backs and the
 edge-case step in the final check; API models (which `purr bench` showed don't need them; with
 DeepSeek V4.1 Flash they only made purr slower) get a short final check instead. Setting
 `refine`, `reminders` or `edge_cases` in config.toml (or `/refine ...`) overrides that.

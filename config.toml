@@ -25,7 +25,9 @@ code_checks = true
 # Training wheels: these follow the model unless you set them here. Local models get them all,
 # API models (which purr bench showed don't need them) don't.
 #  refine = "auto"    rewrite a short first message into a clear task (you approve it); "on" / "off"
-#  reminders = true   every 8 model calls, remind the model of the request
+#  reminders = true   every 12 model calls, a checkpoint: the request again, and is the approach getting closer?
+#  step_back = true   after 8 changes to one file (or 6 number-tweaked versions of one command), ask
+#                     the model to step back: what's known, why it fails, a different approach
 #  edge_cases = true  in the final check, also try 2-3 edge cases the request implies
 # Edits only on files the model has read (so old_text matches what's really there).
 read_before_edit = true
