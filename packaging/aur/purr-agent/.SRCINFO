@@ -16,6 +16,6 @@ pkgbase = purr-agent
 	optdepends = ruff: bug checks after every edit
 	optdepends = wl-clipboard: copying on Wayland
 	source = purr-agent-0.5.0.tar.gz::https://github.com/rephyr/purr/archive/refs/tags/v0.5.0.tar.gz
-	sha256sums = SKIP
+	sha256sums = 90650e93e4a8f46af25d2d36242413252cdeb5780a1e5493b7f83d4d1c1a0407
 
 pkgname = purr-agent
