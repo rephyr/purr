@@ -169,6 +169,13 @@ CUT_NUDGE = """(purr: your reply hit the output limit and was cut off, so nothin
 Carry on from where you were, but don't write code or long plans in your reply: put code straight \
 into the files with write_file or edit_file (a long file in a few parts), and keep your reply short.)"""
 
+# the cut-off thinking isn't kept, so "carry on" alone made a small model start the same
+# derivation over (Ornith-9B on write-compressor: cut off 4 times, never wrote a file)
+CUT_TAIL = "\n(Your cut-off reply ended with: «{tail}»)"
+CUT_ACT = """(purr: your reply ran out of room again ({n} times now) and nothing in it happened. Stop \
+working it all out in your head: write the simplest first version to the file now, even if it isn't \
+right yet, run it, and improve it from what the results show.)"""
+
 EMPTY_NUDGE = """(purr: your reply was empty. Look at the last results you got: if anything looks \
 wrong, fix it now; if everything is done, give a short summary of what you changed.)"""
 
