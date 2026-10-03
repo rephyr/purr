@@ -223,6 +223,9 @@ def main():
     ap.add_argument("folder", nargs="?", default=".", help="project folder (default: here)")
     ap.add_argument("-m", "--model", help="model name (/models lists them)")
     ap.add_argument("-p", "--prompt", help="do one task and exit (plain mode)")
+    ap.add_argument("--prompt-file", metavar="FILE",
+                    help="like -p, the task read from a file (it isn't on purr's command line then, where a "
+                         "`pkill -f <a word from the task>` would stop purr itself)")
     ap.add_argument("--plain", action="store_true", help="simple scrolling mode instead of the full-screen one")
     ap.add_argument("-c", "--continue", dest="resume", action="store_true",
                     help="carry on the last chat in this folder")
@@ -232,6 +235,12 @@ def main():
     ap.add_argument("--time-limit", type=float, metavar="SECONDS",
                     help="how long a task may take: purr says so, and reminds the model at half and 4/5 time")
     args = ap.parse_args()
+    if args.prompt_file:
+        try:
+            args.prompt = Path(args.prompt_file).read_text()
+        except OSError as e:
+            ui.say(ui.ROSE, f"can't read the task: {e}")
+            return 1
     if args.key:
         return save_key(args.key, settings.load(discover=False))
 

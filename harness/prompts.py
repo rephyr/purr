@@ -204,10 +204,13 @@ fix it now. If everything is really done, reply with a short summary of what you
 # Terminal-Bench 2.1 (hard tasks) added two: purr's own end-to-end test left an SSH key and a "v2"
 # push behind, so the grader's ssh-keygen stopped at "Overwrite?"; and purr "fixed" the emulator the
 # task said it would run (vm.js), which the grader ran from its own unchanged copy
+# configure-git-webserver failed three runs in a row on `git clone user@server:...`: that means a user
+# called "user", and purr kept making one called git (names inside commands are names too)
 ONE_SHOT_CHECK = """(purr: before you finish{time}: hidden tests will check your work on other inputs and \
 against the request's exact wording. Go through your requirements list and the request again, \
 sentence by sentence: 1. Every file, name and \
-signature it gives exists exactly as written (path, name, x() or x, format, types). 2. For each rule \
+signature it gives exists exactly as written (path, name, x() or x, format, types), names inside \
+the commands and addresses it shows included (the user in user@host, ports, paths, URLs). 2. For each rule \
 it states (if/unless/only/order/precedence/overrides), work out the expected result from the request \
 text first, then check it on an input where a wrong reading would give a different answer; test \
 both sides of each condition and override (set both, conflicting). Never copy an expectation from \

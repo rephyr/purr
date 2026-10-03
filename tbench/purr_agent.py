@@ -30,7 +30,6 @@ Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the 
 import asyncio
 import json
 import os
-import shlex
 import shutil
 import sys
 import tempfile
@@ -316,10 +315,17 @@ class PurrAgent(BaseInstalledAgent):
         env["PURR_CONFIG"] = f"{REMOTE}/config.toml"  # exactly the config made for this trial
         limit = self.task_time_limit()
         timed = f"--time-limit {int(limit)} " if limit else ""
+        # the task goes in a file, not on purr's command line: the model once ran `pkill -9 -f
+        # pystan_analysis` to stop its own script, and the task text (which named that file) made
+        # purr's own command line match, so purr killed itself (rstan-to-pystan, exit 137)
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task.txt"
+            task.write_text(instruction)
+            await environment.upload_file(task, f"{REMOTE}/task.txt")
         await self.exec_as_agent(environment, command=(
             # -u: purr's own output unbuffered, so the log fills as it goes (stdbuf did nothing for tee
             # and isn't on every image)
-            f"{PY} -u {REMOTE}/purr.py \"$PWD\" --plain --yes {timed}-p {shlex.quote(instruction)} "
+            f"{PY} -u {REMOTE}/purr.py \"$PWD\" --plain --yes {timed}--prompt-file {REMOTE}/task.txt "
             "2>&1 </dev/null | tee /logs/agent/purr.txt"), env=env)
 
     def populate_context_post_run(self, context: AgentContext) -> None:
