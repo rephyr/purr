@@ -93,6 +93,12 @@ class MinimalAgentTest(unittest.TestCase):
         usual.messages += [{"role": "assistant", "content": "", "reasoning": f"thought {i}"} for i in range(5)]
         self.assertEqual(sum(1 for m in usual._for_provider(usual.messages) if m.get("reasoning")), 2)
 
+    def test_no_effort_setting_goes_to_ollama(self):
+        a = Agent({**CONFIG, "minimal": True}, tempfile.mkdtemp(), "big", FakeView())  # an Ollama model
+        body = a._body(None, True)
+        self.assertNotIn("reasoning_effort", body)
+        self.assertNotIn("reasoning", body)
+
     def test_a_call_without_a_command_gets_told(self):
         a = minimal_agent()
         self.assertIn("needs a command", a._minimal_bash("bash", json.dumps({"cmd": "ls"})))
@@ -106,6 +112,9 @@ class PublishLabelTest(unittest.TestCase):
         self.assertEqual(publish.label({"purr": "0.4.0+abc", "settings": {"minimal": "false"}}), "0.4.0+abc")
         self.assertEqual(publish.label({"purr": "0.4.0+abc", "settings": {"keep_reasoning": "all"}}),
                          "0.4.0+abc (all thinking kept)")
+        self.assertEqual(publish.label({"purr": "0.4.0+abc", "settings": {"minimal": "true", "agent_timeout_multiplier": 3.0}}),
+                         "0.4.0+abc (minimal, ×3 time)")
+        self.assertEqual(publish.label({"purr": "0.4.0+abc", "settings": {"agent_timeout_multiplier": 1.0}}), "0.4.0+abc")
 
 
 @unittest.skipIf(purr_agent is None, "needs harbor (uv tool install harbor)")

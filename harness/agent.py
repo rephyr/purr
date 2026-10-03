@@ -963,7 +963,8 @@ class Agent:
         body.update(self.model.get("body", {}))
         if self.mode == "create" and messages is None:  # a little more surprising
             body["temperature"] = min(1.2, (body.get("temperature") or 0.8) + 0.3)
-        effort = self.config.get("effort") or ("high" if self.minimal else None)  # DSH's default: high
+        # DSH's default effort is high: a DeepSeek API setting, not sent to Ollama (its models take other values)
+        effort = self.config.get("effort") or ("high" if self.minimal and self.model.get("provider") != "ollama" else None)
         routine = self.config.get("routine_effort")
         if routine and tools and messages is None and self._routine_step():
             # output (mostly thinking) is about half of an agent's cost; after only reading and

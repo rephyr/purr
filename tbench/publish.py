@@ -43,8 +43,9 @@ REFERENCE = [
     {"harness": "Ante", "model": "DeepSeek V4.1 Flash", "benchmark": "Terminal-Bench 2.1 (89 tasks)", "pass@1": 83.9,
      "source": "https://antigma.ai/eval", "note": "5 trials per task"},
     # local models (tbench/local.sh): the makers' own runs, to set this machine's runs next to
-    {"harness": "Terminus-2", "model": "Ornith-1.5-9B", "benchmark": "Terminal-Bench 2.1 (89 tasks)", "pass@1": 47.0,
-     "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B", "note": "the makers' run: full weights, 128k context"},
+    {"harness": "Claude Code", "model": "Ornith-1.5-9B", "benchmark": "Terminal-Bench 2.1 (89 tasks)", "pass@1": 47.0,
+     "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B",
+     "note": "the makers' run: Claude Code 2.1.126, full weights, average of 5 runs"},
     # the same model card, same settings, N=8 per task
     *[{"harness": h, "model": "DeepSeek V4.1 Flash", "benchmark": "DeepSWE 1.1 (113 tasks)", "pass@1": s,
        "source": CARD, "note": "8 trials per task"} for h, s in (
@@ -319,8 +320,10 @@ def readme(results, page="terminal-bench"):
         if main:
             lines += ["Cheap and quick, for seeing whether a purr version got better or worse. With 20 tasks and one",
                       "try each the margin is wide (see ±): compare quick runs with each other, not with the full",
-                      "runs or the leaderboards. Since 2026-10-03 the set has git-multibranch instead of qemu-alpine-ssh,",
-                      "whose grader broke (even the reference solution scores 0): earlier quick runs scored it 0.", ""]
+                      "runs or the leaderboards.", ""]
+            if conf.get("quick_file", "quick-tasks.txt") == "quick-tasks.txt":  # Terminal-Bench's set
+                lines += ["Since 2026-10-03 the set has git-multibranch instead of qemu-alpine-ssh, whose grader broke",
+                          "(even the task's reference solution scores 0): earlier quick runs scored it 0.", ""]
         lines += quick_head + (quick or ["| (none yet) |"]) + [""]
         if local:
             lines += [f"### {bench}: local models on this machine (`tbench/local.sh`)", "",
@@ -369,6 +372,9 @@ def label(r):
     settings = r.get("settings") or {}
     on = [name for key, name in VARIANTS.items()
           if str(settings.get(key, "")).lower() not in ("", "false", "0", "no", "off", "none")]
+    more_time = float(settings.get("agent_timeout_multiplier") or 1.0)
+    if more_time != 1.0:
+        on.append(f"×{more_time:g} time")
     return f"{r['purr']} ({', '.join(on)})" if on else str(r["purr"])
 
 

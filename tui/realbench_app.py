@@ -43,9 +43,11 @@ RadioSet > RadioButton.-selected { background: transparent; }
 RadioSet RadioButton.-on > .toggle--label { color: $pink; text-style: bold; background: transparent; }
 RadioSet RadioButton > .toggle--label { background: transparent; }
 RadioSet:focus > RadioButton.-selected > .toggle--label { background: $hover; }
-#knobs { height: auto; margin-top: 1; }
-#knobs Static { width: auto; color: $dim; padding: 1 1 0 1; }
+#knobs, #knobs2 { height: auto; margin-top: 1; }
+#knobs Static, #knobs2 Static { width: auto; color: $dim; padding: 1 1 0 1; }
+#knobs2 { margin-top: 0; }
 #jobs { width: 7; border: round $line; background: $panel; }
+#timemult { width: 7; border: round $line; background: $panel; }
 #edge { border: round $line; background: $panel; width: 10; }
 #edge:focus { border: round $pink; }
 #edge > .switch--slider { color: $pink; background: $line; }
@@ -133,7 +135,8 @@ def short_pick(pick):
     """'DeepSeek Flash · minimal'."""
     variant = "" if pick["variant"] == "purr" else f" · {pick['variant']}"
     model = "DeepSeek Flash" if pick["model"] == realbench.DEEPSEEK else pick["model"]
-    return f"{model}{variant}"
+    more = f" · ×{pick['time_mult']:g} time" if pick.get("time_mult", 1.0) != 1.0 else ""
+    return f"{model}{variant}{more}"
 
 
 def describe(pick):
@@ -193,6 +196,9 @@ class RealBenchApp(BenchWindow):
                         yield Input(str(self.jobs), type="integer", id="jobs")
                         yield Static("edge cases")
                         yield Switch(self.edge_cases, id="edge")
+                    with Horizontal(id="knobs2"):
+                        yield Static("time × (local)")
+                        yield Input("1", type="number", id="timemult")
                 with Vertical(id="picks2"):
                     yield Static("model")
                     with RadioSet(id="model"):
@@ -263,6 +269,8 @@ class RealBenchApp(BenchWindow):
         why = realbench.problem(suite, size, model)
         if why:
             t.append(f"\n  ✗ {why}\n", style=f"bold {ROSE}")
+        if model != realbench.DEEPSEEK:
+            t.append("  time × gives each task more time (a GPU writes slower)\n", style=DIM)
         if self.queue:
             t.append(f"\nqueued, one after another ({len(self.queue)})\n", style=f"bold {PINK}")
             for n, q in enumerate(self.queue, 1):
@@ -320,7 +328,14 @@ class RealBenchApp(BenchWindow):
             jobs = max(1, min(16, int(self.query_one("#jobs", Input).value or 6)))
         except ValueError:
             jobs = 6
-        return {**self.choice, "jobs": jobs, "edge_cases": self.query_one("#edge", Switch).value}
+        try:  # more time per task: local models only (a GPU writes slower than a hosted model)
+            time_mult = max(1.0, min(5.0, float(self.query_one("#timemult", Input).value or 1)))
+        except ValueError:
+            time_mult = 1.0
+        if self.choice["model"] == realbench.DEEPSEEK:
+            time_mult = 1.0
+        return {**self.choice, "jobs": jobs, "edge_cases": self.query_one("#edge", Switch).value,
+                "time_mult": time_mult}
 
     def add_to_queue(self):
         pick = self.pick()
@@ -351,7 +366,8 @@ class RealBenchApp(BenchWindow):
         self.query_one("#run").remove_class("results")
         self.jobs, self.edge_cases = pick["jobs"], pick["edge_cases"]
         self.total = realbench.trials_in(suite, size)
-        self.job_run = realbench.Run(suite, size, self.jobs, self.edge_cases, pick["model"], pick["variant"])
+        self.job_run = realbench.Run(suite, size, self.jobs, self.edge_cases, pick["model"], pick["variant"],
+                                     pick.get("time_mult", 1.0))
         self.job_run.pick = pick
         try:
             self.job_run.start()

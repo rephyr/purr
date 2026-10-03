@@ -46,6 +46,9 @@ Cheap and quick, for seeing whether a purr version got better or worse. With 20 
 try each the margin is wide (see ±): compare quick runs with each other, not with the full
 runs or the leaderboards.
 
+Since 2026-10-03 the set has git-multibranch instead of qemu-alpine-ssh, whose grader broke
+(even the task's reference solution scores 0): earlier quick runs scored it 0.
+
 | purr | date | pass@1 | timeouts | errors | cost | tokens in / cached / out | median time |
 |---|---|---|---|---|---|---|---|
 | (none yet) |
@@ -69,6 +72,6 @@ runs or the leaderboards.
 | OpenCode | DeepSeek V4.1 Flash | Terminal-Bench 2.1 (89 tasks) | 85.0% | [link](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash) |
 | Codex | DeepSeek V4.1 Flash | Terminal-Bench 2.1 (89 tasks) | 84.1% | [link](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash) |
 | Ante | DeepSeek V4.1 Flash | Terminal-Bench 2.1 (89 tasks) | 83.9% (5 trials per task) | [link](https://antigma.ai/eval) |
-| Terminus-2 | Ornith-1.5-9B | Terminal-Bench 2.1 (89 tasks) | 47.0% (the makers' run: full weights, 128k context) | [link](https://huggingface.co/ornith-ai/Ornith-1.5-9B) |
+| Claude Code | Ornith-1.5-9B | Terminal-Bench 2.1 (89 tasks) | 47.0% (the makers' run: Claude Code 2.1.126, full weights, average of 5 runs) | [link](https://huggingface.co/ornith-ai/Ornith-1.5-9B) |
 
 Each run's every trial is in `results/`.
