@@ -25,7 +25,7 @@ from .prompts import (  # noqa: F401 - the words purr says; some only re-exporte
     TIME_NOTES, CUT_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK,
     ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
-    ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE,
+    ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT,
 )
 from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, run_shell, schemas
 
@@ -56,7 +56,10 @@ IMAGES_KEEP = 3     # images (look_at_image) sent again with every request: only
 
 
 TEST_TIMEOUT = 180  # seconds for a run of the project's tests (the final check, plan mode)
-REMIND_EVERY = 8  # model calls between reminders of the request (reminders = false turns them off)
+REMIND_EVERY = 12  # model calls between checkpoints (CHECKPOINT; reminders = false turns them off)
+STEP_BACK_EDITS = 8   # changes to the same file before purr asks for a step back (step_back = false: never)
+STEP_BACK_TWEAKS = 6  # versions of the same command with only its numbers changed, likewise
+STEP_BACK_MAX = 3     # step backs a turn
 
 
 ONE_SHOT_STEPS = 150  # one-shot runs with a time limit: nobody can say "keep going", so a fixed cap
@@ -1195,9 +1198,10 @@ class Agent:
                 try:
                     if (self._helper_on("reminders") and self.mode == "code" and not self.helper
                             and steps > 1 and (steps - 1) % REMIND_EVERY == 0):
-                        # small models lose the goal on long tasks: say it again now and then
-                        self.messages.append({"role": "user", "content":
-                            f"(purr: a reminder of what the user asked, so you stay on track: {_ends(text, 500, 300)})"})
+                        # small models lose the goal on long tasks: say it again now and then, and
+                        # have them look at whether the approach is getting anywhere
+                        self.messages.append({"role": "user", "content": CHECKPOINT.format(
+                            steps=steps - 1, request=_ends(text, 500, 300))})
                     self._time_note()
                     self.view.activity("thinking")
                     reply = self._call()
@@ -1273,6 +1277,11 @@ class Agent:
                     break
                 if nudge:
                     self.messages.append({"role": "user", "content": nudge})
+                else:
+                    back = self._check_churn()
+                    if back:
+                        self.view.note("it keeps reworking the same thing: purr asked for a step back", "warn")
+                        self.messages.append({"role": "user", "content": back})
                 # small models can get stuck ticking their task list forever instead of
                 # stopping (it never ends the turn, since a tool call always asks for more)
                 if all(c["name"] == "todo" for c in reply["tool_calls"]):
@@ -1358,6 +1367,7 @@ class Agent:
         self.tools.begin_turn()
         self.turn_stats = _new_stats()
         self._repeats = {}  # (tool, args) -> how often it's been called, and the last result
+        self._churn, self._churn_seen, self._step_backs = {}, {}, 0  # _check_churn
         self._learn_nudged = False  # learn mode: asked to leave a TODO(you) (_turn_content sets it)
         self._pair_handing_back = False
         self._learn_shortened = False
@@ -1842,6 +1852,35 @@ class Agent:
                     "try a different approach or different arguments, or stop and tell the user what is wrong")
             return (f"(purr: you have now called `{worst_name}` with the same arguments "
                     f"{worst['n']} times and it {what}. Don't repeat it. Read the result, {tail}.)")
+        return None
+
+    def _check_churn(self):
+        """Small models don't only repeat a call: they rework the same file, or rerun the same
+        command with other numbers, for dozens of steps without rethinking the approach they
+        picked first (Ornith-9B: one script rewritten 44 times). Past a threshold, ask for a step
+        back: what's known, why it fails, a different approach. Returns the message or None."""
+        if not self._helper_on("step_back") or self._step_backs >= STEP_BACK_MAX:
+            return None
+        for name, args, result in getattr(self, "_executed", []):
+            a = _args(args)
+            if name in ("edit_file", "write_file") and a.get("path") and not _looks_failed(result):
+                key, limit = ("edit", str(a["path"])), STEP_BACK_EDITS
+            elif name == "run" and isinstance(a.get("command"), str):
+                command = a["command"].strip()
+                shape = re.sub(r"\d+(?:\.\d+)?", "#", command)
+                seen = self._churn_seen.setdefault(shape, set())
+                if shape == command or command in seen:
+                    continue  # no numbers, or the very same command (a test run again): not a tweak
+                seen.add(command)
+                key, limit = ("run", shape), STEP_BACK_TWEAKS
+            else:
+                continue
+            self._churn[key] = self._churn.get(key, 0) + 1
+            if self._churn[key] >= limit:
+                self._step_backs += 1
+                self._churn, self._churn_seen = {}, {}  # the next approach gets its own tries
+                what = f"`{Path(key[1]).name}`" if key[0] == "edit" else "the numbers in the same command"
+                return STEP_BACK.format(what=what, n=limit)
         return None
 
     def _prune_old_tools(self, keep=None):

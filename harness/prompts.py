@@ -316,3 +316,16 @@ IDENTITY_TAIL = SYSTEM[SYSTEM.index(" You are running inside purr"):SYSTEM.index
 APPROVE_LINE = "\n- The user approves every edit and command. If they say no, stop and wait for them."
 
 FOLDER_LINE = "(use paths relative to it, like src/app.py, not full paths)"
+
+# small models (Ornith-9B on Terminal-Bench) didn't loop on the same call: they rewrote the same
+# script 44 times, tweaking numbers, without rethinking the approach they picked at step 1
+STEP_BACK = ("(purr: you have changed {what} {n} times now and it still isn't done. Stop changing it "
+             "for a moment and write 3 short lines: 1. what you know for sure (results you have seen), "
+             "2. why the attempts so far fail, 3. a different approach, not another variant of this one. "
+             "Then try that approach, testing its riskiest part first.)")
+
+# every few steps for small models: the request again, and a look at whether it's getting closer
+# (a plain "reminder of what the user asked" came 13 times in one task and changed nothing)
+CHECKPOINT = ("(purr: checkpoint after {steps} steps. The request: {request}\n"
+              "In 3 short lines: what is done and proven, what is left, and whether your current "
+              "approach is getting closer. If it isn't, switch to a different approach now.)")
