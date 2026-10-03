@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 
-VERSION = "0.4.0"  # bump for every release: benchmark results are filed under it
+VERSION = "0.5.0"  # bump for every release: benchmark results are filed under it
 
 
 def full_version():

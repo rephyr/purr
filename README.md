@@ -16,13 +16,24 @@ curl -LsSf https://raw.githubusercontent.com/rephyr/purr/main/install.sh | sh
 
 That gets [uv](https://docs.astral.sh/uv/) if you don't have it and installs purr with it, in a Python
 of its own (nothing touches your system's). Already have uv: `uv tool install git+https://github.com/rephyr/purr`.
-Update with `uv tool upgrade purr-agent`.
+Update with `uv tool upgrade purr-agent`. **On Arch:** `yay -S purr-agent` (or `purr-agent-git` for
+the latest commit; how they're made: [packaging/aur/](packaging/aur/)).
 
-purr finds the local models you're running by itself: **Ollama**, **llama.cpp**'s `llama-server`,
-**LM Studio** and **vLLM**, on their usual ports, and only the ones that can use tools. API providers
-(DeepSeek, OpenRouter, and free tiers: Groq, Cerebras, Gemini, Mistral, NVIDIA, Cohere) need a key:
-`purr --key openrouter`. Your settings live in `~/.config/purr/config.toml` (anything there wins over
-purr's own `harness/defaults.toml`); keys in `~/.config/purr/keys.toml`.
+**The first start** opens a little setup window (`purr setup`, or `/setup` inside purr, brings it back):
+
+- **local models:** purr finds what you're running by itself: **Ollama**, **llama.cpp**'s `llama-server`,
+  **LM Studio** and **vLLM**, on their usual ports, only the models that can use tools, each with the
+  context it really runs with. Models Ollama runs with its small default context get a one-click
+  roomier copy (only settings, nothing downloaded). Start a server later and purr finds it next time.
+- **API providers:** DeepSeek, OpenRouter, and the free tiers of Groq, Cerebras, Gemini, Mistral,
+  NVIDIA and Cohere: paste a key and purr checks it before saving it (keys it already has, from the
+  environment or OpenCode, show a ✓). **＋ your own** adds any OpenAI-compatible server (a company
+  gateway, a cloud GPU): its address and key, then tick the models you want.
+- **your model** to start on (a roomy local one when there is one), and **your cat**: her name and the colours.
+
+Your settings end up in `~/.config/purr/config.toml` (anything there wins over purr's own
+`harness/defaults.toml`, table by table; change it by hand as much as you like), keys in
+`~/.config/purr/keys.toml` (only you can read it; `purr --key <provider>` adds one from the terminal).
 
 ```
 purr                 # full-screen chat in the current folder
@@ -74,7 +85,7 @@ project are added to the system prompt.
 
 **Tools the model has:** read_file, list_files, grep, fetch_url, edit_file, write_file, run,
 todo (a task list you see), task (a read-only helper with a fresh memory, for exploring).
-Commands in `[permissions] allow_run` (config.toml) run without asking; "always" on a command
+Commands in `[permissions] allow_run` (in the settings) run without asking; "always" on a command
 covers that kind of command only (`git status`, not all of git).
 
 ## Beyond plain coding
@@ -92,7 +103,7 @@ interactive programs or servers):
   server). The final check asks the model to make sure anything that must keep running does, and
   answers.
 - **`look_at_image`**: shows a png/jpg/gif/webp to models that can see (`vision = true` in
-  config.toml: Qwen3.6, Qwen3.5, Gemma 4, Gemini, Claude). Only the latest 3 images go back with
+  its settings; local models Ollama says can see get it by themselves: Qwen3.6, Qwen3.5, Gemma 4, Gemini, Claude). Only the latest 3 images go back with
   each request.
 
 ## How it works
@@ -133,7 +144,7 @@ names from other harnesses work too (`search` is grep, `old_string` is old_text,
 and when an edit's text isn't found purr says which file it is in, or shows the closest lines.
 `purr bench` counts these as "repaired".
 
-purr also checks the model's work by itself (each can be switched off in config.toml):
+purr also checks the model's work by itself (each can be switched off in your config):
 after every edit a syntax check and ruff's bug checks (undefined names, functions defined twice, ...)
 go straight into the tool result (`code_checks`); a rewrite with a `# ... rest unchanged`
 placeholder, or one that shrinks a big file to a fraction, is refused once; when the model wants
@@ -149,22 +160,22 @@ problems the checks caught, and `purr-bare` runs purr without any of them.
 The training wheels scale with the model: local models get auto-refine, checkpoints, step backs and the
 edge-case step in the final check; API models (which `purr bench` showed don't need them; with
 DeepSeek V4.1 Flash they only made purr slower) get a short final check instead. Setting
-`refine`, `reminders` or `edge_cases` in config.toml (or `/refine ...`) overrides that.
+`refine`, `reminders` or `edge_cases` in your config (or `/refine ...`) overrides that.
 
 ## Free models: `/model free`
 
 `/model free` lets purr pick the best free OpenRouter model for what you're doing, from the ranked
-lists in `[free]` in `config.toml` (code: code/learn/pair/plan, ask, talk: chat/create), skipping
+lists in `[free]` in `harness/defaults.toml` (code: code/learn/pair/plan, ask, talk: chat/create), skipping
 models too small for the chat. When a model is rate-limited, out of free requests for the day, or
 has no host, purr says so in the chat, rests it (until midnight UTC for the daily cap, a few minutes
 when it's busy; remembered in `~/.local/state/purr/free.json`) and sends the same request to the
 next one. The model line shows `free → laguna`. `/free` lists the models and which are resting,
 `/free reset` forgets the resting; picking a model by hand turns it off.
 
-Besides OpenRouter, `config.toml` has the free tiers of **Groq, Cerebras, Google AI Studio (Gemini),
+Besides OpenRouter, purr knows the free tiers of **Groq, Cerebras, Google AI Studio (Gemini),
 Mistral, NVIDIA and Cohere**, and the `[free]` rankings mix them all. A provider without a key is
 simply skipped, so add keys as you get them: `purr --key groq` asks for the key without showing it
-and keeps it in `~/.config/purr/keys.toml` (only you can read it; `key_page` in config.toml says
+and keeps it in `~/.config/purr/keys.toml` (only you can read it; `key_page` in `harness/defaults.toml` says
 where to get one). OpenRouter's daily free cap is per account, so when it's hit every OpenRouter
 model rests at once and another provider takes over. `/free check` sends each model one tiny
 request and rests the ones that don't work (a renamed model, a key that's wrong), so a real turn
@@ -173,7 +184,7 @@ prompts, so check a model's page before using it on private code.
 
 ## MCP servers: helping small models understand the project
 
-purr speaks MCP: every `[mcp.*]` table in `config.toml` is a server whose tools are offered next to
+purr speaks MCP: every `[mcp.*]` table in the settings is a server whose tools are offered next to
 purr's own (`harness/mcp.py`; a server is started in the project folder the first time it's
 needed, and one that fails is skipped). `tools = [...]` offers only some of a server's tools, and
 tools that can change things ask you first, like `run`.
@@ -197,7 +208,7 @@ a decorated function is a tool.
 
 ## Different models, different limits
 
-purr adapts to the model it is running. The `context` in `config.toml` sets how big a
+purr adapts to the model it is running. A model's `context` (found by itself for local models) sets how big a
 tool result may be, how many lines `read_file` returns by default, how many files or
 grep matches are listed, how large an `@file` attachment may be, when the chat compacts
 by itself, and how many recent tool results stay whole. A 32k local model gets small,
@@ -216,9 +227,34 @@ Two things that mostly bite small models:
   call, so a small model spends its context on the current job rather than on output
   it has already read.
 
+## Your own agents
+
+An agent is a Markdown file: a short header, then its instructions. Each becomes a mode of its own
+(**shift+tab** goes through them after purr's modes, or `/agent <name>`):
+
+```markdown
+---
+description: reviews code for bugs, never edits
+tools: read            # all (default) | read | none | a list: [read_file, grep, run]
+model: ds-flash-or     # optional: the model it switches to
+temperature: 0.3       # optional
+colour: cyan           # optional: a hex colour or pink/lilac/mint/peach/rose/cyan/blue
+icon: ◎                # optional
+---
+You are a careful code reviewer. Point at the exact line, say what breaks and why.
+```
+
+Put it in `~/.config/purr/agents/` (yours, everywhere) or `.purr/agents/` in a project (that project's;
+it wins over yours by the same name). Easier: **`/agent new reviews my code and points out bugs`** has
+the current model write the file, and switches to it. `/agent` lists them, `/agent reload` reads them
+again after you edit one. Look-only agents are enforced like ask mode, a tool list hides every other
+tool, and agents that may change things get code mode's checks. Agents you already have for **Claude
+Code** (`~/.claude/agents`) and **OpenCode** (`~/.config/opencode/agent`) work too, their tool names
+translated; they're a `/agent <name>` away rather than in the shift+tab cycle.
+
 ## DeepSeek
 
-Put the key in `~/.zshrc`: `export DEEPSEEK_API_KEY=sk-...`, open a new terminal, then `/model flash`.
+Paste the key in the setup window (or `purr --key deepseek`, or `export DEEPSEEK_API_KEY=sk-...`), then `/model flash`.
 DeepSeek's cache makes repeated context almost free, as long as the start of the chat never
 changes. purr only ever adds to the end of the chat, so that works out of the box.
 
@@ -226,8 +262,8 @@ changes. purr only ever adds to the end of the chat, so that works out of the bo
 
 Uses the key you saved with `opencode auth login openrouter` (or `OPENROUTER_API_KEY` if set;
 DeepSeek works the same way). Models: `ds-pro-or`, `ds-flash-or`, `luna`, `sonnet`, `glm`,
-`qwen-flash`, `kimi`. For another one, copy an entry in `config.toml` and change `id` and `price`
-(both are on openrouter.ai). The cost purr shows is OpenRouter's real one.
+`qwen-flash`, `kimi`. For another one, add an entry to your `~/.config/purr/config.toml` like those in
+`harness/defaults.toml`, with its `id` and `price` (both are on openrouter.ai). The cost purr shows is OpenRouter's real one.
 Which hosts may answer is set once under `[providers.openrouter.body.provider]`: only well-known
 hosts, no fp4 copies, the cheapest of those that do 100+ tok/s (the cheapest no-name hosts were
 slow and went off the rails). OpenCode's config asks for the same, so `purr bench` stays fair.
@@ -244,7 +280,7 @@ slow and went off the rails). OpenCode's config asks for the same, so `purr benc
 | ♡ chat | none, short prompt | just talking |
 | ✧ create | none, a bit more random | ideas, names, game design, writing |
 
-Switch with **shift+tab** or `/mode chat`. Each mode can bring its own model (`[mode_models]` in `config.toml`: here code → Qwen3.6 IQ3, ask → DeepSeek Flash, chat and create → Kimi); a model you pick with `/model` in a mode sticks to it for the session, and a model with no key keeps the current one. Refine has the model rewrite your message into a clear
+Switch with **shift+tab** or `/mode chat` (your own agents come after these: see above). Each mode can bring its own model (`[mode_models]` in your config, e.g. code → a local Qwen, ask → DeepSeek Flash, chat and create → Kimi); a model you pick with `/model` in a mode sticks to it for the session, and a model with no key keeps the current one. Refine has the model rewrite your message into a clear
 task (Task / Where / Steps / Done when, from the project's file list) and shows it to you first:
 ctrl+s sends it, ctrl+o sends yours. `/refine auto` (the default) does that only for a short first
 message, a new task said in a few words, where it helped most in `purr bench` (Qwen3.6 IQ3 went
@@ -277,12 +313,12 @@ searching don't count as a step.
 **Plan mode.** This is purr's whole idea in one mode: a long, vague task is better handled by a
 big model that breaks it down and a small one that does each piece without losing the thread.
 `/plan add wishlists to the shop` (or `/mode plan` then send your task) starts it — the planner
-(`planner` in `config.toml`, default `ds-pro-or`: a big, long-context model) reads the project and
+(`planner` under `[plan]` in your config, say `ds-pro-or`: a big, long-context model; the model you're on if you set none) reads the project and
 writes a handful of tickets to `<project>/.purr/tickets/NN-title.md`. Each ticket names the one to
 three files it touches, what to change and how to check it. Then purr shows you the plan and waits:
 **ctrl+s** runs the tickets, **ctrl+r** reads the files again after you edit them, **esc** cancels
-(and keeps the files; `/plan run` starts them later). The executor (`executor` in `config.toml`,
-default `qwen3_6-iq3`) takes each ticket in a **fresh chat**, so its small context holds only the
+(and keeps the files; `/plan run` starts them later). The executor (`executor` under `[plan]`,
+say a small local model; the model you're on if you set none) takes each ticket in a **fresh chat**, so its small context holds only the
 ticket in front of it, while the whole request and the list of ticket titles (✓ for the ones done)
 travel with it. You approve edits and commands as usual; each ticket is a normal turn, so purr's
 checks and the final check still run.
@@ -305,7 +341,7 @@ you edit them in a popup, and only then purr makes a branch, commits with
 `Co-Authored-By: purr-<model>`, pushes and runs `gh pr create`. The title ends with the model
 (`Fix the discount · qwen3-coder-32k`, so with squash merging it shows on main) and the PR gets
 a pink `🐾 <model>` label. For a cute avatar on those
-commits, give purr its own GitHub account and set `co_author_email` in `config.toml`.
+commits, give purr its own GitHub account and set `co_author_email` in your config.
 
 ## Benchmark: purr vs OpenCode
 
@@ -315,7 +351,7 @@ instead). At the end a results page ranks everyone (♛), lists every number (to
 each kind of mistake, repairs, cost) and shows a task-by-task grid; `s` and `l` switch between
 it and the live log. Contestants: purr, opencode, purr+refine and purr-nocheck (purr without
 its final check: when a model wants to stop after changing files, purr asks it once to go
-through the request point by point; `final_check` in config.toml). It gives purr and OpenCode the same small coding
+through the request point by point; `final_check` in the settings). It gives purr and OpenCode the same small coding
 tasks with the same model (both with everything allowed, both with the same time limit).
 Every run starts from a fresh copy of the task; afterwards hidden tests decide whether it's
 solved. `purr bench -m qwen3-coder-32k -t rename --runs 3` picks things up front.

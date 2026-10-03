@@ -1,0 +1,24 @@
+pkgbase = purr-agent-git
+	pkgdesc = A cute terminal coding agent that gets more out of small local models (latest commit)
+	pkgver = 0.5.0.r0.g0000000
+	pkgrel = 1
+	url = https://github.com/rephyr/purr
+	arch = any
+	license = MIT
+	makedepends = git
+	depends = python>=3.11
+	depends = python-textual
+	optdepends = ollama: local models (purr finds them by itself)
+	optdepends = llama.cpp: local models with llama-server (found by itself too)
+	optdepends = git: undo history, /pr
+	optdepends = github-cli: /pr opens pull requests
+	optdepends = ripgrep: faster searching
+	optdepends = tmux: terminal sessions that outlive purr
+	optdepends = ruff: bug checks after every edit
+	optdepends = wl-clipboard: copying on Wayland
+	provides = purr-agent
+	conflicts = purr-agent
+	source = purr::git+https://github.com/rephyr/purr.git
+	sha256sums = SKIP
+
+pkgname = purr-agent-git

@@ -1,0 +1,34 @@
+# Maintainer: Emilia Sipola <sipolaemiliaa at gmail dot com>
+pkgname=purr-agent
+pkgver=0.5.0
+pkgrel=1
+pkgdesc="A cute terminal coding agent that gets more out of small local models"
+arch=('any')
+url="https://github.com/rephyr/purr"
+license=('MIT')
+depends=('python>=3.11' 'python-textual')
+optdepends=('ollama: local models (purr finds them by itself)'
+            'llama.cpp: local models with llama-server (found by itself too)'
+            'git: undo history, /pr'
+            'github-cli: /pr opens pull requests'
+            'ripgrep: faster searching'
+            'tmux: terminal sessions that outlive purr'
+            'ruff: bug checks after every edit'
+            'wl-clipboard: copying on Wayland')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/rephyr/purr/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+    cd "purr-$pkgver"
+    # purr in a folder of its own, as it is in the repo (its folders have generic names, so they stay
+    # out of the system's site-packages), and a small launcher on the PATH
+    install -d "$pkgdir/usr/lib/$pkgname"
+    cp -r purr.py harness tui servers "$pkgdir/usr/lib/$pkgname/"
+    find "$pkgdir/usr/lib/$pkgname" -name __pycache__ -prune -exec rm -rf {} +
+    python -m compileall -q -d "/usr/lib/$pkgname" "$pkgdir/usr/lib/$pkgname"
+    install -d "$pkgdir/usr/bin"
+    printf '#!/bin/sh\nexec python3 /usr/lib/%s/purr.py "$@"\n' "$pkgname" > "$pkgdir/usr/bin/purr"
+    chmod 755 "$pkgdir/usr/bin/purr"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
