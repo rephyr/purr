@@ -173,7 +173,32 @@ def save_key(name, config):
     return 0
 
 
+def full_screen_python():
+    """The full-screen windows need Textual: from a clone, run again in the project's own Python
+    (uv sync made it). False when there's no Textual anywhere."""
+    try:
+        import textual  # noqa: F401
+        return True
+    except ImportError:
+        if VENV_PYTHON.exists() and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
+            os.execv(VENV_PYTHON, [str(VENV_PYTHON), __file__, *sys.argv[1:]])
+        return False
+
+
+def run_setup():
+    """The setup window (tui/setup.py). Returns the model you picked, or None if you left."""
+    from tui.setup import SetupApp
+    return SetupApp(settings.load(discover=False)).run()
+
+
 def main():
+    if sys.argv[1:2] == ["setup"]:  # purr setup: local models, API keys, your model, the cat
+        if not full_screen_python():
+            ui.say(ui.ROSE, "the setup window needs Textual (uv sync in purr's folder)")
+            return 1
+        picked = run_setup()
+        ui.say(ui.MINT if picked else ui.DIM, f"  all set ♡ purr starts on {picked}" if picked else "  nothing changed")
+        return 0
     if sys.argv[1:2] == ["bench"]:  # purr bench: purr vs OpenCode on the same tasks (harness/bench.py)
         from harness import bench
         window = sys.stdout.isatty() and sys.stdin.isatty() and "--plain" not in sys.argv
@@ -209,24 +234,28 @@ def main():
         return 1
 
     use_tui = not (args.plain or args.prompt) and sys.stdin.isatty()
-    if use_tui:
-        try:
-            import textual  # noqa: F401
-        except ImportError:
-            # the full-screen mode lives in the project's own Python (uv sync made it)
-            if VENV_PYTHON.exists() and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
-                os.execv(VENV_PYTHON, [str(VENV_PYTHON), __file__, *sys.argv[1:]])
-            ui.say(ui.ROSE, "textual isn't installed: run `uv sync` in ~/projects/purr, or use --plain")
-            return 1
+    if use_tui and not full_screen_python():
+        ui.say(ui.ROSE, "textual isn't installed: run `uv sync` in purr's folder, or use --plain")
+        return 1
+    if use_tui and not settings.is_set_up() and not args.model:
+        # the first start: find the models, add keys, pick one (purr setup does it again any time)
+        if run_setup() is None:
+            ui.say(ui.DIM, "  setup skipped: it opens again next time (or `purr setup`)")
+            return 0
 
     config = settings.load()
     model_name = args.model or config["default_model"]
 
     if use_tui:
         from tui.app import PurrApp
-        app = PurrApp(config, args.folder, model_name, trust=args.yes, resume=args.resume)
-        app.run()
-        return app.return_code or 0
+        while True:
+            app = PurrApp(config, args.folder, model_name, trust=args.yes, resume=args.resume)
+            if app.run() != "setup":
+                return app.return_code or 0
+            run_setup()  # /setup inside purr: then purr starts again with what you picked
+            config = settings.load()
+            model_name = config["default_model"]
+            args.resume = True  # carry on the chat you were in
 
     view = ui.PlainView()
     try:
