@@ -3,6 +3,9 @@
     tbench/publish.py ~/.local/state/purr/tbench/<job folder>
     tbench/publish.py <job folder> --stopped "what happened"
     tbench/publish.py --pr <job folder> [<job folder> ...]
+    tbench/publish.py <job folder> --note "two tasks' graders are broken right now"
+
+--note: a footnote under the run's row, for something a reader should know about it.
 
 --pr: then everything not committed (the new results and pages, and anything else waiting) goes
 into one pull request on a branch of its own, co-authored by purr-<report_model> (config.toml:
@@ -306,9 +309,9 @@ def readme(results, page="terminal-bench"):
         if not mine and not main:
             continue  # an old dataset only shows when it has runs
         n, flag = conf["tasks"], conf["flag"]
-        full = [row(r, full=True) for r in mine if r.get("profile") == "full"]
-        one = [row(r, full=False) for r in mine if r.get("profile") == "one"]
-        quick = [row(r, full=False) for r in mine if r.get("profile") == "quick"]
+        full = [row(r, full=True) for r in mine if r.get("profile") == "full"] + footnotes(mine, "full")
+        one = [row(r, full=False) for r in mine if r.get("profile") == "one"] + footnotes(mine, "one")
+        quick = [row(r, full=False) for r in mine if r.get("profile") == "quick"] + footnotes(mine, "quick")
         if main or full:
             lines += [f"### {bench}: full runs, all {n} tasks, 3 attempts each (`tbench/fair.sh {flag}`)".replace(" `)", "`)"),
                       ""] + head
@@ -385,7 +388,8 @@ def label(r):
 
 def row(r, full):
     third = f" {r['pass@k']}% |" if full else ""
-    return (f"| {label(r)} | {r['date']} | **{r['pass@1']}%** ± {r['stderr']} |{third} {r.get('timeouts', 0)} | "
+    mark = " †" if r.get("note") and r.get("profile") != "stopped" else ""
+    return (f"| {label(r)}{mark} | {r['date']} | **{r['pass@1']}%** ± {r['stderr']} |{third} {r.get('timeouts', 0)} | "
             f"{r['errors']}/{r['trials']} | ${r['cost_usd']} | {short(r['tokens_in'])} / {short(r['tokens_cached'])} / "
             f"{short(r['tokens_out'])} | {r['median_agent_minutes']} min |")
 
@@ -413,10 +417,27 @@ def report_pr(summaries):
     return pr.open_pr(ROOT, config, model, title, body, new_branch=True, back=True)
 
 
+def footnotes(results, kind):
+    """The notes of a table's runs, under it: "† 0.5.0+abc: ..." (a blank line ends the table first)."""
+    out = []
+    for r in results:
+        if r.get("profile") == kind and r.get("note"):
+            out += ["", f"† {label(r)}: {r['note']}"]
+    return out
+
+
 def main(argv):
-    """publish.py [--pr] <job>... | publish.py <job> --stopped "note"."""
+    """publish.py [--pr] <job>... [--note "..."] | publish.py <job> --stopped "note"."""
     make_pr = "--pr" in argv
     argv = [a for a in argv if a != "--pr"]
+    extra = None
+    if "--note" in argv:
+        at = argv.index("--note")
+        if at + 1 >= len(argv) or not argv[at + 1].strip():
+            print(__doc__)
+            return 1
+        extra = argv[at + 1].strip()
+        argv = argv[:at] + argv[at + 2:]
     note = None
     if len(argv) == 3 and argv[1] == "--stopped" and argv[2].strip():
         argv, note = argv[:1], argv[2].strip()
@@ -425,7 +446,7 @@ def main(argv):
         return 1
     done = []
     for job in argv:
-        summary = publish(job, note)
+        summary = publish(job, note, extra)
         if summary is None:
             return 1
         done.append(summary)
@@ -438,8 +459,9 @@ def main(argv):
     return 0
 
 
-def publish(job, note=None):
-    """One job into its page. Returns its summary, or None (and says why) when it isn't published."""
+def publish(job, note=None, extra=None):
+    """One job into its page. Returns its summary, or None (and says why) when it isn't published.
+    note: a stopped run's reason (its own table); extra: a footnote on any run."""
     job, config, trials = load_job(job)
     agent = (config.get("agents") or [{}])[0].get("name", "")
     if agent and agent != "tbench.purr_agent:PurrAgent":
@@ -455,6 +477,8 @@ def publish(job, note=None):
             print(f"not published: {summary['dataset']} isn't a benchmark this publishes")
             return None
         summary["profile"], summary["note"] = "stopped", note
+    elif extra:
+        summary["note"] = extra
     if not summary["profile"]:
         print(f"not published: {summary['tasks']} tasks x {summary['settings']['attempts']} on {summary['dataset']} "
               "is not a full run (every task x 3, tbench/fair.sh), a one-try run (every task x 1, --one) or a "
