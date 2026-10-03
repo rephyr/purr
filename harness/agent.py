@@ -18,7 +18,7 @@ from .api import ApiError, Stopped, stream_chat
 from .limits import LOCAL, Limits
 from .free import FreeRouter, rest_for
 from .mcp import Mcp
-from . import checks, minimal
+from . import agents as agent_files, checks, minimal
 from .prompts import (  # noqa: F401 - the words purr says; some only re-exported for others
     SYSTEM, ASK_TOOLS, LEARN, LEARN_NUDGE, LEARN_SHORTEN, PAIR,
     PAIR_HAND_BACK, CHAT, CREATE, PLAN, TICKET_WORK, TIME_INTRO,
@@ -488,6 +488,7 @@ class Agent:
         self.mcp = parent.mcp if parent else Mcp(config, self.root, note=lambda s: view.note(s, "warn"))
         self.tools.mcp = self.mcp
         self.tools.is_private = lambda: self.private
+        self.agents = {}  # your own agents (harness/agents.py), each a mode: reload_agents()
         self._overview = None
         self.tools.spawn = None if helper else self._helper
         self.stop_flag = False  # the TUI sets this to stop an answer (plain mode uses ctrl+c)
@@ -508,6 +509,7 @@ class Agent:
         self.refine_pinned = config.get("refine") in REFINE_MODES
         self.refine_mode = config["refine"] if self.refine_pinned else "auto"
         self.set_model(model_name)
+        self.reload_agents()
         self.new()
 
     def stopping(self):
@@ -556,9 +558,11 @@ class Agent:
         # terminal = true/false on a model decides; else one-shot runs on a small context decide
         terminal = self.model.get("terminal")
         hide_terminal = terminal is False or (terminal is None and bool(getattr(self, "_hide_terminal", None)))
+        agent = self.agents.get(self.mode)
+        not_its = tuple(sorted(TOOL_NAMES - agent["tools"])) if agent and isinstance(agent["tools"], set) else ()
         return (tuple(self.limits.hidden_tools) + (("fetch_url",) if self.private else ())
                 + (() if self.model.get("vision") else ("look_at_image",))  # only models that can see
-                + (("terminal",) if hide_terminal else ()))
+                + (("terminal",) if hide_terminal else ()) + not_its)  # one of your agents: only its tools
 
     @property
     def chosen_model(self):
@@ -600,13 +604,50 @@ class Agent:
             self.tools.limits = self.limits  # 32k and 1M models need different caps
         self._refresh_system()  # the system prompt names the model, so it changes with it
 
+    # ---- your own agents (harness/agents.py): modes of their own ----
+
+    def reload_agents(self):
+        """Read the agent files again (yours, the project's, other tools')."""
+        if self.helper:
+            return
+        self.agents = agent_files.load(self.root, TOOL_NAMES, self.config.get("models", {}))
+
+    def modes(self):
+        """{mode: what it does}: purr's own, then your agents."""
+        return {**{m: what for m, (_, what) in MODES.items()},
+                **{n: a["description"] for n, a in self.agents.items()}}
+
+    def cycle_modes(self):
+        """The modes shift+tab goes through: purr's own and your agents (other tools' agents are a
+        /agent <name> away, so a big collection doesn't flood the cycle)."""
+        return list(MODES) + [n for n, a in self.agents.items() if a["origin"] in ("purr", "project")]
+
+    def mode_level(self, mode=None):
+        """"all", "read" or "none": what a mode may do with tools."""
+        mode = mode or self.mode
+        agent = self.agents.get(mode)
+        if agent:
+            return "none" if agent["tools"] == "none" else "read" if agent_files.looks_only(agent) else "all"
+        return MODES[mode][0]
+
+    def looks_only(self):
+        """Nothing may be changed: a helper, ask mode, or one of your look-only agents."""
+        return self.helper or self.mode == "ask" or self.mode_level() == "read"
+
+    @property
+    def coding(self):
+        """Doing the work, so the checks that come with it apply: code mode, or an agent of yours
+        that may change things."""
+        return self.mode == "code" or (self.mode in self.agents and self.mode_level() == "all")
+
     def set_mode(self, mode):
-        """code: every tool. ask: look but never change. chat / create: no tools at all."""
-        if mode not in MODES:
-            raise KeyError(f"no mode called {mode!r}. Have: {', '.join(MODES)}")
+        """code: every tool. ask: look but never change. chat / create: no tools at all. One of your
+        agents: the tools its file allows."""
+        if mode not in MODES and mode not in self.agents:
+            raise KeyError(f"no mode or agent called {mode!r}. Have: {', '.join(self.modes())}")
         self.mode = mode
-        self.tools.read_only = self.helper or mode == "ask"  # enforced, not just asked for
-        self.tools.no_tools = MODES[mode][0] == "none"
+        self.tools.read_only = self.looks_only()  # enforced, not just asked for
+        self.tools.no_tools = self.mode_level() == "none"
         if mode == "pair" and not self.helper:
             self.pair_snapshot()  # from now on, file changes between turns are the user's
         self._refresh_system()
@@ -615,11 +656,12 @@ class Agent:
         """set_mode for your own switches (shift+tab, /mode, /plan): also moves to the model that
         mode is best on (mode_models in config.toml). A model you picked by hand in a mode wins
         for the rest of the session. Returns a line about the model change, or None."""
-        if mode not in MODES:
-            raise KeyError(f"no mode called {mode!r}. Have: {', '.join(MODES)}")
+        if mode not in MODES and mode not in self.agents:
+            raise KeyError(f"no mode or agent called {mode!r}. Have: {', '.join(self.modes())}")
         self.mode_model[self.mode] = self.chosen_model  # going back to this mode brings it back
         self.set_mode(mode)
-        want = self.mode_model.get(mode) or self.config.get("mode_models", {}).get(mode)
+        want = (self.mode_model.get(mode) or self.config.get("mode_models", {}).get(mode)
+                or (self.agents.get(mode) or {}).get("model"))
         if self.router and mode not in self.mode_model:
             want = self.router_name  # the free router stays on: it picks the best free model for this mode
         if self.private and want and want not in self.local_models():
@@ -893,12 +935,18 @@ class Agent:
     def _system(self):
         if self.minimal:
             return minimal.SYSTEM
-        tools = MODES[self.mode][0] != "none"
-        names = [s["function"]["name"] for s in self.mcp.schemas(read_only=self.helper or self.mode == "ask",
+        level = self.mode_level()
+        tools = level != "none"
+        names = [s["function"]["name"] for s in self.mcp.schemas(read_only=self.looks_only(),
                                                                  taken=self.mcp_taken)] if tools else []
+        agent = self.agents.get(self.mode)
+        # one of your agents: purr's prompt for what it may do (code, ask or chat), then its own role
+        base = {"all": "code", "read": "ask", "none": "chat"}[level] if agent else self.mode
         text = system_prompt(self.root, self.model["id"], self.model["provider"], self.hidden_tools,
-                             self.mode, mcp_tools=names, overview=self.project_overview() if tools else "",
+                             base, mcp_tools=names, overview=self.project_overview() if tools else "",
                              one_shot=self.one_shot)
+        if agent:
+            text += agent_files.role(agent)
         return text + HELPER if self.helper else text
 
     def new(self):
@@ -935,7 +983,7 @@ class Agent:
             except KeyError:
                 pass  # e.g. no API key right now: keep the current model
         self.messages = data["messages"]
-        if data.get("mode") in MODES:
+        if data.get("mode") in MODES or data.get("mode") in self.agents:
             self.set_mode(data["mode"])
         self._refresh_system()
         self.title = data.get("title", "")
@@ -949,7 +997,7 @@ class Agent:
 
     def _body(self, messages, tools):
         msgs = messages or self.messages
-        if tools and MODES[self.mode][0] == "none":
+        if tools and self.mode_level() == "none":
             tools, msgs = False, plain_history(msgs)
         msgs = self._for_provider(msgs)
         body = {
@@ -961,13 +1009,16 @@ class Agent:
         if tools and self.minimal:
             body["tools"] = [minimal.BASH]
         elif tools:
-            read_only = self.helper or self.mode == "ask"
+            read_only = self.looks_only()
             body["tools"] = schemas(read_only=read_only, read_lines=self.limits.read_lines,
                                     hidden=self.hidden_tools) + self.mcp.schemas(read_only, taken=self.mcp_taken)
         body.update(self.provider.get("body", {}))  # e.g. which OpenRouter hosts may answer
         body.update(self.model.get("body", {}))
         if self.mode == "create" and messages is None:  # a little more surprising
             body["temperature"] = min(1.2, (body.get("temperature") or 0.8) + 0.3)
+        agent = self.agents.get(self.mode)
+        if agent and agent["temperature"] is not None and messages is None:
+            body["temperature"] = agent["temperature"]
         # DSH's default effort is high: a DeepSeek API setting, not sent to Ollama (its models take other values)
         effort = self.config.get("effort") or ("high" if self.minimal and self.model.get("provider") != "ollama" else None)
         routine = self.config.get("routine_effort")
@@ -1198,7 +1249,7 @@ class Agent:
                         steps = 1
                 self._make_room()
                 try:
-                    if (self._helper_on("reminders") and self.mode == "code" and not self.helper
+                    if (self._helper_on("reminders") and self.coding and not self.helper
                             and steps > 1 and (steps - 1) % REMIND_EVERY == 0):
                         # small models lose the goal on long tasks: say it again now and then, and
                         # have them look at whether the approach is getting anywhere
@@ -1491,7 +1542,7 @@ class Agent:
         # a one-shot run that only used commands (a model trained, a VM set up) has work to check
         # too; in a chat, "run the tests" doesn't need a second look
         acted = self._acted and self.one_shot
-        if (self._checked or not (changed or acted) or self.helper or self.mode != "code"
+        if (self._checked or not (changed or acted) or self.helper or not self.coding
                 or not self.config.get("final_check", True)):
             return False
         self._checked = True
@@ -1532,7 +1583,7 @@ class Agent:
     def _review(self):
         """Once, before a one-shot run finishes: a call that sees only the request and the diff.
         Returns True when it found something to look at (the turn goes on)."""
-        if (not self.one_shot or self.helper or self.mode != "code" or getattr(self, "_reviewed", True)
+        if (not self.one_shot or self.helper or not self.coding or getattr(self, "_reviewed", True)
                 or not self.config.get("review", True)):
             return False
         self._reviewed = True

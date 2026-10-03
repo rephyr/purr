@@ -115,6 +115,15 @@ def plain(agent, view):
                 if isinstance(result, dict) and result.get("pr"):
                     plain_pr(agent)
                     continue
+                if isinstance(result, dict) and result.get("agent_new"):
+                    from harness import agents as agent_files
+                    ui.say(ui.DIM, "  writing your agent…")
+                    path = agent_files.save(agent_files.draft(agent, result["agent_new"]))
+                    agent.reload_agents()
+                    if path.stem in agent.agents:
+                        agent.switch_mode(path.stem)
+                    ui.say(ui.MINT, f"  ♡ agent {path.stem} is on · its file: {path}")
+                    continue
                 if isinstance(result, dict) and result.get("plan_run"):
                     try:
                         agent.run_plan(result["plan_run"])

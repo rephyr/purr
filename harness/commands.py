@@ -28,14 +28,45 @@ COMMANDS = {
     "trust": ("", "allow edits and commands without asking (toggle)"),
     "theme": ("[name]", "change purr's colours"),
     "cat": ("[name <new name>]", "your cat: her stats, or give her a new name"),
-    "mode": ("[code|ask|learn|pair|plan|chat|create]", "what purr may do: code, ask (look only), learn, pair, plan, chat, create"),
+    "mode": ("[name]", "what purr may do: code, ask (look only), learn, pair, plan, chat, create, or one of your agents"),
+    "agent": ("[name | new <what it does> | reload]", "your own agents: list them, switch to one, or have one written"),
     "plan": ("[task | run [N]]", "a big model writes tickets, a small one does them one at a time"),
     "refine": ("[auto|on|off]", "rewrite your message into a clear task first (you approve it)"),
     "pr": ("", "commit the changes and open a GitHub pull request (you check it first)"),
     "setup": ("", "set purr up again: local models, API keys, your model, the cat"),
     "quit": ("", "leave"),
 }
-ALIASES = {"changes": "files", "browse": "files", "new": "clear", "exit": "quit", "q": "quit", "continue": "resume"}
+ALIASES = {"agents": "agent", "changes": "files", "browse": "files", "new": "clear", "exit": "quit", "q": "quit", "continue": "resume"}
+
+def agent_command(agent, arg):
+    """/agent: list your agents, switch to one, have a new one written (new ...), or read them again."""
+    from . import agents as agent_files
+    word, _, rest = arg.partition(" ")
+    if word == "new":
+        if not rest.strip():
+            return [("error", "say what it should do: /agent new reviews my code and points out bugs")]
+        return {"agent_new": rest.strip()}
+    if word == "reload":
+        agent.reload_agents()
+        return [("info", f"read the agent files again: {len(agent.agents)} agent{'s' * (len(agent.agents) != 1)}")]
+    if arg:
+        try:
+            moved = agent.switch_mode(arg)
+        except KeyError as e:
+            return [("error", e.args[0])]
+        return [("info", f"agent: {arg}, {agent.agents[arg]['description']}" if arg in agent.agents
+                 else f"mode: {arg}")] + ([("info", moved)] if moved else [])
+    if not agent.agents:
+        where = agent_files.settings.CONFIG_DIR / "agents"
+        return [("info", "no agents of your own yet. /agent new <what it should do> has one written, or put a"),
+                ("info", f"Markdown file in {where} (or .purr/agents/ in a project): see harness/agents.py")]
+    lines = []
+    for n, a in agent.agents.items():
+        tools = a["tools"] if isinstance(a["tools"], str) else ", ".join(sorted(a["tools"]))
+        origin = "" if a["origin"] in ("purr", "project") else f"  (from {a['origin']})"
+        lines.append(("info", f"{'♡ ' if n == agent.mode else '  '}{n:<16} {a['description'][:70]}  [{tools}]{origin}"))
+    return lines + [("info", "  /agent <name> switches · /agent new <what it does> · /agent reload")]
+
 
 INIT = """Look through this project and write (or update) an AGENTS.md file in its root folder. \
 It is read by coding agents at the start of every chat, so it should help them work here well.
@@ -165,14 +196,15 @@ def run(agent, text):
         return [("warn", "trusting everything (no questions)") if agent.tools.trust_all
                 else ("info", "asking before edits and commands again")]
     if name == "mode":
-        from .agent import MODES
         if arg:
             try:
                 moved = agent.switch_mode(arg)
             except KeyError as e:
                 return [("error", e.args[0])]
-            return [("info", f"mode: {arg}, {MODES[arg][1]}")] + ([("info", moved)] if moved else [])
-        return [("info", ("♡ " if m == agent.mode else "  ") + f"{m:<7} {what}") for m, (_, what) in MODES.items()]
+            return [("info", f"mode: {arg}, {agent.modes()[arg]}")] + ([("info", moved)] if moved else [])
+        return [("info", ("♡ " if m == agent.mode else "  ") + f"{m:<7} {what}") for m, what in agent.modes().items()]
+    if name == "agent":
+        return agent_command(agent, arg)
     if name == "plan":
         from .agent import MODES
         moved = agent.switch_mode("plan") if agent.mode != "plan" else None
