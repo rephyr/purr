@@ -221,3 +221,10 @@ __marimo__/
 *.pyc
 .venv/
 *.bak
+
+# makepkg leftovers (packaging/aur)
+packaging/aur/*/src/
+packaging/aur/*/pkg/
+packaging/aur/*/purr/
+*.pkg.tar.*
+packaging/aur/*/*.tar.gz

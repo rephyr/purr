@@ -144,6 +144,7 @@ class SetupWindowTest(NewUser, unittest.IsolatedAsyncioTestCase):
                 await pilot.pause(0.2)
                 self.assertEqual(app.picked_model, "coder-64k")
                 await pilot.click("#next")          # -> your cat
+                await pilot.pause(0.2)
                 app.query_one("#cat-name").value = "Luna"
                 await pilot.click("#next")          # -> all set
                 await pilot.pause(0.3)

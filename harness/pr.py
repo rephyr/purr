@@ -28,8 +28,8 @@ shows tests being run; never claim checks that didn't happen."""
 CO_AUTHOR_EMAIL = "purr@users.noreply.github.com"  # config.toml co_author_email overrides it
 
 
-def git(root, *args, check=False):
-    r = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=60)
+def git(root, *args, check=False, timeout=60):
+    r = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=timeout)
     if check and r.returncode:
         raise RuntimeError(f"git {' '.join(args)}: {(r.stderr or r.stdout).strip()[:300]}")
     return r.stdout.strip()
@@ -115,7 +115,7 @@ def open_pr(root, config, model, title, body, new_branch=False, back=False):
         title = with_model(title, model)
         git(root, "add", "-A", check=True)
         git(root, "commit", "-m", title, "-m", body, "-m", f"Model: {model}\n{co_author}", check=True)
-        git(root, "push", "-u", "origin", branch, check=True)
+        git(root, "push", "-u", "origin", branch, check=True, timeout=300)  # a slow network once took >60 s
         badge = config.get("co_author_github")  # its picture in the PR, if it has an account
         pic = f'<img src="https://github.com/{badge}.png" width="20" height="20"> ' if badge else "🐾 "
         pr_body = f"{body}\n\n---\n{pic}made with purr ({model})"
