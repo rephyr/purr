@@ -1245,6 +1245,9 @@ class PurrApp(App):
         if name == "theme":
             self._picked_theme(arg) if arg else self.open_theme_picker()
             return
+        if name == "setup":  # purr.py opens the setup window, then starts purr again with what you picked
+            self.exit("setup")
+            return
         if name == "cat":
             self.cat_command(arg)
             return

@@ -32,6 +32,7 @@ COMMANDS = {
     "plan": ("[task | run [N]]", "a big model writes tickets, a small one does them one at a time"),
     "refine": ("[auto|on|off]", "rewrite your message into a clear task first (you approve it)"),
     "pr": ("", "commit the changes and open a GitHub pull request (you check it first)"),
+    "setup": ("", "set purr up again: local models, API keys, your model, the cat"),
     "quit": ("", "leave"),
 }
 ALIASES = {"changes": "files", "browse": "files", "new": "clear", "exit": "quit", "q": "quit", "continue": "resume"}
@@ -200,4 +201,6 @@ def run(agent, text):
         return {"pr": True}
     if name in ("theme", "cat", "files"):
         return [("info", "that's for the full-screen mode")]
+    if name == "setup":
+        return [("info", "run `purr setup` in your terminal: it opens the setup window")]
     return [("error", f"unknown command /{name}, try /help")]
