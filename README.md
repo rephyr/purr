@@ -8,10 +8,26 @@ the full-screen mode uses [Textual](https://textual.textualize.io/) (`uv sync` i
 
 ![purr fixing a bug with Qwen3.6 on a local GPU (2x speed)](docs/demo.gif)
 
+## Install
+
+```
+curl -LsSf https://raw.githubusercontent.com/rephyr/purr/main/install.sh | sh
+```
+
+That gets [uv](https://docs.astral.sh/uv/) if you don't have it and installs purr with it, in a Python
+of its own (nothing touches your system's). Already have uv: `uv tool install git+https://github.com/rephyr/purr`.
+Update with `uv tool upgrade purr-agent`.
+
+purr finds the local models you're running by itself: **Ollama**, **llama.cpp**'s `llama-server`,
+**LM Studio** and **vLLM**, on their usual ports, and only the ones that can use tools. API providers
+(DeepSeek, OpenRouter, and free tiers: Groq, Cerebras, Gemini, Mistral, NVIDIA, Cohere) need a key:
+`purr --key openrouter`. Your settings live in `~/.config/purr/config.toml` (anything there wins over
+purr's own `harness/defaults.toml`); keys in `~/.config/purr/keys.toml`.
+
 ```
 purr                 # full-screen chat in the current folder
 purr ~/projects/x    # chat in another folder
-purr -m flash        # pick a model (names in config.toml)
+purr -m flash        # pick a model (/models lists them)
 purr --plain         # simple scrolling mode, no Textual needed
 purr -p "fix the bug in mathy.py"   # one task, then exit
 ```
@@ -97,7 +113,8 @@ interactive programs or servers):
 | `harness/tools.py` | the tools, permissions, undo |
 | `harness/limits.py` | per-model limits, derived from the model's `context` |
 | `harness/ui.py` | colours, diffs, the plain mode's view |
-| `config.toml` | providers, models, prices |
+| `harness/defaults.toml` | purr's providers, models, prices (yours: `~/.config/purr/config.toml`) |
+| `harness/settings.py`, `harness/discover.py` | settings in layers; the local servers purr finds |
 
 Every chat is saved as JSON in `~/.local/state/purr/sessions/` (`PURR_STATE` moves it, for tests), so you can see exactly what
 the model sent and got back. That's the best way to see why a model did something odd.

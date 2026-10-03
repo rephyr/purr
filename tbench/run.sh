@@ -24,7 +24,8 @@ PROVIDER="${MODEL%%/*}"
 KEY_LINE=$("$PURR/.venv/bin/python" -c "
 import shlex, sys, tomllib; sys.path.insert(0, '$PURR')
 from harness.agent import provider_key
-p = tomllib.load(open('$PURR/config.toml', 'rb'))['providers'].get('$PROVIDER')
+from harness.settings import load
+p = load(discover=False)['providers'].get('$PROVIDER')
 if not p: sys.exit('purr has no provider $PROVIDER')
 env, key = p.get('api_key_env'), provider_key(p)
 if env and not key: sys.exit(f'no key for $PROVIDER: purr --key $PROVIDER')

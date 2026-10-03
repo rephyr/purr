@@ -13,7 +13,7 @@ import dataclasses
 from dataclasses import dataclass
 
 
-LOCAL = ("ollama", "llamacpp")  # providers that run on your own GPU
+LOCAL = ("ollama", "llamacpp", "lmstudio", "vllm")  # providers that run on your own GPU (harness/discover.py)
 
 
 def _clamp(n, low, high):

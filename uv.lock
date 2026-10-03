@@ -59,9 +59,8 @@ wheels = [
 ]
 
 [[package]]
-name = "purr"
-version = "0.1.0"
-source = { virtual = "." }
+name = "purr-agent"
+source = { editable = "." }
 dependencies = [
     { name = "textual", extra = ["syntax"] },
 ]

@@ -21,7 +21,6 @@ import json
 import re
 import shutil
 import sys
-import tomllib
 from collections import Counter
 from pathlib import Path
 
@@ -70,7 +69,8 @@ def known_keys():
     try:
         sys.path.insert(0, str(ROOT))
         from harness.agent import provider_key
-        providers = tomllib.loads((ROOT / "config.toml").read_text())["providers"]
+        from harness import settings
+        providers = settings.load(discover=False)["providers"]
     except Exception:  # noqa: BLE001 - then only the shapes are checked
         return []
     keys = []

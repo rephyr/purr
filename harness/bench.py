@@ -808,9 +808,9 @@ def _label(s, many_models):
 def _model_name(key):
     """`key` (its id), and where it ran: on this machine's GPU, or an API model."""
     try:
-        import tomllib
-        spec = tomllib.loads((PUBLISHED.parent.parent / "config.toml").read_text())["models"].get(key, {})
-    except (OSError, ValueError):
+        from harness import settings
+        spec = settings.load(discover=False)["models"].get(key, {})
+    except (OSError, ValueError, SystemExit):
         spec = {}
     name = f"`{key}` ({spec['id']})" if spec.get("id") and spec["id"] != key else f"`{key}`"
     if spec.get("provider") in LOCAL:

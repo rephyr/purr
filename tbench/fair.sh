@@ -82,7 +82,8 @@ esac
 import json, os, sys, tomllib, urllib.error, urllib.request
 sys.path.insert(0, ".")
 from harness.agent import provider_key
-p = tomllib.load(open("config.toml", "rb"))["providers"]["openrouter"]
+from harness.settings import load
+p = load(discover=False)["providers"]["openrouter"]
 model = os.environ["PURR_MODEL"].split("/", 1)[1]
 body = {"model": model, "messages": [{"role": "user", "content": "Reply: ok"}],
         "max_tokens": 5, "provider": {"only": ["deepseek"], "allow_fallbacks": False}}

@@ -670,7 +670,7 @@ class Agent:
         self.title = self.title or " ".join(text.split())[:70]
         plan = self.config.get("plan", {})
         planner_name = plan.get("planner") or self.model_name
-        executor_name = plan.get("executor") or "qwen3_6-iq3"
+        executor_name = plan.get("executor") or self.model_name
         self.view.note(f"planning with {planner_name}, then {executor_name} takes the tickets", "info")
         self.messages.append({"role": "user", "content": text})
         tickets = self._make_tickets(text, planner_name)
@@ -741,7 +741,7 @@ class Agent:
         every ticket file again right before it runs, so the user's edits count. The project's
         tests are run after each ticket; the first failure stops the plan and is reported. Keeps a
         record in the parent chat and saves it."""
-        executor_name = executor_name or self.config.get("plan", {}).get("executor") or "qwen3_6-iq3"
+        executor_name = executor_name or self.config.get("plan", {}).get("executor") or self.model_name
         if not getattr(self, "turn_stats", None):
             self.turn_stats = _new_stats()
         tickets = read_tickets(self.root)

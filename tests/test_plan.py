@@ -431,10 +431,13 @@ class PromptTest(unittest.TestCase):
         self.assertIn("{request}", agent_module.TICKET_WORK)
         self.assertIn("{titles}", agent_module.TICKET_WORK)
 
-    def test_default_planner_is_ds_pro_or(self):
+    def test_purrs_own_settings_name_no_model_only_one_machine_has(self):
         import tomllib
-        config = tomllib.loads((Path(__file__).resolve().parent.parent / "config.toml").read_text())
-        self.assertEqual(config["plan"]["planner"], "ds-pro-or")
+        defaults = tomllib.loads((Path(__file__).resolve().parent.parent / "harness" / "defaults.toml").read_text())
+        self.assertNotIn("plan", defaults)  # the planner and executor are the model you're on unless you set them
+        self.assertNotIn("mode_models", defaults)
+        self.assertNotIn("default_model", defaults)  # purr setup picks it, or the roomiest local model found
+        self.assertFalse([n for n, m in defaults["models"].items() if m["provider"] in ("ollama", "llamacpp")])
 
 
 if __name__ == "__main__":
