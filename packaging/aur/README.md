@@ -7,6 +7,10 @@ Two packages, so `yay -S purr-agent` (or any AUR helper) installs purr on Arch:
 | `purr-agent` | a tagged release (`v0.5.0` on GitHub) | when you release (below) |
 | `purr-agent-git` | the latest commit on main | by itself: `yay` rebuilds it from git |
 
+**Not on the AUR yet:** AUR account sign-ups have been closed since June 2026 (a wave of malicious
+packages); everything here is ready for the day they reopen. Meanwhile anyone can build the package:
+`cd packaging/aur/purr-agent-git && makepkg -si`.
+
 (`purr` itself is taken on the AUR, by a Catppuccin tool.) Both install purr into `/usr/lib/purr-agent`
 with a `purr` launcher in `/usr/bin`, and depend only on `python` and `python-textual` (Arch's own
 repos); Ollama, llama.cpp, git, gh, ripgrep, tmux, ruff are optional.

@@ -1,0 +1,29 @@
+# purr on PyPI (uv tool install purr-agent): every GitHub release publishes that version. Trusted
+# publishing, so no token is stored anywhere: PyPI trusts this workflow (set up once on pypi.org,
+# see packaging/README.md). Run it by hand (Actions → publish → Run workflow) to retry a release.
+name: publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # what trusted publishing signs in with
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: build
+        run: uv build
+      - name: the version matches the release
+        if: github.event_name == 'release'
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          ls dist/ | grep -q "purr_agent-$want-" || { echo "harness/__init__.py isn't $want"; exit 1; }
+      - name: publish
+        run: uv publish --trusted-publishing always
