@@ -7,6 +7,9 @@ default_model = "qwen3_6-iq3"
 # its noreply email here (Settings > Emails), plus its name to show the picture in the PR text.
 co_author_email = "336710534+purr-harness@users.noreply.github.com"
 co_author_github = "purr-harness"
+# benchmark reports (tbench/publish.py --pr, p in purr bench --real): everything not committed goes
+# into one pull request co-authored by "purr-<report_model>"
+report_model = "claude-opus-5.5"
 
 # When the model wants to stop after changing files, ask it once to check every part of the
 # request is done (small models often stop halfway). purr bench's "purr-nocheck" turns it off.

@@ -2,6 +2,11 @@
 
     tbench/publish.py ~/.local/state/purr/tbench/<job folder>
     tbench/publish.py <job folder> --stopped "what happened"
+    tbench/publish.py --pr <job folder> [<job folder> ...]
+
+--pr: then everything not committed (the new results and pages, and anything else waiting) goes
+into one pull request on a branch of its own, co-authored by purr-<report_model> (config.toml:
+co_author_email, report_model), and the checkout goes back to where it was.
 
 A run stopped part-way can be filed with --stopped and a note saying why: it goes in its own table
 of stopped runs (the score over the tasks graded before it stopped), never next to the real ones.
@@ -385,37 +390,80 @@ def row(r, full):
             f"{short(r['tokens_out'])} | {r['median_agent_minutes']} min |")
 
 
+REPORT_MODEL = "claude-opus-5.5"  # the co-author model on report PRs (config.toml report_model)
+
+
+def report_pr(summaries):
+    """One pull request with everything not committed: the runs just published, their pages, and
+    whatever else was waiting. Returns its URL; raises RuntimeError when it can't."""
+    import tomllib
+    sys.path.insert(0, str(ROOT))
+    from harness import pr
+    config = tomllib.loads((ROOT / "config.toml").read_text())
+    model = config.get("report_model", REPORT_MODEL)
+    files = pr.changed_files(ROOT) or []
+    runs = [f"{bench_name(s['dataset'])} {s['profile']} {s['pass@1']}%" for s in summaries]
+    title = (f"Benchmark: {runs[0]} (purr {label(summaries[0])})" if len(runs) == 1
+             else f"Benchmarks: {len(runs)} runs ({', '.join(runs)})")[:90]
+    lines = [f"- **{bench_name(s['dataset'])}, {s['profile']}** · {s['model']} · purr {label(s)}: "
+             f"**{s['pass@1']}%** ± {s['stderr']} over {s['tasks']} tasks ({s['trials']} trials, "
+             f"{s['errors']} errors, {s.get('timeouts', 0)} out of time), ${s['cost_usd']}, "
+             f"median {s['median_agent_minutes']} min a task" for s in summaries]
+    body = ("\n".join(lines) + "\n\nEverything that wasn't committed:\n```\n" + "\n".join(files) + "\n```")
+    return pr.open_pr(ROOT, config, model, title, body, new_branch=True, back=True)
+
+
 def main(argv):
+    """publish.py [--pr] <job>... | publish.py <job> --stopped "note"."""
+    make_pr = "--pr" in argv
+    argv = [a for a in argv if a != "--pr"]
     note = None
     if len(argv) == 3 and argv[1] == "--stopped" and argv[2].strip():
         argv, note = argv[:1], argv[2].strip()
-    if len(argv) != 1:
+    if not argv or (len(argv) > 1 and not make_pr):
         print(__doc__)
         return 1
-    job, config, trials = load_job(argv[0])
+    done = []
+    for job in argv:
+        summary = publish(job, note)
+        if summary is None:
+            return 1
+        done.append(summary)
+    if make_pr:
+        try:
+            print(f"pull request: {report_pr(done)}")
+        except RuntimeError as e:
+            print(f"published, but no pull request: {e}")
+            return 1
+    return 0
+
+
+def publish(job, note=None):
+    """One job into its page. Returns its summary, or None (and says why) when it isn't published."""
+    job, config, trials = load_job(job)
     agent = (config.get("agents") or [{}])[0].get("name", "")
     if agent and agent != "tbench.purr_agent:PurrAgent":
         print(f"not published: {agent} isn't purr (tbench/compare.sh); tbench/versus.py sets it next to a purr run")
-        return 1
+        return None
     if not trials:
         print(f"no trials in {job}")
-        return 1
+        return None
     summary = summarise(config, trials)
     summary["profile"] = profile(summary["dataset"], trials)
     if note:
         if not bench_name(summary["dataset"]):
             print(f"not published: {summary['dataset']} isn't a benchmark this publishes")
-            return 1
+            return None
         summary["profile"], summary["note"] = "stopped", note
     if not summary["profile"]:
         print(f"not published: {summary['tasks']} tasks x {summary['settings']['attempts']} on {summary['dataset']} "
               "is not a full run (every task x 3, tbench/fair.sh), a one-try run (every task x 1, --one) or a "
               "quick one (the 20 in its quick-tasks file x 1, --quick)")
-        return 1
+        return None
     wrong = unfair(summary)
     if wrong:
         print("not published: not run with the fair settings (tbench/fair.sh): " + ", ".join(wrong))
-        return 1
+        return None
     page = BENCHES[bench_name(summary["dataset"])]["page"]
     out = ROOT / "benchmarks" / page
     version = summary["purr"] if isinstance(summary["purr"], str) else "mixed"
@@ -429,7 +477,7 @@ def main(argv):
     print(f"purr {version} ({summary['profile']} run): pass@1 {summary['pass@1']}% ± {summary['stderr']} over {summary['tasks']} tasks "
           f"({summary['trials']} trials, {summary['errors']} errors), ${summary['cost_usd']}")
     print(f"wrote {out / 'results' / name} and {out / 'README.md'}")
-    return 0
+    return summary
 
 
 if __name__ == "__main__":
