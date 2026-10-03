@@ -658,7 +658,7 @@ class PurrApp(App):
             line.append(f"{self.agent.chosen_model} → ", style=MINT)
         line.append(self.agent.model_name, style=f"bold {LILAC}")
         line.append(f"  {provider} ({ui.cost_kind(self.agent.model)})", style=DIM)
-        icon, colour = self.MODE_LOOK[self.agent.mode]
+        icon, colour = self.mode_look()
         line.append(f"   {icon} {self.agent.mode}", style=f"bold {colour}")
         if self.agent.refine_mode != "off" and self.agent.mode == "code":
             line.append("  ✧ refine" if self.agent.refine_mode == "on" else "  ✧ auto-refine", style=PEACH)
@@ -678,17 +678,29 @@ class PurrApp(App):
             return
         for m in MODE_NAMES:
             self.screen.set_class(m == mode, f"mode-{m}")
+        agent = self.agent.agents.get(mode)
+        box = self.query_one("#box")
+        if agent:  # one of your agents: the bar in its colour (purr.tcss only knows purr's own modes)
+            box.styles.border_left = ("outer", self.mode_look()[1])
+        else:
+            box.styles.clear_rule("border_left")
         if shown is None:  # starting up, maybe in another mode (a session carried on): its hint
-            self.prompt.placeholder = self.MODE_HINT[mode]
+            self.prompt.placeholder = self.mode_hint(mode)
         self.shown_mode = mode
         moved, self.mode_moved = getattr(self, "mode_moved", None), None
-        if shown is not None and f"mode_{mode}" in cat.MOODS:
-            self.idle = f"mode_{mode}"  # from now on she rests in this mode's scene instead of napping
+        # an agent's scene: purr's mode that does the same (codes, looks, or talks)
+        scene = f"mode_{mode}" if f"mode_{mode}" in cat.MOODS else \
+            f"mode_{ {'all': 'code', 'read': 'ask', 'none': 'chat'}[self.agent.mode_level()] }"
+        if shown is not None and scene in cat.MOODS:
+            self.idle = scene  # from now on she rests in this mode's scene instead of napping
             if not self.busy:
-                what = cat.MODES_WHAT.get(mode, "")
+                what = agent["description"] if agent else cat.MODES_WHAT.get(mode, "")
                 if moved:
                     what += " · " + (moved if moved.startswith("kept") else "now on " + moved.removeprefix("model: "))
                 self._show_cat(self.idle, what)
+                if agent:  # her label names your agent, not the mode whose scene it borrows
+                    self.cat_label = f"{mode}: {self.pet['name']} is on it"
+                    self.draw_cat()
 
     def set_status(self, s):
         # the agent's status starts with the model name, which the box already shows
@@ -1287,8 +1299,11 @@ class PurrApp(App):
             self.busy = True
             self.run_plan(result["plan_run"])
             return
-        if name == "mode" and arg in MODE_NAMES:
-            self.prompt.placeholder = self.MODE_HINT[arg]
+        if isinstance(result, dict) and result.get("agent_new"):
+            self.start_agent_new(result["agent_new"])
+            return
+        if name in ("mode", "agent", "agents") and arg in self.agent.modes():
+            self.prompt.placeholder = self.mode_hint(arg)
         elif name == "plan":
             self.prompt.placeholder = self.MODE_HINT["plan"]
         if result is None:  # /quit: stop the turn going on first, like ctrl+q
@@ -1482,17 +1497,60 @@ class PurrApp(App):
                  "plan": "describe the whole task; a big model makes tickets, a small one does them…",
                  "chat": "say hi ♡", "create": "let's dream something up ✧"}
 
+    def mode_look(self, mode=None):
+        """(icon, colour) for a mode, or one of your agents (its own, else a lilac diamond)."""
+        mode = mode or self.agent.mode
+        agent = self.agent.agents.get(mode)
+        if agent:
+            return agent["icon"] or "◆", agent["colour"] or LILAC
+        return self.MODE_LOOK[mode]
+
+    def mode_hint(self, mode=None):
+        mode = mode or self.agent.mode
+        agent = self.agent.agents.get(mode)
+        return f"{mode}: {agent['description']}…" if agent else self.MODE_HINT[mode]
+
     def action_next_mode(self):
         if self.busy or isinstance(self.screen, Workbench):
             return
-        modes = list(MODE_NAMES)
-        self.set_mode(modes[(modes.index(self.agent.mode) + 1) % len(modes)])
+        modes = self.agent.cycle_modes()
+        at = modes.index(self.agent.mode) if self.agent.mode in modes else -1
+        self.set_mode(modes[(at + 1) % len(modes)])
 
     def set_mode(self, mode):
         # a model change shows quietly under the cat's mode scene, and in the model name below
         self.mode_moved = self.agent.switch_mode(mode)
-        self.prompt.placeholder = self.MODE_HINT[mode]
+        self.prompt.placeholder = self.mode_hint(mode)
         self.refresh_info()
+
+    # ---- /agent new: the current model writes the agent's file ----
+
+    def start_agent_new(self, want):
+        self.leave_home()
+        self.add_line(f"writing an agent that {want[:80]}…", "info")
+        self.busy = True
+        self.write_agent(want)
+
+    @work(thread=True, exclusive=True)
+    def write_agent(self, want):
+        from harness import agents as agent_files
+        self.job = "agent"
+        try:
+            path = agent_files.save(agent_files.draft(self.agent, want))
+        except Exception as e:  # noqa: BLE001 - a model or disk error: say it, purr goes on
+            self.view.note(f"couldn't write the agent: {e}", "error")
+            self.call_from_thread(self._turn_done)
+            return
+        self.call_from_thread(self._agent_written, path)
+
+    def _agent_written(self, path):
+        self._turn_done()
+        self.agent.reload_agents()
+        name = path.stem
+        if name in self.agent.agents:
+            self.set_mode(name)
+            self.add_line(f"♡ your new agent {name} is on: {self.agent.agents[name]['description']}", "info")
+        self.add_line(f"its file: {path} (change anything there; /agent reload reads it again)", "info")
 
     def action_scroll_chat(self, direction):
         self.chat.scroll_page_down() if direction > 0 else self.chat.scroll_page_up()
