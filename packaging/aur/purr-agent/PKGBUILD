@@ -16,7 +16,7 @@ optdepends=('ollama: local models (purr finds them by itself)'
             'ruff: bug checks after every edit'
             'wl-clipboard: copying on Wayland')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/rephyr/purr/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('90650e93e4a8f46af25d2d36242413252cdeb5780a1e5493b7f83d4d1c1a0407')
 
 package() {
     cd "purr-$pkgver"
