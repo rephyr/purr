@@ -265,6 +265,23 @@ class CutOffTest(unittest.TestCase):
         a.turn("write a novel")
         self.assertEqual(calls["n"], 3)  # the first try and two nudges, then it stops
 
+    def test_one_shot_runs_hear_where_they_were_then_act_first(self):
+        # Ornith-9B on write-compressor: cut off 4 times, restarting the same derivation each time
+        a = agent()
+        a.set_one_shot()
+        cut = reply("")
+        cut["reasoning"] = "so the range coder needs the split at range*(c0+1)/(c0+c1+2), then"
+        cut["finish"] = "length"
+        calls = scripted(a, [cut])
+        a.turn("write data.comp")
+        self.assertEqual(calls["n"], 6)  # the first try and five nudges (a chat gets two)
+        nudges = [m["content"] for m in a.messages if "output limit" in (m.get("content") or "")
+                  or "ran out of room again" in (m.get("content") or "")]
+        self.assertIn("ended with: «so the range coder needs the split", nudges[0])
+        self.assertIn("output limit", nudges[1])
+        self.assertIn("ran out of room again (3 times now)", nudges[2])
+        self.assertIn("write the simplest first version", nudges[2])
+
 
 
 class ApiFailureTest(unittest.TestCase):

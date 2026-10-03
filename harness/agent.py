@@ -25,7 +25,7 @@ from .prompts import (  # noqa: F401 - the words purr says; some only re-exporte
     TIME_NOTES, CUT_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK,
     ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
-    ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT,
+    ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT,
 )
 from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, run_shell, schemas
 
@@ -105,6 +105,8 @@ NOTES_FILES = ["AGENTS.md"]
 NOTES_MAX = 20000
 RETRY_WAITS = [5, 15, 30]  # seconds between tries when an API server hiccups (a minute in all)
 RETRY_WAITS_LOCAL = [2]    # Ollama on this machine: one more try; it's up or it isn't
+CUT_MAX = 5  # one-shot runs: cut-off replies nudged on before the turn may end (a chat: 2)
+CUT_TAIL_CHARS = 1200  # of a cut-off reply's end, quoted back so it can carry on from there
 REPEAT_NUDGE = 2  # same tool call this many times: tell the model to stop repeating
 
 
@@ -1227,12 +1229,16 @@ class Agent:
 
                 if reply["finish"] == "length":
                     self.view.note("(the reply hit the output limit and was cut off)", "error")
-                    if not reply["tool_calls"] and cut < 2:
+                    if not reply["tool_calls"] and cut < (CUT_MAX if self.one_shot else 2):
                         # a cut-off reply isn't "done": it ran out of room mid-thought (seen writing
-                        # a whole file into its answer on Terminal-Bench). Have it carry on, in files.
+                        # a whole file into its answer on Terminal-Bench). Have it carry on, in files,
+                        # from where it was (its thinking isn't kept), and after twice: act first
                         cut += 1
                         self.tools.repairs.append("reply cut off at the output limit -> told to carry on in files")
-                        self.messages.append({"role": "user", "content": CUT_NUDGE})
+                        said = (reply.get("reasoning") or "") + (reply["text"] or "")
+                        tail = " ".join(said[-CUT_TAIL_CHARS:].split())
+                        nudge = CUT_NUDGE if cut <= 2 else CUT_ACT.format(n=cut)
+                        self.messages.append({"role": "user", "content": nudge + (CUT_TAIL.format(tail=tail) if tail else "")})
                         continue
                 if not reply["tool_calls"]:
                     # a completely empty answer isn't "done": the model stalled (seen right after
