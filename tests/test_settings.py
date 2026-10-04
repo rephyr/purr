@@ -138,6 +138,17 @@ class SettingsTest(unittest.TestCase):
                 "models": {"gemma:12b": {"provider": "ollama", "id": "gemma:12b"}}}
         self.assertEqual(tomllib.loads(settings.to_toml(data)), json.loads(json.dumps(data)))
 
+    def test_ollama_host_moves_ollama_unless_you_set_its_address(self):
+        for value, url in (("0.0.0.0", "http://127.0.0.1:11434"), ("172.20.0.1", "http://172.20.0.1:11434"),
+                           ("gpu-box:8000", "http://gpu-box:8000"), ("https://ollama.lan/", "https://ollama.lan:443"),
+                           ("", "")):
+            self.assertEqual(settings.ollama_host(value), url, value)
+        with mock.patch.object(discover, "find", return_value={}), \
+                mock.patch.dict(os.environ, {"OLLAMA_HOST": "172.20.0.1"}):
+            self.assertEqual(settings.load()["providers"]["ollama"]["base_url"], "http://172.20.0.1:11434/v1")
+            (self.dir / "config.toml").write_text('[providers.ollama]\nbase_url = "http://mine:1/v1"\n')
+            self.assertEqual(settings.load()["providers"]["ollama"]["base_url"], "http://mine:1/v1")
+
     def test_purrs_own_defaults_load(self):
         defaults = tomllib.loads(settings.DEFAULTS.read_text())
         self.assertEqual({p for p, v in defaults["providers"].items() if v.get("discover")},
