@@ -140,6 +140,9 @@ class Mcp:
         return name in self.by_tool
 
     def read_only(self, name):
+        """The tool says it changes nothing. A name no server has can't change anything either."""
+        if name not in self.by_tool:
+            return True
         _, spec = self.by_tool[name]
         return bool((spec.get("annotations") or {}).get("readOnlyHint"))
 

@@ -1868,9 +1868,13 @@ class Agent:
         return {c["id"]: r for c, r in zip(calls, results)}
 
     def _note_action(self, name, args):
-        """Remember a turn that did things other than edit files, for the final check."""
+        """Remember a turn that did things other than edit files, for the final check. The name is the
+        model's own: an alias (search for grep) counts as purr's tool, and one that doesn't exist (gpt-oss
+        invents some: objdump, readdir?) did nothing. Asking about those once crashed purr."""
         mcp = getattr(self.tools, "mcp", None)
-        if name in ("run", "terminal") or (name not in TOOL_NAMES and mcp and not mcp.read_only(name)):
+        if name not in TOOL_NAMES and not (mcp and mcp.has(name)):
+            name = TOOL_ALIASES.get(re.sub(r"[^\w]", "", name), name)
+        if name in ("run", "terminal") or (name not in TOOL_NAMES and mcp and mcp.has(name) and not mcp.read_only(name)):
             self._acted = True
         command = str(_args(args).get("command") or "").strip()
         if name == "terminal" or command.endswith("&") or command.startswith(("nohup ", "setsid ")):
