@@ -157,11 +157,17 @@ class SettingsTest(unittest.TestCase):
         with mock.patch.object(sys, "platform", "linux"):
             self.assertIn("- System: Linux\n", system_prompt("/tmp/x", "m", "ollama"))
 
-    def test_opencode_is_asked_once_and_only_if_installed(self):
+    def test_opencode_is_asked_once_and_only_if_installed_and_used(self):
         from harness import agent
         export = '[{"integrationID": "deepseek", "value": {"key": "sk-1"}}]'
-        for installed, want, runs in ((None, None, 0), ("/usr/bin/opencode", "sk-1", 1)):
-            with mock.patch.dict(agent._OPENCODE_KEYS, clear=True), \
+        data = self.dir / "data"
+        (data / "opencode").mkdir(parents=True)
+        cases = ((None, True, None, 0), ("/usr/bin/opencode", False, None, 0), ("/usr/bin/opencode", True, "sk-1", 1))
+        for installed, used, want, runs in cases:
+            (data / "opencode" / "opencode.db").unlink(missing_ok=True)
+            if used:
+                (data / "opencode" / "opencode.db").write_text("")
+            with mock.patch.dict(agent._OPENCODE_KEYS, clear=True), mock.patch.dict(os.environ, {"XDG_DATA_HOME": str(data)}), \
                     mock.patch.object(agent.shutil, "which", return_value=installed), \
                     mock.patch.object(agent.subprocess, "run", return_value=mock.Mock(stdout=export)) as run:
                 got = [agent.opencode_key(name) for name in ("deepseek", "groq", "cerebras", "deepseek")]
