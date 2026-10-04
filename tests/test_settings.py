@@ -156,6 +156,17 @@ class SettingsTest(unittest.TestCase):
         with mock.patch.object(sys, "platform", "linux"):
             self.assertIn("- System: Linux\n", system_prompt("/tmp/x", "m", "ollama"))
 
+    def test_opencode_is_asked_once_and_only_if_installed(self):
+        from harness import agent
+        export = '[{"integrationID": "deepseek", "value": {"key": "sk-1"}}]'
+        for installed, want, runs in ((None, None, 0), ("/usr/bin/opencode", "sk-1", 1)):
+            with mock.patch.dict(agent._OPENCODE_KEYS, clear=True), \
+                    mock.patch.object(agent.shutil, "which", return_value=installed), \
+                    mock.patch.object(agent.subprocess, "run", return_value=mock.Mock(stdout=export)) as run:
+                got = [agent.opencode_key(name) for name in ("deepseek", "groq", "cerebras", "deepseek")]
+            self.assertEqual(got, [want, None, None, want])
+            self.assertEqual(run.call_count, runs)
+
     def test_purrs_own_defaults_load(self):
         defaults = tomllib.loads(settings.DEFAULTS.read_text())
         self.assertEqual({p for p, v in defaults["providers"].items() if v.get("discover")},

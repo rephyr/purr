@@ -213,6 +213,10 @@ def main():
         ui.say(ui.MINT if picked else ui.DIM, f"  all set ♡ purr starts on {picked}" if picked else "  nothing changed")
         return 0
     if sys.argv[1:2] == ["bench"]:  # purr bench: purr vs OpenCode on the same tasks (harness/bench.py)
+        if not (HERE / "bench" / "tasks").is_dir():  # its tasks live in the repo, not in the package
+            ui.say(ui.ROSE, "purr bench runs from a clone: git clone https://github.com/rephyr/purr && cd purr "
+                            "&& uv run purr bench")
+            return 1
         from harness import bench
         window = sys.stdout.isatty() and sys.stdin.isatty() and "--plain" not in sys.argv
         if window:
@@ -223,7 +227,8 @@ def main():
                     os.execv(VENV_PYTHON, [str(VENV_PYTHON), __file__, *sys.argv[1:]])
                 window = False
         return bench.main(sys.argv[2:], settings.load(), window=window)
-    ap = argparse.ArgumentParser(prog="purr", description="tiny coding agent")
+    ap = argparse.ArgumentParser(prog="purr", description="tiny coding agent",
+                                 epilog="purr setup: the setup window again · purr bench: purr vs OpenCode (from a clone)")
     ap.add_argument("folder", nargs="?", default=".", help="project folder (default: here)")
     ap.add_argument("-m", "--model", help="model name (/models lists them)")
     ap.add_argument("-p", "--prompt", help="do one task and exit (plain mode)")
@@ -284,6 +289,9 @@ def main():
         agent = Agent(config, args.folder, model_name, view)
     except KeyError as e:
         ui.say(ui.ROSE, e.args[0])
+        if not args.model and not any(m.get("found") for m in config["models"].values()):
+            ui.say(ui.DIM, f"  no local model found ({config['providers']['ollama']['base_url']}, llama.cpp, LM Studio, "
+                           "vLLM) and no API key: `purr setup` walks you through it, or `purr --key groq` for a free key")
         return 1
     agent.tools.trust_all = args.yes
     agent.time_limit = args.time_limit

@@ -82,7 +82,7 @@ class MinimalAgentTest(unittest.TestCase):
         self.assertEqual(results, ["one\n[exit code: 0]", "/tmp\n[exit code: 0]"])  # the same shell
         users = [m["content"] for m in a.messages if m["role"] == "user"]
         self.assertEqual(users, ["do the task"])  # no time note, probe, reminder or final check
-        a.shell.close()
+        a._bash.close()
 
     def test_every_steps_thinking_goes_back(self):
         for agent in (minimal_agent(), minimal_agent(minimal=False, keep_reasoning="all")):
