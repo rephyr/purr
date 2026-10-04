@@ -499,6 +499,7 @@ class Agent:
         self.stop_flag = False  # the TUI sets this to stop an answer (plain mode uses ctrl+c)
         self.tools.code_checks = config.get("code_checks", True)
         self.tools.read_before_edit = config.get("read_before_edit", True)
+        self.tools.hidden_fn = lambda: self.hidden_tools  # "no tool called X" lists only what it has
         self.tools.bench_guard = bool(config.get("bench_guard"))  # benchmark runs: no looking the benchmark up
         self._hide_terminal = None  # one-shot runs on a small context: decided once from the task
         self.mode = "code"       # code, ask, learn, pair, plan, chat or create (MODES)
