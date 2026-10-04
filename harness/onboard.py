@@ -142,13 +142,7 @@ def custom_provider(name, base_url, key=None, models=(), context=131072):
 def recommend(config):
     """The model to start on: a local one with room for an agent (free, private), else the first API
     model you have a key for, else None."""
-    models = config["models"]
-    local = sorted((n for n, m in models.items() if m.get("found") and m.get("context", 0) >= AGENT_CONTEXT),
-                   key=lambda n: -models[n]["context"])
-    if local:
-        return local[0]
-    return next((n for n, m in models.items() if not m.get("router") and not m.get("found")
-                 and settings.usable(config, n)), None)
+    return next((name for name, _ in usable_models(config)), None)
 
 
 def usable_models(config):

@@ -31,6 +31,7 @@ from tui.workbench import Workbench
 from harness.agent import MODES as MODE_NAMES
 from harness.agent import STATE_DIR, Agent, list_sessions
 from harness.tools import files_under
+from tui.window import gone
 
 HISTORY = STATE_DIR / "history"
 
@@ -715,7 +716,7 @@ class PurrApp(App):
         self.tick()
 
     def tick(self):
-        if not self.screen.query("#prompt"):  # quitting: the widgets are gone (a test once failed on it)
+        if gone(self, "#prompt"):
             return
         if self.busy:
             self.busy_since = self.busy_since or time.monotonic()
