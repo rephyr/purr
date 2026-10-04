@@ -12,6 +12,15 @@ from harness.agent import STATE_DIR
 from tui import cat, themes
 
 
+def gone(app, widget):
+    """The app is closing: its widget is gone, or there's no screen left at all (a timer can still
+    fire then, and querying raised; tests failed on it now and then)."""
+    try:
+        return not app.screen.query(widget)
+    except Exception:  # noqa: BLE001 - ScreenStackError and friends: closing either way
+        return True
+
+
 class BenchWindow(App):
     def __init__(self, config):
         super().__init__()
@@ -41,9 +50,9 @@ class BenchWindow(App):
         self.cat_mood, self.cat_detail = mood, detail
         self.cat_until = time.monotonic() + hold if hold else 0.0
 
-    def closing(self):
+    def closing(self, widget="#benchcat"):
         """True once the widgets are gone (quitting): timers must not touch them then."""
-        return not self.screen.query("#benchcat")
+        return gone(self, widget)
 
     @staticmethod
     def open_path(path):

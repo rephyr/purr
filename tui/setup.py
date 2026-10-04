@@ -463,7 +463,7 @@ class SetupApp(BenchWindow):
     # ---- Mochi ----
 
     def tick(self):
-        if not self.screen.query("#title"):  # quitting: the widgets are gone
+        if self.closing("#title"):
             return
         self.cat_tick += 1
         if self.cat_until and time.monotonic() > self.cat_until:
