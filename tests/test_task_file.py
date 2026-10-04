@@ -71,12 +71,12 @@ class MadeUpToolTest(unittest.TestCase):
         from tests.test_limits import agent, reply, scripted
         a = agent()
         Path(a.root, "notes.txt").write_text("hello\n")
-        calls = scripted(a, [reply("", tool=("objdump", {"file": "a.out"})), reply("", tool=("readdir?", {})),
+        calls = scripted(a, [reply("", tool=("frobnicate_zz", {"file": "a.out"})), reply("", tool=("readdir?", {})),
                              reply("", tool=("search", {"pattern": "hello"})), reply("done")])
         a.turn("look around")
         self.assertEqual(calls["n"], 4)  # every step happened: nothing crashed
         results = [m["content"] for m in a.messages if m["role"] == "tool"]
-        self.assertIn("no tool called objdump", results[0])
+        self.assertIn("no tool called frobnicate_zz", results[0])  # not a program either (objdump now runs)
         self.assertIn("notes.txt", results[2])  # search is grep
         self.assertFalse(a._acted)            # looking around isn't doing things
 
