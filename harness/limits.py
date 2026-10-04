@@ -47,6 +47,9 @@ class Limits:
     # purr's training wheels: "full" for local models (auto-refine, checkpoints, step backs, edge cases in the
     # final check), "light" for API models, which bench showed don't need them (just slower)
     helpers: str = "full"
+    # lines around an edit shown in its result (and older reads of the file marked stale), so a small
+    # model needn't re-read the file to see what it just did; 0 = off (big models)
+    edit_window: int = 0
 
     @classmethod
     def for_model(cls, model):
@@ -68,6 +71,7 @@ class Limits:
             # and a helper is just the same small model with an empty memory
             hidden_tools=("fetch_url", "task") if context <= 65_536 else (),
             helpers="full" if model.get("provider") in LOCAL or context <= 65_536 else "light",
+            edit_window=40 if context <= 65_536 else 0,
         )
         overrides = model.get("limits") or {}
         known = {f.name for f in dataclasses.fields(cls)}
