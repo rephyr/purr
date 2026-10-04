@@ -441,9 +441,23 @@ class Tools:
             return "\n".join(lines[:most]) + f"\n[{len(lines) - most} more matches]"
         return "\n".join(lines)
 
+    def _benchmark_lookup(self, text):
+        """In a benchmark run: the refusal for a call that would look up the benchmark itself, or None."""
+        if not getattr(self, "bench_guard", False):
+            return None
+        from harness import benchguard
+        name = benchguard.lookup(text)
+        if not name:
+            return None
+        self.repairs.append("looked up the benchmark itself -> refused")
+        return benchguard.REFUSAL.format(name=name)
+
     def t_fetch_url(self, url):
         if getattr(self, "is_private", lambda: False)():
             return "error: private mode: no web (nothing leaves this computer)"
+        refused = self._benchmark_lookup(f"https://{url}" if "://" not in url else url)
+        if refused:
+            return refused
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (purr coding agent)"})
@@ -602,6 +616,9 @@ class Tools:
                 "part that needs changing. (If this really is what you want, send the same write again.)")
 
     def t_run(self, command, timeout=120):
+        refused = self._benchmark_lookup(command)
+        if refused:
+            return refused
         ok, reason = self._run_allowed(command)
         if not ok:
             return self._refused(reason)
@@ -636,6 +653,9 @@ class Tools:
             if action not in ("start", "send"):
                 return "error: action is start, send, read, stop or list"
             what = command if action == "start" else (text or " ".join(keys or []))
+            refused = self._benchmark_lookup(what or "")
+            if refused:
+                return refused
             ok, reason = self._allowed("terminal", f"terminal {action} ({name}): {what or 'a shell'}")
             if not ok:
                 return self._refused(reason)

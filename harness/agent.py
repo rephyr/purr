@@ -25,7 +25,7 @@ from .prompts import (  # noqa: F401 - the words purr says; some only re-exporte
     TIME_NOTES, CUT_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK,
     ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
-    ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT,
+    ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT, GAP_NUDGE,
 )
 from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, run_shell, schemas
 
@@ -91,6 +91,11 @@ SYSTEM_DIRS = {"bin", "boot", "dev", "etc", "home", "lib", "lib64", "opt", "proc
 INTERACTIVE = re.compile(r"\b(ssh|qemu|vm|repl|interactive|tmux|telnet|gdb)\b", re.I)
 
 # a final reply that hands a choice back to someone who isn't there
+# the final reply admits part of the work isn't done (harness: _admitted_gap)
+GAP = re.compile(r"\b(best[- ]effort|best guess|not (?:been )?verified|unverified|couldn'?t (?:get|make|verify|find a way)|"
+                 r"could not (?:get|make|verify)|unable to|a stub\b|placeholder|not the real|falls? short|short of the|"
+                 r"below the (?:required|target|threshold)|didn'?t (?:reach|meet|pass|finish)|"
+                 r"known (?:issue|limitation|gap)|likely (?:garbled|wrong|incorrect)|can'?t (?:certify|confirm|verify))", re.I)
 HEDGE = re.compile(r"say so|tell me if|if you'?d (rather|prefer|like)|if you (want|prefer|intended)|"
                    r"say the word|shall i|want me to|judge?ment call", re.I)
 
@@ -494,6 +499,7 @@ class Agent:
         self.stop_flag = False  # the TUI sets this to stop an answer (plain mode uses ctrl+c)
         self.tools.code_checks = config.get("code_checks", True)
         self.tools.read_before_edit = config.get("read_before_edit", True)
+        self.tools.bench_guard = bool(config.get("bench_guard"))  # benchmark runs: no looking the benchmark up
         self._hide_terminal = None  # one-shot runs on a small context: decided once from the task
         self.mode = "code"       # code, ask, learn, pair, plan, chat or create (MODES)
         self.mode_model = {}     # mode -> the model it had last (switch_mode)
@@ -1433,6 +1439,8 @@ class Agent:
         self._background = False  # started something that should keep running (a terminal, cmd &)
         self._hedged = False   # one-shot: told once that nobody will answer its question
         self._evidence = False  # one-shot: the second look (EVIDENCE_PASS) at most once
+        self._gap_said = False  # one-shot: an admitted gap sent back at most once
+        self._disk_before = self._disk_snapshot() if self.one_shot and not self.helper else None
         self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
         self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
 
@@ -1513,8 +1521,29 @@ class Agent:
     def _one_more_look(self, reply_text):
         """The model wants to stop: every check that may send it back once, in order. True when one
         did (the turn goes on). One place, so a new check can't end up in only one of the stops."""
-        return (self._final_check(reply_text) or self._evidence_pass() or self._review()
-                or self._learn_check() or self._hedge(reply_text))
+        return (self._final_check(reply_text) or self._admitted_gap(reply_text) or self._evidence_pass()
+                or self._review() or self._learn_check() or self._hedge(reply_text))
+
+    def _admitted_gap(self, reply):
+        """A one-shot run whose final reply says part of the work isn't done ("best guess", "a stub",
+        "not verified", "falls short of 0.62") goes back once to close it, while there's time.
+        Returns True when it asked."""
+        if not (self.one_shot and self.coding) or self.helper or getattr(self, "_gap_said", True) or not reply:
+            return False
+        m = GAP.search(reply[-1500:])
+        left = self._minutes_left()
+        if not m or (left is not None and left < 2):
+            return False
+        self._gap_said = True
+        tail = reply[-1500:]
+        start = max(tail.rfind(".", 0, m.start()), tail.rfind("\n", 0, m.start())) + 1
+        ends = [i for i in (tail.find(".", m.end()), tail.find("\n", m.end())) if i != -1]
+        quote = " ".join(tail[start:min(ends) if ends else len(tail)].split())[:200]
+        self.tools.repairs.append("final reply admitted unfinished work -> sent back to finish it")
+        self.view.note("♡ the reply says part isn't done: back to it")
+        self.messages.append({"role": "user", "content": GAP_NUDGE.format(
+            quote=quote, time=f" You have about {left} minutes." if left else "")})
+        return True
 
     def _after_turn(self, turn_cost):
         """The turn is over: save, show the numbers, and what's next in pair and learn mode."""
@@ -1566,10 +1595,43 @@ class Agent:
         names = [os.path.relpath(p, self.root) if self.root in p.parents else str(p) for p in new]
         return SCRATCH_NOTE.format(files=", ".join(sorted(names)[:15]) + (" …" if len(names) > 15 else ""))
 
+    SNAPSHOT_SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", ".purr", ".cache", "dist", "build"}
+
+    def _disk_snapshot(self, limit=20000):
+        """{path: (mtime, size)} of the project's files at the start of a one-shot run, so the review
+        also sees files that commands made or changed (cp, a script, a build), not only edits."""
+        snap = {}
+        for dirpath, dirnames, filenames in os.walk(self.root):
+            dirnames[:] = [d for d in dirnames if d not in self.SNAPSHOT_SKIP]
+            for name in filenames:
+                p = Path(dirpath, name)
+                try:
+                    st = p.stat()
+                except OSError:
+                    continue
+                snap[p] = (st.st_mtime, st.st_size)
+                if len(snap) >= limit:
+                    return snap
+        return snap
+
     def _change_diff(self, budget):
-        """The files this run changed, as a unified diff, at most `budget` characters."""
+        """The files this run changed, as a unified diff, at most `budget` characters: edits with their
+        before, and files commands made or changed (their start, marked so)."""
         parts = []
-        for path, before in self.tools.session_changes().items():
+        edited = self.tools.session_changes()
+        before_disk = getattr(self, "_disk_before", None)
+        if before_disk is not None:
+            for path, (mtime, size) in self._disk_snapshot().items():
+                if path in edited or before_disk.get(path) == (mtime, size) or size > 200_000:
+                    continue
+                try:
+                    text = path.read_text(errors="strict")
+                except (OSError, UnicodeDecodeError):
+                    continue  # binary: nothing a reader can compare
+                name = os.path.relpath(path, self.root)
+                what = "changed by a command" if path in before_disk else "made by a command"
+                parts.append(f"--- {name} ({what}; its start)\n" + "".join(text.splitlines(True)[:60]))
+        for path, before in edited.items():
             try:
                 after = path.read_text(errors="replace") if path.exists() else ""
             except OSError:
@@ -1578,7 +1640,7 @@ class Agent:
             diff = "".join(difflib.unified_diff((before or "").splitlines(True), after.splitlines(True),
                                                 f"a/{name}", f"b/{name}", n=2))
             parts.append(diff[:max(2000, budget // 4)])
-        return "".join(parts)[:budget]
+        return "".join(parts[::-1])[:budget]  # edits first (they carry their before), then the rest
 
     def _review(self):
         """Once, before a one-shot run finishes: a call that sees only the request and the diff.
@@ -1606,13 +1668,14 @@ class Agent:
         return True
 
     def _evidence_pass(self):
-        """After the check, a one-shot run that wants to stop with more than half its time left gets
-        one more look (once). Returns True when it asked."""
+        """After the check, a one-shot run that wants to stop with 30% or more of its time left gets
+        one more look (once). It was half: most runs that stopped early with a fragile result had
+        less than that left, so the look never came. Returns True when it asked."""
         if not (self.one_shot and self._checked and self.time_limit) or self._evidence or self.helper:
             return False
         left = self._minutes_left()
         total = max(1, round(self.time_limit / 60))
-        if not left or left * 2 < total:
+        if not left or left < 3 or left * 10 < total * 3:
             return False
         self._evidence = True
         self.view.note("♡ plenty of time left: one more look, with evidence for every requirement")
