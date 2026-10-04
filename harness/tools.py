@@ -310,8 +310,16 @@ class Tools:
         mcp = getattr(self, "mcp", None)
         if fn is None and mcp and mcp.has(wanted):  # a tool from an MCP server ([mcp.*] in config.toml)
             return self._mcp_call(wanted, args)
+        if fn is None and not self.read_only and not self.no_tools:
+            command = self._as_command(wanted, args)
+            if command:  # objdump, size...: a program on this machine, called as if it were a tool
+                self.repairs.append(f"tool {wanted} -> run {command[:60]}")
+                return self.call("run", json.dumps({"command": command}))
         if fn is None or (self.read_only and name not in READ_ONLY):
-            return self._failed(wanted, args, f"error: there is no tool called {wanted}")
+            hidden = set(getattr(self, "hidden_fn", lambda: ())())  # what this model isn't offered
+            have = sorted((TOOL_NAMES - hidden) if not self.read_only else READ_ONLY - hidden)
+            return self._failed(wanted, args, f"error: there is no tool called {wanted}. The tools: {', '.join(have)}"
+                                + ("" if self.read_only else "; programs and shell commands go through run"))
         if self.no_tools:
             return f"error: no tools in this mode ({name} can't run)"
         self.view.activity(name, self.summary(name, args)[len(name):].strip())
@@ -333,6 +341,20 @@ class Tools:
         if name != "todo":
             self.view.tool_result(name, args, result)  # the exact call and what the model got back
         return result
+
+    def _as_command(self, name, args):
+        """A made-up tool that is really a program on this machine (gpt-oss called objdump and size
+        as tools): the shell command it meant, or None. Its arguments become the command line."""
+        import shlex
+        import shutil as sh
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name or "") or not sh.which(name):
+            return None
+        rest = next((args[k] for k in ("command", "args", "arguments", "cmd", "argv", "options") if k in args), None)
+        if isinstance(rest, list):
+            rest = " ".join(shlex.quote(str(x)) for x in rest)
+        elif rest is None:
+            rest = " ".join(shlex.quote(str(v)) for v in args.values() if isinstance(v, (str, int, float)))
+        return f"{name} {rest}".strip()
 
     def spill(self, name, text):
         """Keep a whole tool result in a file of its own (SPILL_DIR); returns its path, or None in
