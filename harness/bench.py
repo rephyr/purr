@@ -93,10 +93,25 @@ def grade(task, work):
     return max(0, total - wrong), total, syntax
 
 
-def outside(args, work):
+TMPS = {Path("/tmp").resolve(), Path(tempfile.gettempdir()).resolve()}
+
+
+def scratch(p):
+    """The temp folder entry `p` is in, if it's a model's own scratch there (DeepSeek tests its work
+    from /tmp/verify.py): fine to use, and the bench removes it after the run so the next harness
+    can't read it. None for anything else, like another bench run's purr-bench-* folder."""
+    for tmp in TMPS:
+        if tmp in p.parents:
+            top = tmp / p.relative_to(tmp).parts[0]
+            return None if top.name.startswith("purr-bench-") else top
+    return None
+
+
+def outside(args, work, made=None):
     """Where a tool call's absolute paths point: "outside" if one is a real place outside the
     task's copy (the run doesn't count), "made up" if one doesn't exist at all (a hallucinated
-    path: a mistake, but nothing outside was touched), else None. System paths are fine."""
+    path: a mistake, but nothing outside was touched), else None. System paths and scratch in the
+    temp folder are fine; the scratch is added to `made`."""
     found = None
     home = work.resolve()
     if home.parent.is_dir() and [p.name for p in home.parent.iterdir()] == [home.name]:
@@ -114,6 +129,10 @@ def outside(args, work):
                 continue
             if str(p).startswith(("/dev", "/usr", "/bin", "/proc", "/etc")):
                 continue  # /usr/bin/python3 and friends are fine
+            if p in TMPS or (top := scratch(p)):
+                if p not in TMPS and made is not None:
+                    made.append(str(top))
+                continue
             if p.exists():
                 return "outside"
             found = "made up"
@@ -165,7 +184,7 @@ class BenchView:
     def tool_result(self, name, args, result):
         _live("result", _short(result))
         self.r["tool_calls"] += 1
-        where = outside(args, self.work)
+        where = outside(args, self.work, self.r.setdefault("scratch", []))
         if where == "outside":
             self.r["left_folder"] += 1
         elif where == "made up" and (result or "").startswith("error"):
@@ -388,7 +407,7 @@ def run_opencode(config, model, task, work, log_dir, timeout):
         elif kind == "tool_use":
             r["tool_calls"] += 1
             tool, state = part.get("tool", ""), part.get("state") or {}
-            where = outside(state.get("input") or {}, work)
+            where = outside(state.get("input") or {}, work, r.setdefault("scratch", []))
             if where == "outside":
                 r["left_folder"] += 1
             elif where == "made up" and state.get("status") == "error":
@@ -662,6 +681,7 @@ def run_all(config, models, tasks, harnesses, runs, timeout, out_dir, events):
                     # to other runs it could find their answers (an OpenCode run once read purr's
                     # solution from the folder beside it). Its files are kept in w/NN afterwards.
                     sandbox = Path(tempfile.mkdtemp(prefix="purr-bench-"))
+                    tmp_before = {p for tmp in TMPS for p in tmp.iterdir()}
                     work = sandbox / task["name"]
                     shutil.copytree(task["dir"] / "files", work)
                     kept = out_dir / "w" / f"{n:02d}" / task["name"]
@@ -683,6 +703,11 @@ def run_all(config, models, tasks, harnesses, runs, timeout, out_dir, events):
                     shutil.copytree(work, kept, symlinks=True)  # keep what it did, then tidy up
                     (run_dir / "work").symlink_to(kept)
                     shutil.rmtree(sandbox, ignore_errors=True)
+                    for p in map(Path, set(r.pop("scratch", [])) - set(map(str, tmp_before))):
+                        if p.is_dir() and not p.is_symlink():  # only what this run made in /tmp
+                            shutil.rmtree(p, ignore_errors=True)
+                        elif p.exists() or p.is_symlink():
+                            p.unlink()
                     r["run"] = run + 1
                     results.append(r)
                     events("done", {"n": n, "total": total, "result": r})
