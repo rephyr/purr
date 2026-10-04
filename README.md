@@ -5,7 +5,7 @@
 A cute coding agent for your terminal, built to get more out of **small local models** on long,
 vague tasks. Works with API models too.
 
-![purr fixing a bug with Qwen3.6 on a local GPU (2x speed)](docs/demo.gif)
+![purr fixing a bug with Qwen3.6 on a local GPU (2x speed)](https://raw.githubusercontent.com/rephyr/purr/main/docs/demo.gif)
 
 ## Install
 
@@ -96,14 +96,15 @@ fetches, and to GitHub for Godot docs. Chats are saved on your machine (`~/.loca
 
 ## Benchmarks
 
-On Terminal-Bench's quick set (DeepSeek V4.1 Flash, one try each), purr solved **16 of 17** tasks
-and OpenCode **14**. Published runs: [benchmarks/](benchmarks/) · how they're run: [docs/benchmarks.md](docs/benchmarks.md).
+Terminal-Bench 2.1 with DeepSeek V4.1 Flash, one try per task: purr **82.0% ± 4.1**. The scores other
+harnesses reported with the same model, and every purr run, are in [benchmarks/](https://github.com/rephyr/purr/blob/main/benchmarks/terminal-bench/);
+how they're run: [docs/benchmarks.md](https://github.com/rephyr/purr/blob/main/docs/benchmarks.md). Local-model results are coming.
 
 ## More
 
-- [docs/guide.md](docs/guide.md): every command, mode and setting
-- [packaging/](packaging/): releases, PyPI, the AUR
-- [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
+- [docs/guide.md](https://github.com/rephyr/purr/blob/main/docs/guide.md): every command, mode and setting
+- [packaging/](https://github.com/rephyr/purr/blob/main/packaging/): releases, PyPI, the AUR
+- [CONTRIBUTING.md](https://github.com/rephyr/purr/blob/main/CONTRIBUTING.md) · [CHANGELOG.md](https://github.com/rephyr/purr/blob/main/CHANGELOG.md)
 - Tests: `uv sync && uv run python -m unittest discover -s tests -t .` (no model is called)
 
 MIT licensed.
