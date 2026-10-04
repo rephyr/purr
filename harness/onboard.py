@@ -63,7 +63,7 @@ def key_source(provider):
 def api_providers(config):
     """[(name, provider)] that need a key, the paid ones first, then the free tiers."""
     items = [(n, p) for n, p in config.get("providers", {}).items() if p.get("api_key_env")]
-    return sorted(items, key=lambda item: bool(item[1].get("key_page")))
+    return sorted(items, key=lambda item: bool(item[1].get("free_tier")))
 
 
 def check_key(provider, key, timeout=15):

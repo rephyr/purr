@@ -79,6 +79,7 @@ discover = "openai"
 [providers.deepseek]
 base_url = "https://api.deepseek.com"
 api_key_env = "DEEPSEEK_API_KEY"
+key_page = "https://platform.deepseek.com/api_keys"
 opencode_auth = "deepseek"  # no env variable? use the key from `opencode auth login deepseek`
 # DeepSeek wants its thinking text sent back on every turn when tools are used (400 error otherwise).
 echo_reasoning = "reasoning_content"
@@ -88,6 +89,7 @@ peak_hours_utc = [[1, 4], [6, 10]]
 [providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
+key_page = "https://openrouter.ai/settings/keys"
 opencode_auth = "openrouter"  # same key OpenCode uses
 # Thinking models (DeepSeek, Kimi, GLM) want their thinking back when tools are used.
 echo_reasoning = "reasoning"
@@ -109,35 +111,41 @@ base_url = "https://api.groq.com/openai/v1"
 api_key_env = "GROQ_API_KEY"
 opencode_auth = "groq"
 key_page = "https://console.groq.com/keys"
+free_tier = true
 
 [providers.cerebras]
 base_url = "https://api.cerebras.ai/v1"
 api_key_env = "CEREBRAS_API_KEY"
 opencode_auth = "cerebras"
 key_page = "https://cloud.cerebras.ai"
+free_tier = true
 
 [providers.gemini]
 base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 api_key_env = "GEMINI_API_KEY"
 opencode_auth = "google"
 key_page = "https://aistudio.google.com/apikey"
+free_tier = true
 
 [providers.mistral]
 base_url = "https://api.mistral.ai/v1"
 api_key_env = "MISTRAL_API_KEY"
 opencode_auth = "mistral"
 key_page = "https://console.mistral.ai/api-keys"
+free_tier = true
 
 [providers.nvidia]
 base_url = "https://integrate.api.nvidia.com/v1"
 api_key_env = "NVIDIA_API_KEY"
 key_page = "https://build.nvidia.com (sign in, then Get API Key on any model)"
+free_tier = true
 
 [providers.cohere]
 base_url = "https://api.cohere.ai/compatibility/v1"
 api_key_env = "COHERE_API_KEY"
 opencode_auth = "cohere"
 key_page = "https://dashboard.cohere.com/api-keys"
+free_tier = true
 
 
 # ---- DeepSeek (paid, needs DEEPSEEK_API_KEY) ----

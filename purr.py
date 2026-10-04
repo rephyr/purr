@@ -206,6 +206,9 @@ def run_setup():
 
 def main():
     if sys.argv[1:2] == ["setup"]:  # purr setup: local models, API keys, your model, the cat
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            ui.say(ui.ROSE, "purr setup is a window: run it in a terminal (or `purr --key <provider>` for a key)")
+            return 1
         if not full_screen_python():
             ui.say(ui.ROSE, "the setup window needs Textual (uv sync in purr's folder)")
             return 1

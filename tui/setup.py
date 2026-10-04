@@ -5,6 +5,7 @@ server), the model to start on, and the cat. Nothing is saved until the end; the
 The work itself is harness/onboard.py; this only shows it.
 """
 
+import os
 import time
 
 from rich.text import Text
@@ -197,9 +198,11 @@ class SetupApp(BenchWindow):
         t = Text()
         if not found:
             t.append("no local model server is running right now\n\n", style=f"bold {PEACH}")
-            t.append("that's fine: add an API provider next. For free local models, get Ollama\n"
-                     "(ollama.com) and `ollama pull` a model with tool calling (Qwen, Gemma, gpt-oss...):\n"
-                     "purr finds it by itself the next time it starts.", style=TEXT)
+            where = os.environ.get("OLLAMA_HOST")
+            t.append((f"(nothing answered at OLLAMA_HOST={where})\n" if where else "")
+                     + "that's fine: add an API provider next. For free local models, get Ollama\n"
+                     "(ollama.com) and `ollama pull` a model with tool calling (Qwen, Gemma, gpt-oss...),\n"
+                     "then press look again.", style=TEXT)
             self.mood("purring", "nothing local yet, the API is fine too", hold=3, label=f"{self.name_} looked everywhere")
         for provider, models in found.items():
             t.append(f"{names.get(provider, provider)} ", style=f"bold {PINK}")
@@ -256,7 +259,7 @@ class SetupApp(BenchWindow):
             line = Text(no_wrap=True)
             line.append("✓ " if have else "  ", style=MINT)
             line.append(f"{name:<12}", style=f"bold {TEXT}" if have else TEXT)
-            line.append("free tier" if p.get("key_page") else "", style=MINT)
+            line.append("free tier" if p.get("free_tier") else "", style=MINT)
             options.add_option(Option(line, id=name))
         options.add_option(Option(Text("＋ your own (any OpenAI-compatible)", style=LILAC), id=OWN))
         options.highlighted = 0
@@ -288,8 +291,7 @@ class SetupApp(BenchWindow):
             info.append(f"{p['base_url']}\n", style=DIM)
             if have:
                 info.append(f"✓ purr has its key ({have}). Paste another to replace it.\n", style=MINT)
-            page = p.get("key_page") or {"deepseek": "https://platform.deepseek.com/api_keys",
-                                         "openrouter": "https://openrouter.ai/settings/keys"}.get(name)
+            page = p.get("key_page")
             if page:
                 info.append("get a key: ", style=TEXT)
                 info.append(page, style=f"underline {LILAC}")
