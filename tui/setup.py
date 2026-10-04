@@ -57,6 +57,12 @@ Input:focus { border: round $pink; }
 #pages Button { margin-left: 0; margin-right: 2; }
 .buttons { height: auto; }
 #setupcat { height: 3; margin-top: 1; }
+/* a small terminal (80x24): the steps list, subtitle and cat make room for the page */
+.small #setup { padding: 0 1; }
+.small #steps, .small #subtitle, .small #setupcat { display: none; }
+.small #pages { padding: 0 1; }
+.small #providers { width: 22; margin-right: 1; }
+.small #nav { margin-top: 0; }
 """
 
 
@@ -97,7 +103,7 @@ class SetupApp(BenchWindow):
                         yield Static("", id="api-lead", classes="lead")
                         with Horizontal(id="api-row"):
                             yield OptionList(id="providers")
-                            with Vertical(id="provider-side"):
+                            with VerticalScroll(id="provider-side"):
                                 yield Static("", id="provider-info")
                                 yield Input(placeholder="its address, like https://llm.example.com/v1", id="own-url")
                                 yield Input(placeholder="a short name for it", id="own-name")
@@ -123,6 +129,9 @@ class SetupApp(BenchWindow):
                 yield Button("back", id="back")
                 yield Button("next ✧", id="next")
             yield Static("", id="setupcat")
+
+    def on_resize(self, event):
+        self.screen.set_class(event.size.width < 110 or event.size.height < 34, "small")
 
     def on_mount(self):
         self.set_interval(0.12, self.tick)
@@ -211,7 +220,7 @@ class SetupApp(BenchWindow):
                 ctx = self.config["models"][name].get("context", 0)
                 small = ctx < onboard.AGENT_CONTEXT
                 t.append(f"  {'⚠' if small else '✓'} ", style=PEACH if small else MINT)
-                t.append(f"{name[:46]:<47}", style=DIM if small else TEXT)
+                t.append(f"{name[:34]:<35}", style=DIM if small else TEXT)
                 t.append(f"{ctx // 1024}k{' · too small for an agent' if small else ''}\n", style=PEACH if small else DIM)
             if len(models) > 14:
                 t.append(f"  … and {len(models) - 14} more\n", style=DIM)
@@ -251,15 +260,15 @@ class SetupApp(BenchWindow):
     def enter_api(self):
         self.query_one("#api-lead", Static).update(Text.assemble(
             ("models from an API need its key. ", TEXT), ("Pick one, paste the key, and purr checks it.\n", DIM),
-            ("free tier", MINT), (" ones need no card (rate-limited; some learn from free prompts).", DIM)))
+            ("free", MINT), (" ones need no card (rate-limited; some learn from free prompts).", DIM)))
         options = self.query_one("#providers", OptionList)
         options.clear_options()
         for name, p in onboard.api_providers(self.config):
             have = onboard.key_source(p)
             line = Text(no_wrap=True)
             line.append("✓ " if have else "  ", style=MINT)
-            line.append(f"{name:<12}", style=f"bold {TEXT}" if have else TEXT)
-            line.append("free tier" if p.get("free_tier") else "", style=MINT)
+            line.append(f"{name:<11}", style=f"bold {TEXT}" if have else TEXT)
+            line.append("free" if p.get("free_tier") else "", style=MINT)
             options.add_option(Option(line, id=name))
         options.add_option(Option(Text("＋ your own (any OpenAI-compatible)", style=LILAC), id=OWN))
         options.highlighted = 0
@@ -394,7 +403,7 @@ class SetupApp(BenchWindow):
         for i, (name, spec) in enumerate(usable):
             line = Text(no_wrap=True, overflow="ellipsis")
             line.append("★ " if name == best else "  ", style=PINK)
-            line.append(f"{name[:40]:<41}", style=f"bold {TEXT}" if name == best else TEXT)
+            line.append(f"{name[:34]:<35}", style=f"bold {TEXT}" if name == best else TEXT)
             kind = ui.cost_kind(spec)
             line.append(f"{kind:<6}", style=MINT if kind in ("local", "free") else PEACH)
             line.append(f" {spec.get('context', 0) // 1024}k · {spec['provider']}", style=DIM)
@@ -454,6 +463,8 @@ class SetupApp(BenchWindow):
     # ---- Mochi ----
 
     def tick(self):
+        if not self.screen.query("#title"):  # quitting: the widgets are gone
+            return
         self.cat_tick += 1
         if self.cat_until and time.monotonic() > self.cat_until:
             self.mood("watching", "", label=f"{self.name_} is helping you set up")
