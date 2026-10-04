@@ -1,6 +1,4 @@
 """Learn mode: purr writes the boring parts and leaves TODO(you) pieces for the user.
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -95,7 +93,3 @@ class LearnTest(unittest.TestCase):
         scripted(a, [reply("hi")])
         a.turn("hello")
         self.assertNotIn("still in the code", a.messages[1]["content"])
-
-
-if __name__ == "__main__":
-    unittest.main()

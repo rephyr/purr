@@ -1,8 +1,6 @@
 """From two full Terminal-Bench 2.1 runs: no looking the benchmark up (harness/benchguard.py), an
 admitted gap goes back to be closed, the grader's yardstick in the final check, evidence that
 isn't the model's own, and a review that sees what commands made.
-
-Run: python3 -m unittest discover tests
 """
 
 import json
@@ -122,7 +120,3 @@ class ReviewSeesCommandsTest(unittest.TestCase):
         self.assertIn("made.sh (made by a command; its start)", diff)
         self.assertIn("echo hello", diff)
         self.assertNotIn("old.txt", diff)
-
-
-if __name__ == "__main__":
-    unittest.main()

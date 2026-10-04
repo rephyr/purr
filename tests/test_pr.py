@@ -1,6 +1,4 @@
 """Tests for /pr (no model, no GitHub: a local folder plays "origin").
-
-Run: python3 -m unittest discover tests
 """
 
 import os
@@ -77,7 +75,3 @@ class PRTest(unittest.TestCase):
 
     def test_slug(self):
         self.assertEqual(pr.slug("Fix: happy-hour discount (20%)!"), "purr/fix-happy-hour-discount-20")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -1,7 +1,5 @@
 """checks.test_command: purr runs a project's own tests at the final check, in every language a
 benchmark brings (DeepSWE: TypeScript, Go, Python, Rust, JavaScript).
-
-Run: python3 -m unittest discover tests
 Nothing is run: these only check which command purr would choose.
 """
 
@@ -50,7 +48,3 @@ class TestCommandTest(unittest.TestCase):
     def test_a_project_setting_still_wins(self):
         root = project({"go.mod": "module x\n", ".purr/test_command": "go test ./pkg/...\n"})
         self.assertEqual(checks.test_command(root), "go test ./pkg/...")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -83,7 +83,3 @@ class BlindChecksTest(unittest.TestCase):
         a.turn("write 42 to out.txt")
         self.assertNotIn("independent reading", users(a)[0])
         self.assertFalse([u for u in users(a) if "independent reader wrote" in u])
-
-
-if __name__ == "__main__":
-    unittest.main()

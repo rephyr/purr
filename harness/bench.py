@@ -692,7 +692,7 @@ def run_all(config, models, tasks, harnesses, runs, timeout, out_dir, events):
     return results, summary
 
 
-def printer(events_total, watch=False):
+def printer(watch=False):
     """events() for the plain text mode. With watch, the runs' live stream is printed too."""
     label = {"live": None}
     looks = {"think": ui.DIM + "\033[3m", "text": ui.RESET, "tool": ui.LILAC, "result": ui.DIM,
@@ -959,7 +959,7 @@ def main(argv, config, window=False):
     ui.say(ui.DIM, f"\n  {len(models)} model(s) × {len(tasks)} tasks × {'+'.join(harnesses)}"
                    f"{f' × {args.runs} runs' if args.runs > 1 else ''} = {total} runs   → {out_dir}\n")
     try:
-        run_all(config, models, tasks, harnesses, args.runs, args.timeout, out_dir, printer(total, args.watch))
+        run_all(config, models, tasks, harnesses, args.runs, args.timeout, out_dir, printer(args.watch))
     except KeyboardInterrupt:
         STOP.set()
         ui.say(ui.ROSE, f"\n  stopped. finished runs are in {out_dir}")

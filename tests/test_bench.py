@@ -1,6 +1,4 @@
 """Tests for purr bench's grading (no model is called).
-
-Run: python3 -m unittest discover tests
 """
 
 import json
@@ -192,7 +190,3 @@ class PlayTest(unittest.TestCase):
         self.assertEqual([(r["model"], r["harness"], r["solved"]) for r in results], [("you", "human", False)])
         self.assertIn("crumbs add up to whole coins", out.getvalue())  # the failed hidden tests, by name
         self.assertEqual(opened, [("idle-catchup", "code")])  # VS Code opened the folder by itself
-
-
-if __name__ == "__main__":
-    unittest.main()

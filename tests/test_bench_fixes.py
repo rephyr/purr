@@ -1,8 +1,6 @@
 """What the first real Terminal-Bench run (0.3.1, 20 tasks) taught: one-shot runs check the spec
 before finishing, never hand a question to nobody, keep the request through a compaction, and
 don't trip over pipes, progress bars or the clock.
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -603,7 +601,3 @@ class ParallelLookTest(unittest.TestCase):
         a = agent()
         self.assertEqual(a._look_in_parallel(self.calls("read_file", "edit_file")), {})
         self.assertEqual(a._look_in_parallel(self.calls("read_file")), {})
-
-
-if __name__ == "__main__":
-    unittest.main()

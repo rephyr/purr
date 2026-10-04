@@ -1,7 +1,5 @@
 """Beyond coding (from Terminal-Bench): terminal sessions for interactive programs, servers that
 keep running, and images for models that can see.
-
-Run: python3 -m unittest discover tests
 No model is called; the sessions and commands are real.
 """
 
@@ -129,7 +127,3 @@ class ImageTest(unittest.TestCase):
         a = self.seeing_agent()
         (Path(a.root) / "notes.txt").write_text("hi")
         self.assertIn("isn't an image", a.tools.call("look_at_image", json.dumps({"path": "notes.txt"})))
-
-
-if __name__ == "__main__":
-    unittest.main()

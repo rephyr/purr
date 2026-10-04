@@ -1,6 +1,4 @@
 """/stats: fun numbers counted from saved chats.
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -84,7 +82,3 @@ class StatsTest(unittest.TestCase):
 
     def test_no_chats(self):
         self.assertIn("no chats yet", stats.report(stats.gather(tempfile.mkdtemp()))[0][1])
-
-
-if __name__ == "__main__":
-    unittest.main()

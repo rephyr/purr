@@ -1,6 +1,4 @@
 """The workbench (ctrl+t): the session's changes, the project tree and the small editor.
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -90,7 +88,3 @@ class WorkbenchTest(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("__pycache__", [n.data.path.name for n in tree.root.children if n.data])
             await pilot.press("escape")
             self.assertIsNot(app.screen, wb)
-
-
-if __name__ == "__main__":
-    unittest.main()

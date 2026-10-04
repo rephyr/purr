@@ -1,6 +1,4 @@
 """Tests for per-model limits, the loop guard, pruning old tool output and the compact transcript.
-
-Run: python3 -m unittest discover tests
 No model is called: the agent only talks to a fake view.
 """
 
@@ -394,7 +392,3 @@ class TranscriptTest(unittest.TestCase):
         self.assertLessEqual(len(text), a.limits.context * 2 + 200)
         self.assertTrue(text.startswith("USER: GOAL: make the cat purr"))
         self.assertIn("left out", text)
-
-
-if __name__ == "__main__":
-    unittest.main()

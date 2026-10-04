@@ -97,11 +97,13 @@ class FreeRouter:
             self._keys[name] = bool(provider_key(provider))
         return self._keys[name]
 
-    def is_resting(self, name, now=None):
-        now = now or time.time()
+    def _rest_of(self, name):
+        """The longer of the model's own rest and its provider's: {"until": ..., "why": ...} or {}."""
         provider = self.config["models"][name]["provider"]
-        return max(self.resting.get(name, {}).get("until", 0),
-                   self.resting.get(f"provider:{provider}", {}).get("until", 0)) > now
+        return max((self.resting.get(k, {}) for k in (name, f"provider:{provider}")), key=lambda r: r.get("until", 0))
+
+    def is_resting(self, name, now=None):
+        return self._rest_of(name).get("until", 0) > (now or time.time())
 
     def rest(self, name, seconds, why, scope="model"):
         key = f"provider:{self.config['models'][name]['provider']}" if scope == "provider" else name
@@ -123,9 +125,7 @@ class FreeRouter:
         """[(name, "ready" / "resting until 14:05: rate-limited")] in this mode's order."""
         now, out = time.time(), []
         for name in self.candidates(mode):
-            provider = self.config["models"][name]["provider"]
-            r = max((self.resting.get(k, {}) for k in (name, f"provider:{provider}")),
-                    key=lambda x: x.get("until", 0))
+            provider, r = self.config["models"][name]["provider"], self._rest_of(name)
             if not self.has_key(name):
                 out.append((name, f"no key (purr --key {provider})"))
             elif r.get("until", 0) > now:
@@ -137,9 +137,7 @@ class FreeRouter:
 
     def next_free_at(self, mode):
         """When the first model for this mode is back, as HH:MM."""
-        times = [max(self.resting.get(n, {}).get("until", 0),
-                     self.resting.get(f"provider:{self.config['models'][n]['provider']}", {}).get("until", 0))
-                 for n in self.candidates(mode) if self.has_key(n)]
+        times = [self._rest_of(n).get("until", 0) for n in self.candidates(mode) if self.has_key(n)]
         return datetime.datetime.fromtimestamp(min(times)).strftime("%H:%M") if times else "?"
 
 

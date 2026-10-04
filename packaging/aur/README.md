@@ -30,12 +30,7 @@ repos); Ollama, llama.cpp, git, gh, ripgrep, tmux, ruff are optional.
 
 ## Every release
 
-1. Bump `VERSION` in `harness/__init__.py` in a PR and merge it.
-2. On an up-to-date main: `packaging/aur/release.sh 0.5.0`. It tags `v0.5.0`, makes the GitHub
-   release, and fills purr-agent's PKGBUILD with the version and the tarball's checksum, and both
-   `.SRCINFO` files.
-3. Commit `packaging/aur/` (a PR, merged).
-4. `packaging/aur/publish.sh`: pushes both packages to the AUR (the first push creates them).
+See [../README.md](../README.md#a-release); `publish.sh` then pushes both packages to the AUR.
 
 After that: `yay -S purr-agent` (or `purr-agent-git`). To try a PKGBUILD before publishing:
 `cd packaging/aur/purr-agent && makepkg -si` builds and installs it (sudo asks for your password).

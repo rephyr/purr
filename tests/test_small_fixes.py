@@ -1,7 +1,5 @@
 """Small fixes from the code review: purr bench's failure count, a missing file's suggestion,
 an MCP server that crashed, one job per leaderboard submission.
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -85,7 +83,3 @@ class SubmissionFolderTest(unittest.TestCase):
             self.assertEqual(submit.main([str(later)]), 0)
         folder = out / "purr__deepseek-v4.1-flash"
         self.assertEqual(sorted(p.name for p in folder.iterdir() if p.is_dir()), [later.name])
-
-
-if __name__ == "__main__":
-    unittest.main()

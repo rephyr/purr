@@ -1,7 +1,5 @@
 """Pair mode: the model takes one small step, then hands the keyboard back; the user's own edits
 between turns are shown to the model.
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -78,7 +76,3 @@ class PairTest(unittest.TestCase):
         scripted(a, [reply("ok")])
         a.turn("go")
         self.assertNotIn("the user changed", str(a.messages[-2]["content"]))
-
-
-if __name__ == "__main__":
-    unittest.main()

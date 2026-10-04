@@ -1,6 +1,4 @@
 """tbench/fair.sh and tbench/local.sh: what they hand to Harbor, for each way of calling them.
-
-Run: python3 -m unittest discover tests
 Nothing is benchmarked: harbor, docker, curl and the helpers' python3 are fakes on PATH, and
 fair.sh's test request to OpenRouter is skipped (PURR_SKIP_PREFLIGHT=1).
 """
@@ -180,7 +178,3 @@ class LocalShTest(unittest.TestCase):
         rc, argv, err = run("local.sh", PURR_LOCAL_MODEL="ornith-9b-128k")
         self.assertEqual(rc, 0, err)
         self.assertEqual(after(argv, "-m"), "ollama/ornith-9b-128k")
-
-
-if __name__ == "__main__":
-    unittest.main()

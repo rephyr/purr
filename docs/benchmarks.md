@@ -81,6 +81,4 @@ final check, which purr leaves off for API models, to measure whether it helps h
 
 `run.sh` hands purr's saved OpenRouter key to Harbor and passes everything else to `harbor run`.
 Results land in `~/.local/state/purr/tbench/`, with purr's own log (`agent/purr.txt`) and saved
-chat (`agent/purr-state/`) per task. Terminal-Bench 4.0 is hard: 66 tasks, a median of 4 hours
-for a human expert, and 8 hours per task for agents (`--agent-timeout-multiplier 0.125` caps it
-at one).
+chat (`agent/purr-state/`) per task.

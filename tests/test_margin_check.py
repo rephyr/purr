@@ -81,7 +81,3 @@ class MarginFlowTest(unittest.TestCase):
         a, notes = run_and_finish("All done.", model="api", margin_check=False)
         self.assertEqual(notes, [])
         self.assertFalse(any("MEASURE name" in u for u in users(a)))
-
-
-if __name__ == "__main__":
-    unittest.main()

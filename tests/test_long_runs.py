@@ -1,7 +1,5 @@
 """Long one-shot runs (benchmarks, purr -p): time limits, commands that need longer, and the
 thinking that goes back to providers that want it.
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -117,7 +115,3 @@ class OneShotTest(unittest.TestCase):
         with mock.patch.object(Agent, "turn", lambda agent, text: seen.append(agent.one_shot)):
             bench.run_purr(CONFIG, "small", task, work, Path(tempfile.mkdtemp()), 600)
         self.assertEqual(seen, [True])
-
-
-if __name__ == "__main__":
-    unittest.main()

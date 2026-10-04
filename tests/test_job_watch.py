@@ -1,7 +1,5 @@
 """The job watch (harness/jobs.py): a background job's log read for progress, and a word when it
 won't finish in the time left or stopped moving; the pilot rule in the time note.
-
-Run: python3 -m unittest discover tests
 """
 
 import os
@@ -95,7 +93,3 @@ class AgentTest(unittest.TestCase):
         a.turn("say hi")
         self.assertIsNone(a.jobs)
         self.assertNotIn(prompts.PILOT, users(a)[0])
-
-
-if __name__ == "__main__":
-    unittest.main()

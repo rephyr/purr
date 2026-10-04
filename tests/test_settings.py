@@ -1,6 +1,4 @@
 """Settings in layers (harness/settings.py) and the local servers purr finds (harness/discover.py).
-
-Run: python3 -m unittest discover tests
 No real server is asked anything: discover._get is replaced by fake answers.
 """
 
@@ -173,7 +171,3 @@ class SettingsTest(unittest.TestCase):
         defaults = tomllib.loads(settings.DEFAULTS.read_text())
         self.assertEqual({p for p, v in defaults["providers"].items() if v.get("discover")},
                          {"ollama", "llamacpp", "lmstudio", "vllm"})
-
-
-if __name__ == "__main__":
-    unittest.main()
