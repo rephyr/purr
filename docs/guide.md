@@ -154,6 +154,12 @@ tool, and agents that may change things get code mode's checks. Agents you alrea
 Code** (`~/.claude/agents`) and **OpenCode** (`~/.config/opencode/agent`) work too, their tool names
 translated; they're a `/agent <name>` away rather than in the shift+tab cycle.
 
+## Private mode: `/private`
+
+`/private` starts a fresh chat on a local model only: no web (`fetch_url` is gone, the Godot docs
+lookup stays offline) and the chat isn't saved. `/private` again leaves it. purr never sends
+telemetry, private or not.
+
 ## Free models: `/model free`
 `/model free` lets purr pick the best free OpenRouter model for what you're doing, from the ranked
 lists in `[free]` in `harness/defaults.toml` (code: code/learn/pair/plan, ask, talk: chat/create), skipping
