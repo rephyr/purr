@@ -25,8 +25,6 @@ BODY:
 2 to 6 short lines: what changed and why, as a "- " list. Only say it was tested if the chat
 shows tests being run; never claim checks that didn't happen."""
 
-CO_AUTHOR_EMAIL = "purr@users.noreply.github.com"  # config.toml co_author_email overrides it
-
 
 def git(root, *args, check=False, timeout=60):
     r = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=timeout)
@@ -70,7 +68,7 @@ def draft(agent):
 
 def with_model(title, model):
     """"Fix the discount · qwen3-coder-32k": with squash merging the PR title becomes the commit
-    title on main, so the model shows in GitHub's top bar (the avatar can only say purr-harness)."""
+    title on main, so the model shows in GitHub's top bar (a co-author avatar can only say purr-<model>)."""
     return title if title.endswith(f"· {model}") else f"{title} · {model}"
 
 
@@ -108,13 +106,12 @@ def open_pr(root, config, model, title, body, new_branch=False, back=False):
             branch += "-2"
         git(root, "checkout", "-b", branch, check=True)
     try:
-        # GitHub shows a co-author's avatar when the email belongs to an account: give purr its own
-        # account with a cute picture and put its noreply email in config.toml (co_author_email)
-        email = config.get("co_author_email", CO_AUTHOR_EMAIL)
-        co_author = f"Co-Authored-By: purr-{model} <{email}>"
+        # a co-author only when you set one up (co_author_email): GitHub shows that account's avatar
+        email = config.get("co_author_email")
+        trailer = f"Model: {model}" + (f"\nCo-Authored-By: purr-{model} <{email}>" if email else "")
         title = with_model(title, model)
         git(root, "add", "-A", check=True)
-        git(root, "commit", "-m", title, "-m", body, "-m", f"Model: {model}\n{co_author}", check=True)
+        git(root, "commit", "-m", title, "-m", body, "-m", trailer, check=True)
         git(root, "push", "-u", "origin", branch, check=True, timeout=300)  # a slow network once took >60 s
         badge = config.get("co_author_github")  # its picture in the PR, if it has an account
         pic = f'<img src="https://github.com/{badge}.png" width="20" height="20"> ' if badge else "🐾 "
