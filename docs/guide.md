@@ -70,8 +70,8 @@ covers that kind of command only (`git status`, not all of git).
 Switch with **shift+tab** or `/mode chat` (your own agents come after these: see above). Each mode can bring its own model (`[mode_models]` in your config, e.g. code → a local Qwen, ask → DeepSeek Flash, chat and create → Kimi); a model you pick with `/model` in a mode sticks to it for the session, and a model with no key keeps the current one. Refine has the model rewrite your message into a clear
 task (Task / Where / Steps / Done when, from the project's file list) and shows it to you first:
 ctrl+s sends it, ctrl+o sends yours. `/refine auto` (the default) does that only for a short first
-message, a new task said in a few words, where it helped most in `purr bench` (Qwen3.6 IQ3 went
-from 3/5 to 5/5 hard tasks from vague asks); `/refine on` refines every message, `/refine off` none.
+message, a new task said in a few words, where it helped most in small `purr bench` runs with vague
+asks; `/refine on` refines every message, `/refine off` none.
 
 **The workbench** (ctrl+t, `/files`, or click a change card in the chat). Left: the files changed
 this session with their +/− counts, above the project tree where changed files glow. Right: a

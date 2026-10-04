@@ -534,7 +534,7 @@ class Agent:
         self._echo_all = False   # True once a provider refused trimmed thinking (_for_provider)
         self._bash = None        # minimal mode's bash session, opened by its first command
         # /refine: "auto" rewrites a short first message into a clear task (you approve it),
-        # "on" every message, "off" none. purr bench measured +2 solved hard tasks from vague asks.
+        # "on" every message, "off" none. It helped most on vague asks in (small) purr bench runs.
         # Unset, it follows the model (auto for local models, off for API ones); /refine or
         # refine = "..." in config.toml pins it.
         self.refine_pinned = config.get("refine") in REFINE_MODES
