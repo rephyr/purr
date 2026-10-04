@@ -1,7 +1,7 @@
 """/pr: turn the changes into a GitHub pull request.
 
 The model drafts a title and description from the diff and the chat; you check and edit them;
-only then does purr make a branch, commit (with "Co-Authored-By: purr-<model>"), push and run
+only then does purr make a branch, commit (with "Model: <model>", and a co-author if you set one), push and run
 `gh pr create`. Nothing leaves your machine before you say yes.
 """
 

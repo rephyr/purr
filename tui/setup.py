@@ -198,8 +198,8 @@ class SetupApp(BenchWindow):
         t = Text()
         if not found:
             t.append("no local model server is running right now\n\n", style=f"bold {PEACH}")
-            where = os.environ.get("OLLAMA_HOST")
-            t.append((f"(nothing answered at OLLAMA_HOST={where})\n" if where else "")
+            where = self.config["providers"]["ollama"]["base_url"] if os.environ.get("OLLAMA_HOST") else ""
+            t.append((f"(nothing answered at {where})\n" if where else "")
                      + "that's fine: add an API provider next. For free local models, get Ollama\n"
                      "(ollama.com) and `ollama pull` a model with tool calling (Qwen, Gemma, gpt-oss...),\n"
                      "then press look again.", style=TEXT)
@@ -337,7 +337,9 @@ class SetupApp(BenchWindow):
             models = onboard.list_models(url, key or None)
             error = None
         except Exception as e:  # noqa: BLE001 - any failure is shown, the setup goes on
-            models, error = [], str(getattr(e, "reason", e))[:120]
+            reason = getattr(e, "reason", e)
+            models, error = [], ("nothing is listening there (is the server running?)"
+                                 if isinstance(reason, (ConnectionRefusedError, TimeoutError)) else str(reason)[:120])
         self.call_from_thread(self.own_listed, models, error)
 
     def own_listed(self, models, error):
@@ -432,6 +434,7 @@ class SetupApp(BenchWindow):
         t.append("in purr: / opens the commands, shift+tab switches mode, /setup brings this back", style=DIM)
         self.query_one("#done-text", Static).update(t)
         self.mood("celebrating", "ready when you are", hold=10**9, label=f"{name} is ready ♡")
+        self.query_one("#next", Button).focus()  # enter starts purr, like enter moved on every step before
 
     def save_and_exit(self):
         theme = self.query_one("#themes", RadioSet).pressed_button

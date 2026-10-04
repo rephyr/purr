@@ -30,6 +30,7 @@ from tui import cat, diffview, statcard, themes
 from tui.workbench import Workbench
 from harness.agent import MODES as MODE_NAMES
 from harness.agent import STATE_DIR, Agent, list_sessions
+from harness.tools import files_under
 
 HISTORY = STATE_DIR / "history"
 
@@ -624,7 +625,7 @@ class PurrApp(App):
         try:
             self.agent = Agent(self.config, self.folder, self.model_name, self.view)
         except KeyError as e:
-            self.exit(1, message=e.args[0])
+            self.exit(return_code=1, message=e.args[0])
             return
         self.agent.tools.trust_all = self.trust
         self.chat = self.query_one("#chat", VerticalScroll)
@@ -644,6 +645,9 @@ class PurrApp(App):
                 self._load_session(sessions[0]["path"])
         self.refresh_info()
         self.set_status("")
+        if self.config.get("_missing_model") and self.model_name == self.config["default_model"]:
+            self.notify(f"your model {self.config['_missing_model']} isn't there now (is its server running?), "
+                        f"so purr is on {self.model_name}", severity="warning", timeout=10)
         self.prompt.focus()
         self.set_interval(0.12, self.tick)
         self._show_cat("greeting", "")  # a little wave hello as she wakes up
@@ -1649,9 +1653,8 @@ class PurrApp(App):
     def _file_items(self, query):
         if self.files is None:
             try:
-                res = subprocess.run(["rg", "--files"], cwd=self.agent.root, capture_output=True,
-                                     text=True, timeout=5)
-                files = [f for f in res.stdout.splitlines()[:20000]
+                root = self.agent.root
+                files = [os.path.relpath(f, root) for f in files_under(root)[:20000]
                          if "__pycache__" not in f and not f.endswith(JUNK)]
                 self.files = sorted(files, key=lambda f: (f.count("/"), f))
             except (OSError, subprocess.TimeoutExpired):

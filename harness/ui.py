@@ -21,7 +21,7 @@ YELLOW = rgb(255, 184, 200)  # soft peach-pink (the name is old)
 
 def out(s="", end="\n"):
     if not sys.stdout.isatty():  # piped or in a file: no colour codes
-        s = re.sub(r"\033\[[0-9;]*m|[\001\002]", "", s)
+        s = re.sub(r"\033\[[0-9;?]*[A-Za-z]|[\001\002]", "", s)
     sys.stdout.write(s + end)
     sys.stdout.flush()
 

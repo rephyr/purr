@@ -60,6 +60,8 @@ def load(discover=True):
         from harness.discover import add_found
         add_found(config)
     if config.get("default_model") not in config.get("models", {}):
+        if mine.get("default_model"):  # yours, but not there now (its server isn't running): say so
+            config["_missing_model"] = mine["default_model"]
         config["default_model"] = pick_default(config)
     return config
 
@@ -76,6 +78,10 @@ def ollama_host(value):
     if rest.count(":") > 1 and not rest.startswith("["):
         rest = f"[{rest}]"  # a bare IPv6 address
     parts = urlsplit("//" + rest)
+    try:
+        parts.port
+    except ValueError:  # "box:abc", a port past 65535: ignore it rather than not start
+        return ""
     host = parts.hostname or ""
     host = "127.0.0.1" if host in ("", "0.0.0.0", "::") else f"[{host}]" if ":" in host else host
     port = parts.port or {"http": 80, "https": 443}.get(scheme, 11434)  # a scheme given: its usual port, as Ollama does
