@@ -22,8 +22,9 @@ git clone https://github.com/rephyr/purr && cd purr/packaging/aur/purr-agent-git
 ```
 
 **Windows:** run purr inside WSL (`wsl --install`). For Ollama on the Windows side, turn on WSL's
-mirrored networking (`networkingMode=mirrored` in `.wslconfig`) or set `OLLAMA_HOST` to its address.
-Ollama on another machine works the same way.
+mirrored networking (`networkingMode=mirrored` in `.wslconfig`), or set `OLLAMA_HOST` to its address
+(and start Ollama there with `OLLAMA_HOST=0.0.0.0` so it listens beyond localhost). Ollama on another
+machine works the same way.
 
 ## First start
 

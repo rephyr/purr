@@ -129,7 +129,8 @@ def files_under(base, glob=None):
     negate, glob = (glob or "").startswith("!"), (glob or "").lstrip("!")
     out = []
     for dirpath, dirnames, filenames in os.walk(base):
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in SKIP_DIRS)
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in SKIP_DIRS
+                             and not (negate and fnmatch.fnmatch(d, glob)))  # "!tests": not that folder either
         for name in sorted(filenames):
             path = os.path.join(dirpath, name)
             if name.startswith(".") or (glob and negate == (fnmatch.fnmatch(name, glob)
@@ -147,6 +148,8 @@ def search(pattern, base, glob=None, fixed=False, per_file=50, columns=300):
         cmd += (["--glob", glob] if glob else []) + (["--fixed-strings"] if fixed else []) + ["--", pattern, str(base)]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         return res.returncode, (res.stdout if res.returncode < 2 else res.stderr).strip().splitlines()
+    if not Path(base).exists():
+        return 2, [f"{base}: No such file or directory"]
     try:  # smart case: an all-lower-case pattern ignores case
         rx = re.compile(re.escape(pattern) if fixed else pattern, re.I if pattern == pattern.lower() else 0)
     except re.error as e:
@@ -154,9 +157,14 @@ def search(pattern, base, glob=None, fixed=False, per_file=50, columns=300):
     single, hits = Path(base).is_file(), []
     for f in files_under(base, glob):
         try:
-            lines = Path(f).read_text(encoding="utf-8").splitlines()
+            if os.path.getsize(f) > 2_000_000:
+                continue  # a data file or a build: rg wouldn't show it usefully either
+            text = Path(f).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue  # binary or unreadable, as rg skips them
+        if "\0" in text[:8000]:
+            continue  # binary that happens to decode
+        lines = text.splitlines()
         found = [(n, line) for n, line in enumerate(lines, 1) if rx.search(line)][:per_file]
         hits += [f"{n}:{line[:columns]}" if single else f"{f}:{n}:{line[:columns]}" for n, line in found]
     return (0 if hits else 1), hits

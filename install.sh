@@ -1,7 +1,7 @@
 #!/bin/sh
 # purr in one line:  curl -LsSf https://raw.githubusercontent.com/rephyr/purr/main/install.sh | sh
 # Installs uv (if you don't have it) and then purr with it, in its own little Python of its own:
-# nothing touches your system's Python. On Arch: `yay -S purr-agent` instead.
+# nothing touches your system's Python.
 # PURR_REF=<branch or tag> installs that one instead of main.
 set -eu
 say() { printf '\033[38;2;245;169;208m%s\033[0m\n' "$1"; }

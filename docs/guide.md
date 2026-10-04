@@ -124,8 +124,8 @@ and each ticket's chat are saved as sessions (`~/.local/state/purr/sessions/`). 
 or model isn't there, purr plans with the current model instead of failing.
 
 `/pr` turns the changes into a GitHub pull request: the model drafts the title and description,
-you edit them in a popup, and only then purr makes a branch, commits with
-`Co-Authored-By: purr-<model>`, pushes and runs `gh pr create`. The title ends with the model
+you edit them in a popup, and only then purr makes a branch, commits with a `Model: <model>`
+line (and `Co-Authored-By: purr-<model>` if you set `co_author_email`), pushes and runs `gh pr create`. The title ends with the model
 (`Fix the discount · qwen3-coder-32k`, so with squash merging it shows on main) and the PR gets
 a pink `🐾 <model>` label. For a cute avatar on those
 commits, give purr its own GitHub account and set `co_author_email` in your config.

@@ -5,10 +5,12 @@ screen through TuiView, which has the same methods as ui.PlainView.
 """
 
 import json
+import os
 import random
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -1445,11 +1447,14 @@ class PurrApp(App):
         """To the clipboard, two ways: through the terminal (OSC 52, kitty allows it) and with
         the system's copy tool, in case the terminal says no."""
         self.copy_to_clipboard(text)
-        tool = next((t for t in (["wl-copy"], ["pbcopy"], ["xclip", "-selection", "clipboard"], ["xsel", "-ib"])
-                     if shutil.which(t[0])), None)
+        tools = ((["pbcopy"],) if sys.platform == "darwin" else
+                 ((["wl-copy"],) if os.environ.get("WAYLAND_DISPLAY") else ())
+                 + ((["xclip", "-selection", "clipboard"], ["xsel", "-ib"]) if os.environ.get("DISPLAY") else ()))
+        tool = next((t for t in tools if shutil.which(t[0])), None)
         if tool:
             try:
-                subprocess.run(tool, input=text, text=True, timeout=3)
+                subprocess.run(tool, input=text, text=True, timeout=3,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except (OSError, subprocess.SubprocessError):
                 pass
         lines = text.count("\n") + 1

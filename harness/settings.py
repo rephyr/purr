@@ -67,14 +67,19 @@ def load(discover=True):
 def ollama_host(value):
     """OLLAMA_HOST as Ollama's own CLI reads it ("host", "host:port", "http://host:port") -> its URL,
     or "" when unset. 0.0.0.0 (what a server listens on) means this machine."""
+    from urllib.parse import urlsplit
     value = value.strip().rstrip("/")
     if not value:
         return ""
-    scheme, _, rest = value.rpartition("://")
-    host, _, port = rest.partition(":")
-    host = "127.0.0.1" if host in ("", "0.0.0.0") else host
-    port = port or {"http": 80, "https": 443}.get(scheme, 11434)  # a scheme given: its usual port, as Ollama does
-    return f"{scheme or 'http'}://{host}:{port}"
+    scheme = value.split("://")[0] if "://" in value else ""
+    rest = value.split("://", 1)[-1]
+    if rest.count(":") > 1 and not rest.startswith("["):
+        rest = f"[{rest}]"  # a bare IPv6 address
+    parts = urlsplit("//" + rest)
+    host = parts.hostname or ""
+    host = "127.0.0.1" if host in ("", "0.0.0.0", "::") else f"[{host}]" if ":" in host else host
+    port = parts.port or {"http": 80, "https": 443}.get(scheme, 11434)  # a scheme given: its usual port, as Ollama does
+    return f"{scheme or 'http'}://{host}:{port}{parts.path}"
 
 
 def usable(config, name):

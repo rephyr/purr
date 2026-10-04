@@ -141,6 +141,8 @@ class SettingsTest(unittest.TestCase):
     def test_ollama_host_moves_ollama_unless_you_set_its_address(self):
         for value, url in (("0.0.0.0", "http://127.0.0.1:11434"), ("172.20.0.1", "http://172.20.0.1:11434"),
                            ("gpu-box:8000", "http://gpu-box:8000"), ("https://ollama.lan/", "https://ollama.lan:443"),
+                           ("[::1]:11434", "http://[::1]:11434"), ("::1", "http://[::1]:11434"),
+                           ("http://box/ollama", "http://box:80/ollama"),
                            ("", "")):
             self.assertEqual(settings.ollama_host(value), url, value)
         with mock.patch.object(discover, "find", return_value={}), \
