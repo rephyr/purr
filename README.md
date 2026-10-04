@@ -1,5 +1,7 @@
 # purr ♡
 
+[![tests](https://github.com/rephyr/purr/actions/workflows/tests.yml/badge.svg)](https://github.com/rephyr/purr/actions/workflows/tests.yml)
+
 A cute coding agent for your terminal, built to get more out of **small local models** on long,
 vague tasks. Works with API models too.
 

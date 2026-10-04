@@ -13,3 +13,9 @@ _RUN = tempfile.mkdtemp(prefix="purr-tests-")
 tempfile.tempdir = _RUN
 os.environ["TMPDIR"] = _RUN  # commands the tests start (git, sh, harbor fakes) use it too
 atexit.register(shutil.rmtree, _RUN, ignore_errors=True)
+
+# ...and never reads your own settings: a test that passes only with your config.toml (a
+# report_model, a co-author) fails on a fresh machine (CI found one)
+os.environ["XDG_CONFIG_HOME"] = os.path.join(_RUN, "config")
+os.environ.pop("PURR_CONFIG", None)
+os.environ.pop("OLLAMA_HOST", None)
