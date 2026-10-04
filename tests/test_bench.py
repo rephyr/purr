@@ -115,13 +115,22 @@ class OutsideTest(unittest.TestCase):
     def test_leaving_the_task_folder_is_caught(self):
         work = Path(tempfile.mkdtemp()) / "work"
         work.mkdir()
-        elsewhere = tempfile.mkdtemp()  # a real folder outside
+        elsewhere = tempfile.mkdtemp(prefix="purr-bench-")  # another run's folder
         self.assertEqual(bench.outside({"command": f"cd {elsewhere} && git status"}, work), "outside")
         self.assertEqual(bench.outside({"command": "ls ~"}, work), "outside")
         self.assertIsNone(bench.outside({"command": "python3 -m unittest discover tests"}, work))
         self.assertIsNone(bench.outside({"path": "cafe/menu.py"}, work))
         self.assertIsNone(bench.outside({"path": str(work / "a.py")}, work))
         self.assertIsNone(bench.outside({"command": "/usr/bin/python3 x.py"}, work))
+
+    def test_scratch_in_tmp_is_fine_and_collected(self):
+        work = Path(tempfile.mkdtemp(prefix="purr-bench-")) / "work"
+        work.mkdir()
+        made = []
+        mine = Path(tempfile.gettempdir()) / "verify_dur.py"
+        self.assertIsNone(bench.outside({"command": f"cat > {mine} <<'EOF'"}, work, made))
+        self.assertIsNone(bench.outside({"command": "cd /tmp && ls"}, work, made))
+        self.assertEqual(made, [str(mine.resolve())])  # /tmp itself is never removed
 
     def test_the_bench_wrapper_folder_is_not_outside(self):
         wrapper = Path(tempfile.mkdtemp()) / "w" / "01"
