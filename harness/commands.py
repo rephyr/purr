@@ -116,7 +116,7 @@ def run(agent, text):
     if name == "quit":
         return None
     if name == "help":
-        width = max(len(f"/{n} {a}") for n, (a, _) in COMMANDS.items()) + 2
+        width = min(24, max(len(f"/{n} {a}") for n, (a, _) in COMMANDS.items())) + 2
         lines = [("info", f"/{n} {a}".ljust(width) + d) for n, (a, d) in COMMANDS.items()]
         lines += [("info", f"/{n}".ljust(width) + d) for n, (d, _) in templates.items()]
         lines.append(("dim", "@file attaches a file   !command runs it yourself"))

@@ -141,6 +141,7 @@ class SettingsTest(unittest.TestCase):
                            ("gpu-box:8000", "http://gpu-box:8000"), ("https://ollama.lan/", "https://ollama.lan:443"),
                            ("[::1]:11434", "http://[::1]:11434"), ("::1", "http://[::1]:11434"),
                            ("http://box/ollama", "http://box:80/ollama"),
+                           ("box:abc", ""), ("http://box:99999", ""),  # a bad port: ignored, purr still starts
                            ("", "")):
             self.assertEqual(settings.ollama_host(value), url, value)
         with mock.patch.object(discover, "find", return_value={}), \
@@ -166,6 +167,21 @@ class SettingsTest(unittest.TestCase):
                 got = [agent.opencode_key(name) for name in ("deepseek", "groq", "cerebras", "deepseek")]
             self.assertEqual(got, [want, None, None, want])
             self.assertEqual(run.call_count, runs)
+
+    def test_your_model_offline_is_said_not_swapped_quietly(self):
+        (self.dir / "config.toml").write_text('default_model = "gone-32k"\n')
+        with mock.patch.object(discover, "find", return_value={}):
+            config = settings.load()
+        self.assertEqual(config["_missing_model"], "gone-32k")
+        self.assertNotEqual(config["default_model"], "gone-32k")
+
+    def test_paid_providers_first_and_only_free_tiers_marked(self):
+        from harness import onboard
+        names = [n for n, _ in onboard.api_providers(tomllib.loads(settings.DEFAULTS.read_text()))]
+        self.assertLess(names.index("openrouter"), names.index("groq"))
+        defaults = tomllib.loads(settings.DEFAULTS.read_text())["providers"]
+        self.assertFalse(defaults["deepseek"].get("free_tier"))
+        self.assertTrue(defaults["groq"]["free_tier"] and defaults["deepseek"]["key_page"])
 
     def test_purrs_own_defaults_load(self):
         defaults = tomllib.loads(settings.DEFAULTS.read_text())

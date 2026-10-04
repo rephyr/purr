@@ -268,6 +268,9 @@ def main():
 
     config = settings.load()
     model_name = args.model or config["default_model"]
+    if config.get("_missing_model") and not args.model:
+        ui.say(ui.YELLOW, f"  your model {config['_missing_model']} isn't there now "
+               f"(is its server running?), so purr starts on {model_name} · -m or /model picks another")
 
     if use_tui:
         from tui.app import PurrApp
@@ -285,9 +288,10 @@ def main():
         agent = Agent(config, args.folder, model_name, view)
     except KeyError as e:
         ui.say(ui.ROSE, e.args[0])
-        if not args.model and not any(m.get("found") for m in config["models"].values()):
-            ui.say(ui.DIM, f"  no local model found ({config['providers']['ollama']['base_url']}, llama.cpp, LM Studio, "
-                           "vLLM) and no API key: `purr setup` walks you through it, or `purr --key groq` for a free key")
+        if not args.model and not any(settings.usable(config, n) for n in config.get("models", {})):
+            ollama = config.get("providers", {}).get("ollama", {}).get("base_url", "Ollama")
+            ui.say(ui.DIM, f"  no local model answered ({ollama}, llama.cpp, LM Studio, vLLM) and no API key: "
+                           "start one, `purr --key groq` for a free key, or `purr setup`")
         return 1
     agent.tools.trust_all = args.yes
     agent.time_limit = args.time_limit

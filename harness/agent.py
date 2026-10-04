@@ -432,8 +432,10 @@ def opencode_key(integration):
     if None not in _OPENCODE_KEYS:  # asked already (None marks it)
         _OPENCODE_KEYS[None] = True
         try:
+            data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "opencode"
+            used = any((data / f).exists() for f in ("auth.json", "opencode.db"))  # v1, v2
             out = subprocess.run(["opencode", "auth", "export"], capture_output=True, text=True,
-                                 timeout=5).stdout if shutil.which("opencode") else "[]"
+                                 timeout=5).stdout if used and shutil.which("opencode") else "[]"
             creds = json.loads(out)
         except (OSError, subprocess.TimeoutExpired, ValueError):
             creds = []
@@ -2377,15 +2379,21 @@ class Agent:
         Cheaper than a full compaction: no model call, and it keeps the messages."""
         keep = self.limits.keep_recent_tools if keep is None else keep
         # the stub names the call it came from, so the model knows what to redo if it needs it
-        calls = {c["id"]: c["function"] for m in self.messages if m.get("role") == "assistant"
-                 for c in m.get("tool_calls") or []}
-        tools = [m for m in self.messages if m.get("role") == "tool"]
+        # each result belongs to the call just before it: ids repeat across steps (text_call_0 in every
+        # reply of a model that writes its calls as text)
+        fn_of, calls, tools = {}, {}, []
+        for m in self.messages:
+            if m.get("role") == "assistant":
+                calls = {c["id"]: c["function"] for c in m.get("tool_calls") or []}
+            elif m.get("role") == "tool":
+                fn_of[id(m)] = calls.get(m.get("tool_call_id"), {})
+                tools.append(m)
         # only real output counts toward the ones kept: ten "task list saved" don't protect anything
         cut, big = 0, 0
         for i in range(len(tools) - 1, -1, -1):
             content = tools[i].get("content") or ""
             if (len(content) > 400 and not content.startswith("[old output of")
-                    and calls.get(tools[i].get("tool_call_id"), {}).get("name") != "todo"):
+                    and fn_of[id(tools[i])].get("name") != "todo"):
                 big += 1
                 if big > keep:
                     cut = i + 1
@@ -2396,7 +2404,7 @@ class Agent:
             content = m.get("content") or ""
             if len(content) <= 400 or content.startswith("[old output of"):
                 continue
-            fn = calls.get(m.get("tool_call_id"), {})
+            fn = fn_of[id(m)]
             call = f"{fn.get('name', 'a tool')}({(fn.get('arguments') or '')[:160]})"
             kept = self.tools.spill(fn.get("name", "tool"), content)  # read parts of it, don't run it again
             m["content"] = (f"[old output of {call} removed to save room ({len(content)} characters); "

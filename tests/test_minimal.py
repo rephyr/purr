@@ -82,6 +82,12 @@ class MinimalAgentTest(unittest.TestCase):
         self.assertEqual(users, ["do the task"])  # no time note, probe, reminder or final check
         a._bash.close()
 
+    def test_your_own_command_still_runs_after_a_bash_step(self):
+        a = minimal_agent()  # its bash session once hid Agent.shell(), and !command crashed
+        a._minimal_bash("bash", '{"command": "echo one"}')
+        self.assertIn("hi", a.shell("echo hi")[0])
+        a._bash.close()
+
     def test_every_steps_thinking_goes_back(self):
         for agent in (minimal_agent(), minimal_agent(minimal=False, keep_reasoning="all")):
             agent.messages += [{"role": "assistant", "content": "", "reasoning": f"thought {i}"} for i in range(5)]
