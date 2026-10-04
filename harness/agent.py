@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -187,6 +188,8 @@ def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=()
         purr_dir = Path(__file__).resolve().parent.parent
         if Path.home() not in purr_dir.parents:  # installed somewhere like /opt/purr (a container)
             text = text.replace("- System: Linux", f"- System: Linux ({purr_dir} is purr itself, not the task)")
+    if sys.platform == "darwin":  # BSD tools: GNU-only flags fail
+        text = text.replace("- System: Linux", "- System: macOS (BSD sed/grep: `sed -i ''`, no GNU-only flags)")
     if overview:
         text += ("\n\nProject overview (purr made it from the files; when they disagree, the files win):\n"
                  + overview)

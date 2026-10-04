@@ -149,6 +149,13 @@ class SettingsTest(unittest.TestCase):
             (self.dir / "config.toml").write_text('[providers.ollama]\nbase_url = "http://mine:1/v1"\n')
             self.assertEqual(settings.load()["providers"]["ollama"]["base_url"], "http://mine:1/v1")
 
+    def test_the_model_is_told_its_system(self):
+        from harness.agent import system_prompt
+        with mock.patch.object(sys, "platform", "darwin"):
+            self.assertIn("System: macOS", system_prompt("/tmp/x", "m", "ollama"))
+        with mock.patch.object(sys, "platform", "linux"):
+            self.assertIn("- System: Linux\n", system_prompt("/tmp/x", "m", "ollama"))
+
     def test_purrs_own_defaults_load(self):
         defaults = tomllib.loads(settings.DEFAULTS.read_text())
         self.assertEqual({p for p, v in defaults["providers"].items() if v.get("discover")},

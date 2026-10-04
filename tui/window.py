@@ -3,6 +3,7 @@ pet's name, Mochi's mood and opening a file or folder."""
 
 import json
 import subprocess
+import sys
 import time
 
 from textual.app import App
@@ -47,4 +48,5 @@ class BenchWindow(App):
     @staticmethod
     def open_path(path):
         if path:
-            subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([opener, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
