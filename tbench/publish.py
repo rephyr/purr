@@ -101,10 +101,15 @@ def load_job(job):
     job = Path(job).expanduser().resolve()
     config = json.loads((job / "config.json").read_text())
     trials = []
+    sys.path.insert(0, str(ROOT))
+    from harness import benchguard
     for f in sorted(job.glob("*/result.json")):
         t = json.loads(f.read_text())
         agent = t.get("agent_result") or {}
         o = outcome(t)
+        looked = benchguard.looked_up(f.parent)  # it fetched the benchmark itself: not solved, whatever it scored
+        if looked and o["state"] == "passed":
+            o = {**o, "state": "failed", "reward": 0.0}
         trials.append({
             "task": t["task_name"].split("/")[-1], "trial": t["trial_name"],
             "reward": o["reward"], "timeout": o["state"] == "timeout",
@@ -116,6 +121,7 @@ def load_job(job):
             "cost_usd": agent.get("cost_usd"), "tokens_in": agent.get("n_input_tokens"),
             "tokens_cached": agent.get("n_cache_tokens"), "tokens_out": agent.get("n_output_tokens"),
             "version": (t.get("agent_info") or {}).get("version"),
+            "looked_up": looked,
             "model": ((t.get("agent_info") or {}).get("model_info") or {}).get("name"),
         })
     return job, config, trials
@@ -479,6 +485,11 @@ def publish(job, note=None, extra=None):
         summary["profile"], summary["note"] = "stopped", note
     elif extra:
         summary["note"] = extra
+    looked = sorted({t["task"] for t in trials if t.get("looked_up")})
+    if looked:  # said in the row, so nobody wonders where the points went
+        said = (f"{len(looked)} task{'s' * (len(looked) != 1)} looked up the benchmark itself and count as "
+                f"failed: {', '.join(looked)}")
+        summary["note"] = f"{summary['note']} {said}" if summary.get("note") else said
     if not summary["profile"]:
         print(f"not published: {summary['tasks']} tasks x {summary['settings']['attempts']} on {summary['dataset']} "
               "is not a full run (every task x 3, tbench/fair.sh), a one-try run (every task x 1, --one) or a "

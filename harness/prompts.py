@@ -210,7 +210,13 @@ ONE_SHOT_CHECK = """(purr: before you finish{time}: hidden tests will check your
 against the request's exact wording. Go through your requirements list and the request again, \
 sentence by sentence: 1. Every file, name and \
 signature it gives exists exactly as written (path, name, x() or x, format, types), names inside \
-the commands and addresses it shows included (the user in user@host, ports, paths, URLs). 2. For each rule \
+the commands and addresses it shows included (the user in user@host, ports, paths, URLs). Check \
+with the grader's yardstick, not one you made up: a limit's scope words (per, each, across, total); \
+"equal", "same", "matches" mean element-wise to numerical precision, not a similarity score; an \
+allowed normalization means output what the standard tool produces; reproducing given code or a \
+model means its conventions, not a better score; test the saved deliverable loaded fresh and fed \
+raw inputs exactly as its user would (within about 30 seconds if they will run it); "as fast" or \
+"as small as possible" means try two or three ways and keep the best, with a margin. 2. For each rule \
 it states (if/unless/only/order/precedence/overrides), work out the expected result from the request \
 text first, then check it on an input where a wrong reading would give a different answer; test \
 both sides of each condition and override (set both, conflicting). Never copy an expectation from \
@@ -228,8 +234,16 @@ original and restore it.{scratch}{services}{nobody} Fix what fails, then reply i
 # minutes) get one more, different look: evidence for every requirement
 EVIDENCE_PASS = """(purr: you have about {left} of {total} minutes left, so use some of it before you \
 finish. Make a short list: one line per requirement in the request, with the command and output \
-that shows it holds. Every line without direct evidence: test it now, on an input that would catch \
-a wrong reading. Fix what fails, then reply in at most 3 lines.)"""
+that shows it holds. Evidence from a check you designed around your own solution doesn't count: use \
+a second method, an input built to break it, or the saved deliverable run fresh exactly as its user \
+would. Every line without such evidence: test it now. A result right at the edge of a limit or a \
+range is fragile: make room. Fix what fails, then reply in at most 3 lines.)"""
+
+# the final reply admits what isn't done ("best guess", "a stub", "not verified", "missed 0.62"): in
+# two Terminal-Bench runs about 8 tasks ended like that with time left, and purr accepted it
+GAP_NUDGE = """(purr: your reply says "{quote}": that part isn't done, and nobody will finish it after \
+you.{time} Spend it on exactly that: make it real and check it the way the request's user would; if \
+one way can't work, try a different method. Then reply in at most 3 lines.)"""
 
 SCRATCH_NOTE = (" You created these files: {files}. Delete the ones that are scratch work the task "
                 "doesn't need (a leftover test file can break the real tests); a new test file must not "
@@ -284,8 +298,10 @@ The change (unified diff, cut where long):
 
 REVIEW_NOTE = """(purr: a second reader compared the request with your changes and says:
 {findings}
-Check each against the request and the code: fix what's really wrong, ignore what isn't, then \
-finish in at most 3 lines.)"""
+Check each against the request and the code: fix what's really wrong, ignore what isn't (test a \
+claim about a known format or API with a tiny experiment, not from memory). After any change, run \
+your end-to-end check of the whole deliverable again: a fix that breaks what worked is worse than \
+none. Then finish in at most 3 lines.)"""
 
 COMPACT = """Below is a conversation between a user and you (a coding agent). It is getting too long, \
 so write a summary that lets you carry on the work without the original. Include:

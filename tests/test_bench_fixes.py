@@ -108,9 +108,11 @@ class FinalCheckTest(unittest.TestCase):
 
     def test_little_time_left_just_finishes(self):
         a = one_shot(time_limit=5400)
-        a._started = agent_module.time.monotonic() - 3000  # 50 of 90 minutes gone
+        a._started = agent_module.time.monotonic() - 4200  # 70 of 90 minutes gone: under 30% left
         a._checked, a._evidence = True, False
         self.assertFalse(a._evidence_pass())
+        a._started = agent_module.time.monotonic() - 3000  # 50 of 90 gone: 44% left is enough now (was half)
+        self.assertTrue(a._evidence_pass())
         b = one_shot()  # no time limit: no second look either
         b._checked, b._evidence = True, False
         self.assertFalse(b._evidence_pass())

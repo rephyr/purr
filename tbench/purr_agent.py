@@ -192,6 +192,7 @@ class PurrAgent(BaseInstalledAgent):
             config["keep_reasoning"] = self.keep_reasoning
         if self.minimal:
             config["minimal"] = True
+        config["bench_guard"] = True  # the model may not look the benchmark up (harness/benchguard.py)
         config.update({"default_model": "bench", "max_steps": self.max_steps, "providers": {provider: prov},
                        "models": {"bench": spec}})
         if self.use_mcp and not self.minimal:  # minimal: bash is the only tool
