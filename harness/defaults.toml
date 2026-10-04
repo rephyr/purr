@@ -33,6 +33,11 @@ code_checks = true
 #  step_back = true   after 8 changes to one file (or 6 number-tweaked versions of one command), ask
 #                     the model to step back: what's known, why it fails, a different approach
 #  edge_cases = true  in the final check, also try 2-3 edge cases the request implies
+# In one-shot runs (purr -p, benchmarks):
+#  blind_checks = true   before any code, write acceptance checks from the request alone
+#  proof_ledger = true   rerun the model's own checks in a fresh shell before it may stop
+#  margin_check = true   a stated limit (under 1 s, at most 50 MB) is measured, not assumed
+#  job_watch = true      (with a time limit) a background job's log is read: purr says when it won't finish
 # Edits only on files the model has read (so old_text matches what's really there).
 read_before_edit = true
 

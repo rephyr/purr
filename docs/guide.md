@@ -259,6 +259,13 @@ edge-case step in the final check; API models (which `purr bench` showed don't n
 DeepSeek V4.1 Flash they only made purr slower) get a short final check instead. Setting
 `refine`, `reminders` or `edge_cases` in your config (or `/refine ...`) overrides that.
 
+In one-shot runs (`purr -p`, benchmarks), local models also get:
+acceptance checks written from the request alone before any code (`blind_checks`); their own
+checks rerun in a fresh shell before they may stop (`proof_ledger`); limits the task states
+(under 1 s, at most 50 MB) measured rather than assumed (`margin_check`); and a watch on
+background jobs (with a time limit) that reads their logs and says when one won't finish in the time left or has
+stalled, plus a reminder to time a small piece of a long run first (`job_watch`).
+
 ## Different models, different limits
 purr adapts to the model it is running. A model's `context` (found by itself for local models) sets how big a
 tool result may be, how many lines `read_file` returns by default, how many files or

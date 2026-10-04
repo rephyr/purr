@@ -715,6 +715,9 @@ class Tools:
             output += (f"\n(purr: it was stopped after {timeout}s. If it needs longer, run it again with "
                        "a bigger timeout (run's timeout argument, in seconds), or start it in the background "
                        "with its output in a log (nohup <command> > run.log 2>&1 &) and check run.log.)")
+            if self.deadline:  # a time limit: a bigger timeout may not fit at all
+                output = output[:-1] + (" With the time you have, first time a small piece of it (fewer "
+                                        "epochs, samples or files) and size the full run to fit.)")
         return f"{cut}{output}\n[exit code {code}]"
 
     def t_terminal(self, action, name="main", command=None, text=None, keys=None, wait=None,
