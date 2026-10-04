@@ -27,6 +27,7 @@ from .prompts import (  # noqa: F401 - the words purr says; some only re-exporte
     ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
     ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT, GAP_NUDGE, LEDGER_NOTE,
+    MEASURE_ASK, LIMIT_NOTE,
 )
 from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, run_shell, schemas
 
@@ -1447,6 +1448,7 @@ class Agent:
         self._evidence = False  # one-shot: the second look (EVIDENCE_PASS) at most once
         self._gap_said = False  # one-shot: an admitted gap sent back at most once
         self._ledger_gen, self._ledger_runs, self._ledger_sent = -1, 0, 0  # _ledger_rerun
+        self._margin_said = False  # _margin_check: at most once a turn
         self._disk_before = self._disk_snapshot() if self.one_shot and not self.helper else None
         self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
         self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
@@ -1529,7 +1531,65 @@ class Agent:
         """The model wants to stop: every check that may send it back once, in order. True when one
         did (the turn goes on). One place, so a new check can't end up in only one of the stops."""
         return (self._final_check(reply_text) or self._admitted_gap(reply_text) or self._ledger_rerun()
-                or self._evidence_pass() or self._review() or self._learn_check() or self._hedge(reply_text))
+                or self._margin_check(reply_text) or self._evidence_pass() or self._review()
+                or self._learn_check() or self._hedge(reply_text))
+
+    def _margin_check(self, reply):
+        """The margin check (small models; margin_check = false turns it off): the final reply's
+        MEASURE lines against the limits, each backed by a command purr saw run and a value in its
+        output; a limit missed, at the edge, unbacked or unmeasured goes back once. True when sent."""
+        if not (self.one_shot and self.coding and self._checked) or self.helper or self._margin_said \
+                or not self._helper_on("margin_check"):
+            return False
+        stated = checks.stated_limits(getattr(self, "_request", ""))
+        found = checks.measures(reply)
+        if not stated and not found:
+            return False
+        left = self._minutes_left()
+        if left is not None and left < 3:
+            return False
+        ran = self._commands_run()
+        room_wanted = float(self.config.get("margin", 0.02))
+        rows, bad = [], 0
+        for m in found:
+            backed = next((out for cmd, out in ran if m["command"] in cmd or cmd in m["command"]), None)
+            nums = [float(x) for x in re.findall(r"[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?", backed or "")]
+            shown = any(abs(x - m["value"]) <= 1e-9 * max(1.0, abs(m["value"])) for x in nums)
+            ok, room = checks.margin(m["value"], m["op"], m["target"])
+            line = f"{m['name']}: {m['value']:g} {m['op']} {m['target']:g}"
+            if backed is None or not shown:
+                bad += 1
+                rows.append(f"? {line}: not backed ({'`' + m['command'][:60] + '` was never run' if backed is None else 'its output does not show ' + format(m['value'], 'g')})")
+            elif not ok:
+                bad += 1
+                rows.append(f"✗ {line}: MISSES it")
+            elif room < room_wanted:
+                bad += 1
+                rows.append(f"⚠ {line}: met with {room:.1%} room, at the edge")
+            else:
+                rows.append(f"✓ {line} ({room:.0%} room)")
+        if not found:
+            for words, op, value in stated:
+                bad += 1
+                rows.append(f"? \"{words}\": no MEASURE line")
+        self._margin_said = True
+        if not bad:
+            return False
+        self.tools.repairs.append("a limit missed, at the edge or unmeasured -> sent back")
+        self.messages.append({"role": "user", "content": LIMIT_NOTE.format(rows="\n".join(rows))})
+        return True
+
+    def _commands_run(self):
+        """[(command, its output)] for every run call so far, in order."""
+        calls, out = {}, []
+        for m in self.messages:
+            if m.get("role") == "assistant":
+                calls = {c["id"]: c["function"] for c in m.get("tool_calls") or []}
+            elif m.get("role") == "tool":
+                fn = calls.get(m.get("tool_call_id"))
+                if fn and fn.get("name") == "run":
+                    out.append((str(_args(fn.get("arguments")).get("command", "")), str(m.get("content") or "")))
+        return out
 
     def _ledger_rerun(self):
         """The proof ledger (small models; proof_ledger = false turns it off): the todo items' check
@@ -1631,6 +1691,8 @@ class Agent:
             self._hedged = self._hedged or self._hedges(reply)
         else:
             check = (FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT).format(services=services)
+        if self.one_shot and self._helper_on("margin_check"):
+            check = check[:-1] + MEASURE_ASK + ")" if check.endswith(".)") else check + MEASURE_ASK
         self.messages.append({"role": "user", "content": self._test_report() + check})
         return True
 

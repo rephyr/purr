@@ -363,3 +363,14 @@ LEDGER_NOTE = """(purr ran your checks again itself, in a fresh shell:
 {rows}
 Fix what fails (a late change may have broken it), then finish in at most 3 lines.)"""
 
+# the margin check (small models): the final reply ends with what was measured, and purr checks each
+# line against the command it names and that command's real output (runs stopped at 0.497 vs 0.5,
+# 1.2x vs 1.05x allowed, 0.595 vs 0.62, with time left)
+MEASURE_ASK = (" For every numeric limit the request sets, end your final reply with a line MEASURE name | "
+               "value | op target | command, like `MEASURE accuracy | 0.64 | >= 0.62 | python3 eval.py`, where "
+               "command is one you ran and its output shows value.")
+LIMIT_NOTE = """(purr compared your measurements with the limits:
+{rows}
+A limit missed, met with almost no room, unmeasured or not backed by a command's output: fix it now, \
+getting headroom from the method (not by tuning to the example data). Then finish in at most 3 lines.)"""
+
