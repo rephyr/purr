@@ -20,6 +20,9 @@ it and the live log. Contestants: purr, opencode, purr+refine and purr-nocheck (
 its final check: when a model wants to stop after changing files, purr asks it once to go
 through the request point by point; `final_check` in the settings). It gives purr and OpenCode the same small coding
 tasks with the same model (both with everything allowed, both with the same time limit).
+OpenCode runs as it ships: each run gets a config with only the model under test (the same
+context and output cap purr has), none of your own OpenCode plugins, agents or models, and
+`meta.json` records its version.
 Every run starts from a fresh copy of the task; afterwards hidden tests decide whether it's
 solved. `purr bench -m qwen3-coder-32k -t rename --runs 3` picks things up front.
 

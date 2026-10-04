@@ -83,6 +83,21 @@ class GradeTest(unittest.TestCase):
         self.assertEqual(bench.table_rows([s])[0][5], "-")
 
 
+class StockOpenCodeTest(unittest.TestCase):
+    def test_opencode_gets_only_the_model_under_test(self):
+        config = {"providers": {"ollama": {"base_url": "http://127.0.0.1:11434/v1"}},
+                  "models": {"m": {"provider": "ollama", "id": "gpt-oss-64k", "context": 65536, "body": {"max_tokens": 4096}},
+                             "api": {"provider": "openrouter", "id": "deepseek/x"}}}
+        folder = bench.stock_opencode(config, "m")
+        oc = json.loads((folder / "opencode" / "opencode.json").read_text())
+        model = oc["providers"]["ollama"]["models"]["gpt-oss-64k"]
+        self.assertEqual(model["limit"], {"context": 65536, "output": 4096})  # what purr has
+        self.assertEqual(oc["providers"]["ollama"]["settings"]["baseURL"], "http://127.0.0.1:11434/v1")
+        self.assertEqual(sorted(p.name for p in folder.rglob("*")), ["opencode", "opencode.json"])  # no plugins
+        api = json.loads((bench.stock_opencode(config, "api") / "opencode" / "opencode.json").read_text())
+        self.assertNotIn("providers", api)  # OpenCode's own provider list
+
+
 class ReachTest(unittest.TestCase):
     def test_a_server_that_is_down_is_reported(self):
         config = {"providers": {"llamacpp": {"base_url": "http://127.0.0.1:9/v1"}},

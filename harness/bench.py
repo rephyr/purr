@@ -260,31 +260,25 @@ def run_purr(config, model, task, work, log_dir, timeout, refine=False, final_ch
 
 # ---- opencode ----
 
-_OC_MODELS = None
-
-
-def opencode_model(config, model):
-    """purr's model -> OpenCode's "provider/id", if OpenCode knows it."""
-    global _OC_MODELS
-    if not _OC_MODELS:  # an empty list means asking failed: ask again next time
-        try:
-            out = subprocess.run(["opencode", "models"], capture_output=True, text=True, timeout=120,
-                                 stdin=subprocess.DEVNULL)
-            _OC_MODELS = {line.strip() for line in (out.stdout + out.stderr).splitlines() if "/" in line}
-        except (OSError, subprocess.SubprocessError):
-            _OC_MODELS = set()
-        # models added to opencode.json show up in `opencode models` only after its background
-        # service restarts, but a benchmark run starts a fresh OpenCode that reads the file
-        try:
-            oc = json.loads((Path.home() / ".config/opencode/opencode.json").read_text())
-            for provider, spec in (oc.get("providers") or {}).items():
-                _OC_MODELS |= {f"{provider}/{name}" for name in (spec.get("models") or {})}
-        except (OSError, ValueError, AttributeError):
-            pass
+def stock_opencode(config, model):
+    """A folder to be OpenCode's XDG_CONFIG_HOME for one run: only the model under test, none of
+    your OpenCode setup (plugins, agents, AGENTS.md, other models), so purr is compared with OpenCode
+    as it ships. A local model gets the same context and output cap purr has; an API model uses
+    OpenCode's own provider list."""
     spec = config["models"][model]
-    oc = f"{spec['provider']}/{spec['id']}"
-    # if the list couldn't be read, try anyway: OpenCode says so itself if it doesn't know the model
-    return oc if oc in _OC_MODELS or not _OC_MODELS else None
+    oc = {"$schema": "https://opencode.ai/config.json"}
+    if spec["provider"] in LOCAL:
+        oc["providers"] = {spec["provider"]: {
+            "name": spec["provider"], "package": "@opencode/ai/providers/openai-compatible",
+            "settings": {"baseURL": config["providers"][spec["provider"]]["base_url"]},
+            "models": {spec["id"]: {"modelID": spec["id"], "name": spec["id"],
+                                    "capabilities": {"tools": True, "input": ["text"], "output": ["text"]},
+                                    "limit": {"context": spec.get("context", 32768),
+                                              "output": (spec.get("body") or {}).get("max_tokens", 8192)}}}}}
+    folder = Path(tempfile.mkdtemp(prefix="purr-opencode-"))
+    (folder / "opencode").mkdir()
+    (folder / "opencode" / "opencode.json").write_text(json.dumps(oc, indent=1))
+    return folder
 
 
 def watch_opencode(line):
@@ -322,16 +316,15 @@ def end_opencode_session(events):
 
 def run_opencode(config, model, task, work, log_dir, timeout):
     r = blank("opencode", model, task)
-    oc = opencode_model(config, model)
-    if not oc:
-        r["error"] = "this model isn't set up in OpenCode"
-        return r
+    spec = config["models"][model]
+    oc = f"{spec['provider']}/{spec['id']}"
     cmd = ["opencode", "run", "--standalone", "--auto", "--thinking", "--format", "json", "-m", oc, task["prompt"]]
     start = time.monotonic()
     # its own process group, so a timeout also stops the server it starts
     # OpenCode takes its folder from $PWD, not the real working directory: set both, or it
     # works in whatever folder purr was started from
-    env = {**os.environ, "PWD": str(work)}
+    stock = stock_opencode(config, model)
+    env = {**os.environ, "PWD": str(work), "XDG_CONFIG_HOME": str(stock)}
     proc = subprocess.Popen(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, start_new_session=True)
     lines, errs = [], []
@@ -360,6 +353,7 @@ def run_opencode(config, model, task, work, log_dir, timeout):
     for t in readers:
         t.join(timeout=5)
     out, err = "".join(lines), "".join(errs)
+    shutil.rmtree(stock, ignore_errors=True)
     if r["timeout"] or STOP.is_set():
         end_opencode_session(out)
     r["seconds"] = round(time.monotonic() - start, 1)
@@ -622,6 +616,15 @@ def disturbed_by(config, model):
     return ollama_loaded(config) - {spec["id"].removesuffix(":latest")}
 
 
+def tool_version(name):
+    """`<name> --version`'s first line, for the record (None when it isn't installed)."""
+    try:
+        out = subprocess.run([name, "--version"], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+        return (out.stdout or out.stderr).strip().splitlines()[0][:80]
+    except (OSError, subprocess.SubprocessError, IndexError):
+        return None
+
+
 def run_all(config, models, tasks, harnesses, runs, timeout, out_dir, events):
     """Run everything, model by model. events(kind, info) hears about it: "warming", "warm",
     "start", "done", "finished". Returns (results, summary)."""
@@ -632,7 +635,8 @@ def run_all(config, models, tasks, harnesses, runs, timeout, out_dir, events):
     (out_dir / "meta.json").write_text(json.dumps({  # what this run was, for --publish
         "purr": full_version(), "date": datetime.date.today().isoformat(), "models": models,
         "harnesses": harnesses, "tasks": [t["name"] for t in tasks], "vague": any(t.get("is_vague") for t in tasks),
-        "runs": runs, "timeout": timeout}, indent=1))
+        "runs": runs, "timeout": timeout, "opencode": tool_version("opencode") if "opencode" in harnesses else None,
+        "ollama": tool_version("ollama"), "opencode_config": "stock (only the model under test)"}, indent=1))
     results, n = [], 0
     for model in models:  # model by model, so a local model only loads once
         if STOP.is_set():
