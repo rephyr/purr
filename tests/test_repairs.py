@@ -1,6 +1,4 @@
 """purr fixing small model slips by itself (seen in the first benchmark with gpt-oss-32k).
-
-Run: python3 -m unittest discover tests
 """
 
 import json
@@ -63,7 +61,3 @@ class RepairTest(unittest.TestCase):
         self.call("teleport", to="moon")
         self.assertEqual(seen[0][0], "teleport")
         self.assertIn("no tool called", seen[0][1])
-
-
-if __name__ == "__main__":
-    unittest.main()

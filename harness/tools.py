@@ -402,8 +402,7 @@ class Tools:
         """A made-up tool that is really a program on this machine (gpt-oss called objdump and size
         as tools): the shell command it meant, or None. Its arguments become the command line."""
         import shlex
-        import shutil as sh
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name or "") or not sh.which(name):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name or "") or not shutil.which(name):
             return None
         rest = next((args[k] for k in ("command", "args", "arguments", "cmd", "argv", "options") if k in args), None)
         if isinstance(rest, list):
@@ -834,7 +833,6 @@ def run_shell(command, root, timeout=120):
     keeps a pipe open forever, which used to stall the call until the timeout and then kill the
     server. Now the call returns when bash does, and the server keeps running. On a timeout the
     command's whole process group is stopped."""
-    import tempfile
     fd, ps_file = tempfile.mkstemp(prefix="purr-ps-")
     os.close(fd)
     os.unlink(ps_file)  # bash writes it only if the command got to its end

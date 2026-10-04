@@ -1,6 +1,4 @@
 """Switching mode also switches to that mode's model (mode_models in config.toml).
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -85,7 +83,3 @@ class CommandTest(unittest.TestCase):
         out = commands.run(a, "/mode ask")
         self.assertIn(("info", "model: big"), out)
         self.assertEqual(a.model_name, "big")
-
-
-if __name__ == "__main__":
-    unittest.main()

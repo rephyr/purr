@@ -65,7 +65,3 @@ class LedgerTest(unittest.TestCase):
         a = one_shot("small")
         a.tools.call("todo", '{"items": [{"text": "x", "status": "doing", "check": " true "}, {"text": "y", "status": "pending"}]}')
         self.assertEqual(a.tools.todo_list, [{"text": "x", "status": "doing", "check": "true"}, {"text": "y", "status": "pending"}])
-
-
-if __name__ == "__main__":
-    unittest.main()

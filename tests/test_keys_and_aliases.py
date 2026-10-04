@@ -1,6 +1,4 @@
 """purr --key keeps any key readable; an MCP tool named like one of purr's aliases is reachable.
-
-Run: python3 -m unittest discover tests
 No model is called and no real key is touched (the keys file is a temporary one).
 """
 
@@ -56,7 +54,3 @@ class McpAliasTest(unittest.TestCase):
         out = t.call("search", '{"pattern": "nothing-here-at-all"}')
         self.assertIn("no matches", out)  # went to grep
         self.assertIn("tool search -> grep", t.repairs)
-
-
-if __name__ == "__main__":
-    unittest.main()

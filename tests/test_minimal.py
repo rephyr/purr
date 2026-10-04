@@ -1,6 +1,4 @@
 """Minimal mode (harness/minimal.py): DSH Minimal's setup inside purr, and keep_reasoning = "all".
-
-Run: python3 -m unittest discover tests
 """
 
 import json
@@ -126,7 +124,3 @@ class BenchOptionTest(unittest.TestCase):
         self.assertTrue(config["minimal"])
         self.assertEqual(config["keep_reasoning"], "all")
         self.assertNotIn("mcp", config)
-
-
-if __name__ == "__main__":
-    unittest.main()

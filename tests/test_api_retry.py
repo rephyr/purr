@@ -1,6 +1,4 @@
 """api.stream_chat: a connection dropped before the answer is a retryable ApiError, not a crash.
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -24,7 +22,3 @@ class DroppedConnectionTest(unittest.TestCase):
                 with self.assertRaises(ApiError) as caught:
                     api.stream_chat("http://x", "", {}, print, print)
             self.assertTrue(caught.exception.retry, type(err).__name__)
-
-
-if __name__ == "__main__":
-    unittest.main()

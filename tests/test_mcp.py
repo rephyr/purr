@@ -1,6 +1,4 @@
 """MCP: purr's client (harness/mcp.py) and its own servers (servers/codebase.py, servers/stack.py).
-
-Run: python3 -m unittest discover tests
 No model is called. The servers run for real, as separate programs.
 """
 
@@ -205,7 +203,3 @@ class AgentTest(unittest.TestCase):
         a.set_mode("ask")  # look-only: not even offered
         self.assertNotIn("note", [s["function"]["name"] for s in a.mcp.schemas(read_only=True)])
         a.mcp.stop()
-
-
-if __name__ == "__main__":
-    unittest.main()

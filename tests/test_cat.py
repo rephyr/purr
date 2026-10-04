@@ -1,6 +1,4 @@
 """Tests for the cat (tui/cat.py) and the end-of-task stats line.
-
-Run: python3 -m unittest discover tests
 """
 
 import os
@@ -165,7 +163,3 @@ class StatsTest(unittest.TestCase):
         a.turn_stats = {"start": time.monotonic(), "out": 0, "gen": 0.0}
         self.assertIsNone(a.tok_per_s())
         self.assertEqual(a._turn_summary(), "✓ 0s")
-
-
-if __name__ == "__main__":
-    unittest.main()

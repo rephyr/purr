@@ -1,6 +1,4 @@
 """/model free: the free router picks a free model per kind of work and moves on when one is maxed out.
-
-Run: python3 -m unittest discover tests
 No model is called (the API is faked).
 """
 
@@ -148,7 +146,3 @@ class HistoryTest(unittest.TestCase):
         self.assertEqual(sent[-1], {"role": "assistant", "content": "yo"})
         a.provider = {**a.provider, "echo_reasoning": "reasoning"}  # a provider that wants it back gets it
         self.assertEqual(a._body(None, True)["messages"][-1]["reasoning"], "hmm")
-
-
-if __name__ == "__main__":
-    unittest.main()

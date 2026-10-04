@@ -1,7 +1,5 @@
 """tbench/submit.py: a run that meets the Terminal-Bench 2.0 leaderboard's rules is made ready to
 submit, and one that doesn't (too few tries, an override, a leaked key, the web tool on) is not.
-
-Run: python3 -m unittest discover tests
 Nothing is uploaded: the job folders are made up.
 """
 
@@ -78,7 +76,3 @@ class SubmitTest(unittest.TestCase):
             self.assertTrue(any("API keys" in w for ok, w in submit.check(job)[0] if not ok))
             self.assertEqual(submit.main([str(job)]), 1)
         self.assertFalse((self.out / "purr__deepseek-v4.1-flash").exists())
-
-
-if __name__ == "__main__":
-    unittest.main()

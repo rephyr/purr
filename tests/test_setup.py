@@ -1,6 +1,4 @@
 """purr setup: the logic (harness/onboard.py) and the window (tui/setup.py), as a brand-new user.
-
-Run: python3 -m unittest discover tests
 No real server or provider is asked anything.
 """
 
@@ -164,7 +162,3 @@ class SetupWindowTest(NewUser, unittest.IsolatedAsyncioTestCase):
                 await pilot.pause(0.1)
         self.assertIsNone(app.return_value)
         self.assertFalse(settings.USER_CONFIG.exists())
-
-
-if __name__ == "__main__":
-    unittest.main()

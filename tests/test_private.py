@@ -1,6 +1,4 @@
 """/private: a fresh chat with local models only, no web, nothing saved.
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -102,7 +100,3 @@ class PrivateTest(unittest.TestCase):
                 mock.patch.object(stack, "CACHE", Path(tempfile.mkdtemp())), \
                 mock.patch("urllib.request.urlopen", side_effect=AssertionError("went online")):
             self.assertIsNone(stack.full_doc("Node", "4.7.2-stable"))
-
-
-if __name__ == "__main__":
-    unittest.main()

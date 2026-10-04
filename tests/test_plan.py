@@ -1,6 +1,4 @@
 """Plan mode: a big model writes tickets, the user approves them, a small one does them.
-
-Run: python3 -m unittest discover tests
 The model calls are faked, so no model and no network are needed.
 """
 
@@ -16,8 +14,7 @@ os.environ["PURR_STATE"] = tempfile.mkdtemp()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from harness import agent as agent_module  # noqa: E402
-from harness.agent import (LOG_DIR, MODES, Agent, parse_tickets, read_tickets,  # noqa: E402
-                           write_tickets)
+from harness.agent import (LOG_DIR, Agent, parse_tickets, write_tickets)
 from tests.test_limits import FakeView, reply  # noqa: E402
 
 TICKETS = """Here is the plan.
@@ -438,7 +435,3 @@ class PromptTest(unittest.TestCase):
         self.assertNotIn("mode_models", defaults)
         self.assertNotIn("default_model", defaults)  # purr setup picks it, or the roomiest local model found
         self.assertFalse([n for n, m in defaults["models"].items() if m["provider"] in ("ollama", "llamacpp")])
-
-
-if __name__ == "__main__":
-    unittest.main()

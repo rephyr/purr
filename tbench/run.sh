@@ -6,7 +6,7 @@
 #   tbench/run.sh -l 10 --ak mcp=false        purr without its MCP servers
 #   tbench/run.sh -n 4 ...                    4 tasks at a time (API models only)
 #   PURR_MODEL=<provider>/<id> tbench/run.sh  another model (default: DeepSeek V4.1 Flash on OpenRouter)
-#   PURR_DATASET=terminal-bench@2.0 ...       another dataset (default: Terminal-Bench 4.0)
+#   PURR_DATASET=terminal-bench@2.0 ...       another dataset (default: Terminal-Bench 2.1)
 #   tbench/fair.sh                            the published, fair run (see benchmarks/terminal-bench/)
 #   tbench/run.sh resume <job folder>         run a finished job's trials that broke on Harbor/Docker
 #                                             (RuntimeError: a container that wouldn't start, an image
@@ -36,5 +36,5 @@ if [ "${1:-}" = "resume" ]; then
     exec harbor jobs resume -p "$2" -f RuntimeError
 fi
 # PURR_HARBOR_AGENT: another harness instead of purr (tbench/compare.sh), with the same key and model
-exec harbor run -d "${PURR_DATASET:-terminal-bench/terminal-bench@4.0.0}" -e docker \
+exec harbor run -d "${PURR_DATASET:-terminal-bench/terminal-bench-2-1}" -e docker \
     -a "${PURR_HARBOR_AGENT:-tbench.purr_agent:PurrAgent}" -m "$MODEL" -o "$HOME/.local/state/purr/tbench" "$@"

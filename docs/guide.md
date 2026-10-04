@@ -233,8 +233,6 @@ interactive programs or servers):
 Every chat is saved as JSON in `~/.local/state/purr/sessions/` (`PURR_STATE` moves it, for tests), so you can see exactly what
 the model sent and got back. That's the best way to see why a model did something odd.
 
-`AGENTS.md` in the project folder is added to the system prompt automatically.
-
 The agent never prints anything itself: it calls a *view* (`thinking`, `text`, `tool`, `diff`,
 `note`, `ask`, `status`). `ui.PlainView` prints to the terminal, `tui.app.TuiView` draws in
 Textual. A new front end only needs those methods.

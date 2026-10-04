@@ -1,6 +1,4 @@
 """purr bench --real: reading Harbor's job folder, the score, Mochi's verdict, and the window.
-
-Run: python3 -m unittest discover tests
 No model is called and nothing is benchmarked: the job folders are made up.
 """
 
@@ -452,7 +450,3 @@ class WindowTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(realbench.subprocess, "Popen") as popen:
             fair.start()
         self.assertNotIn("PURR_TIME_MULT", popen.call_args.kwargs["env"])
-
-
-if __name__ == "__main__":
-    unittest.main()

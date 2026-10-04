@@ -1,7 +1,5 @@
 """purr checking the model's work by itself: lint after edits, the placeholder and shrink guards,
 running the tests at the final check, and reminders of the request. No model is called.
-
-Run: python3 -m unittest discover tests
 """
 
 import json
@@ -299,7 +297,3 @@ class ApiFailureTest(unittest.TestCase):
         scripted(a, [reply("done")])
         a.turn("again")
         self.assertIsNone(a.failed)
-
-
-if __name__ == "__main__":
-    unittest.main()

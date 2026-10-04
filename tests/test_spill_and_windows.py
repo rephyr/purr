@@ -1,7 +1,5 @@
 """Cut or pruned output is kept in a file (the model was told "run it again" after it was gone),
 and an edit shows its lines while older reads of the file are marked stale (small models).
-
-Run: python3 -m unittest discover tests
 """
 
 import json
@@ -107,7 +105,3 @@ class EditWindowTest(unittest.TestCase):
         known(a)
         out = a.tools.call("edit_file", json.dumps({"path": "app.py", "old_text": "a = 1", "new_text": "a = 2"}))
         self.assertNotIn("now (lines", out)
-
-
-if __name__ == "__main__":
-    unittest.main()

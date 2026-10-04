@@ -1,7 +1,5 @@
 """Big (API) models: two plans and a judge, the fresh-eyes tester, effort per phase, a fresh
 context, and extras=false for benchmark runs that compare with the published ones.
-
-Run: python3 -m unittest discover tests
 """
 
 import os
@@ -166,7 +164,3 @@ class PromptTest(unittest.TestCase):
     def test_the_tester_reports_in_lines_purr_reads(self):
         for words in ("PASS <requirement>", "FAIL <requirement>", "ALL PASS", "Don't fix or change anything"):
             self.assertIn(words, prompts.TESTER)
-
-
-if __name__ == "__main__":
-    unittest.main()

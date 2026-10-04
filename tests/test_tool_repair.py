@@ -42,7 +42,3 @@ class ToolRepairTest(unittest.TestCase):
         out = self.a.tools.call("wc", json.dumps({"args": "-l notes.txt"}))
         self.assertIn("there is no tool called wc", out)
         self.assertNotIn("3 notes.txt", out)
-
-
-if __name__ == "__main__":
-    unittest.main()

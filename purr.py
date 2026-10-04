@@ -218,14 +218,7 @@ def main():
                             "&& uv run purr bench")
             return 1
         from harness import bench
-        window = sys.stdout.isatty() and sys.stdin.isatty() and "--plain" not in sys.argv
-        if window:
-            try:
-                import textual  # noqa: F401
-            except ImportError:  # the window needs the project's own Python
-                if VENV_PYTHON.exists() and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
-                    os.execv(VENV_PYTHON, [str(VENV_PYTHON), __file__, *sys.argv[1:]])
-                window = False
+        window = sys.stdout.isatty() and sys.stdin.isatty() and "--plain" not in sys.argv and full_screen_python()
         return bench.main(sys.argv[2:], settings.load(), window=window)
     ap = argparse.ArgumentParser(prog="purr", description="tiny coding agent",
                                  epilog="purr setup: the setup window again · purr bench: purr vs OpenCode (from a clone)")

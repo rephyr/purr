@@ -362,8 +362,7 @@ def godot_summary():
         return m.group(1).strip().strip('"') if m else ""
     feats = setting("config/features")
     version = re.search(r'"(\d+\.\d+)"', feats)
-    autoloads = re.findall(r"^(\w+)=\"\*?(res://[^\"]+)\"", text.split("[autoload]")[1].split("\n[")[0], re.M) \
-        if "[autoload]" in text else []
+    autoloads = [(n, f"res://{p}") for n, p in godot_autoloads().items()]
     parts = [f"Godot {version.group(1) if version else '4'} project \"{setting('config/name')}\""]
     if setting("run/main_scene"):
         parts.append(f"main scene {setting('run/main_scene')}")

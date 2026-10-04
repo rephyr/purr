@@ -1,8 +1,6 @@
 """The task reaches purr through a file, not its command line (rstan-to-pystan: `pkill -9 -f
 pystan_analysis` matched the task text on purr's own command line and killed purr), names inside
 commands count as names, and a published run can carry a note.
-
-Run: python3 -m unittest discover tests
 """
 
 import asyncio
@@ -98,7 +96,3 @@ class NoteTest(unittest.TestCase):
         self.assertIn("| 0.5.0+abc † | 2026-10-03 | **80.9%**", page)
         self.assertIn("† 0.5.0+abc: qemu-alpine-ssh and qemu-startup can't pass right now", page)
         self.assertEqual(json.loads(json.dumps(base))["note"], base["note"])
-
-
-if __name__ == "__main__":
-    unittest.main()

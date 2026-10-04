@@ -1,7 +1,5 @@
 """Logic a silent regression in would cost whole benchmark runs, tested directly: tool calls written
 as text, the indentation-forgiving edit match, @file attachments, the free router's switch.
-
-Run: python3 -m unittest discover tests
 No model is called.
 """
 
@@ -97,7 +95,3 @@ class FreeRouterTest(unittest.TestCase):
         a = agent()
         a.router = None
         self.assertFalse(a._next_free(ApiError("429", status=429)))
-
-
-if __name__ == "__main__":
-    unittest.main()

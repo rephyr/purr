@@ -1,6 +1,4 @@
 """Your own agents (harness/agents.py): the files, the modes they become, /agent, and the window.
-
-Run: python3 -m unittest discover tests
 """
 
 import json
@@ -202,7 +200,3 @@ class WindowTest(Folders, unittest.IsolatedAsyncioTestCase):
             await pilot.press("shift+tab")  # and round again to code
             await pilot.pause(0.2)
             self.assertEqual(app.agent.mode, "code")
-
-
-if __name__ == "__main__":
-    unittest.main()
