@@ -17,5 +17,6 @@ atexit.register(shutil.rmtree, _RUN, ignore_errors=True)
 # ...and never reads your own settings: a test that passes only with your config.toml (a
 # report_model, a co-author) fails on a fresh machine (CI found one)
 os.environ["XDG_CONFIG_HOME"] = os.path.join(_RUN, "config")
+os.environ["XDG_DATA_HOME"] = os.path.join(_RUN, "data")  # nor what other tools keep (OpenCode)
 os.environ.pop("PURR_CONFIG", None)
 os.environ.pop("OLLAMA_HOST", None)
