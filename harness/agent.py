@@ -23,6 +23,7 @@ from .limits import LOCAL, Limits
 from .free import FreeRouter, rest_for
 from .mcp import Mcp
 from . import agents as agent_files, checks, minimal
+from .settings import CONFIG_DIR
 from .jobs import Jobs
 from .prompts import (  # noqa: F401 - the words purr says; some only re-exported for others
     SYSTEM, ASK_TOOLS, LEARN, LEARN_NUDGE, LEARN_SHORTEN, PAIR,
@@ -122,7 +123,7 @@ REFINE_MODES = ("auto", "on", "off")
 # PURR_STATE moves saved chats and history elsewhere (tests use it to stay away from your real ones)
 STATE_DIR = Path(os.environ.get("PURR_STATE") or Path.home() / ".local/state/purr")
 LOG_DIR = STATE_DIR / "sessions"
-GLOBAL_NOTES = Path.home() / ".config/purr/AGENTS.md"
+GLOBAL_NOTES = CONFIG_DIR / "AGENTS.md"
 NOTES_FILES = ["AGENTS.md"]
 NOTES_MAX = 20000
 RETRY_WAITS = [5, 15, 30]  # seconds between tries when an API server hiccups (a minute in all)
@@ -402,7 +403,7 @@ def read_tickets(root):
 _OPENCODE_KEYS = {}
 
 
-KEYS_FILE = Path.home() / ".config/purr/keys.toml"  # `purr --key groq` writes here (only you can read it)
+KEYS_FILE = CONFIG_DIR / "keys.toml"  # `purr --key groq` writes here (only you can read it)
 
 
 def saved_key(env_name):

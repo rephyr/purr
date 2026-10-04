@@ -9,6 +9,7 @@ An optional first line "description: ..." is shown in the / menu.
 from pathlib import Path
 
 from . import ui
+from .settings import CONFIG_DIR
 from .agent import list_sessions
 
 # name: (argument hint, what it does). The TUI's / menu is built from this.
@@ -79,7 +80,7 @@ Keep it short (under about 80 lines) and only write what you actually found. \
 If AGENTS.md already exists, improve it instead of starting over.
 $ARGUMENTS"""
 
-GLOBAL_DIR = Path.home() / ".config/purr/commands"
+GLOBAL_DIR = CONFIG_DIR / "commands"
 
 
 def custom(root):

@@ -19,6 +19,30 @@ from harness import tools  # noqa: E402
 from tests.test_limits import agent, known, reply, scripted  # noqa: E402
 
 
+class NoRipgrepTest(unittest.TestCase):
+    """A fresh Mac or CI box has no rg: search and file lists fall back to plain Python."""
+
+    def test_search_and_lists_without_rg(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "src").mkdir()
+        (root / "tests").mkdir()
+        (root / ".git").mkdir()
+        (root / "src" / "shop.py").write_text("PRICE = 3\nprice = 4\n")
+        (root / "tests" / "test_shop.py").write_text("price\n")
+        (root / ".git" / "config").write_text("price\n")
+        (root / "big.bin").write_bytes(b"price\0" * 10)
+        with mock.patch.object(tools.shutil, "which", return_value=None):
+            files = sorted(os.path.relpath(f, root) for f in tools.files_under(root))
+            self.assertEqual(files, ["big.bin", "src/shop.py", "tests/test_shop.py"])  # no hidden folders
+            code, hits = tools.search("price", root, glob="!tests")
+            self.assertEqual((code, [h.replace(str(root) + "/", "") for h in hits]),
+                             (0, ["src/shop.py:1:PRICE = 3", "src/shop.py:2:price = 4"]))  # smart case, no binary
+            self.assertEqual(tools.search("PRICE", root / "src" / "shop.py"), (0, ["1:PRICE = 3"]))
+            self.assertEqual(tools.search("nope", root)[0], 1)
+            self.assertEqual(tools.search("x", root / "missing")[0], 2)
+            self.assertEqual(tools.search("(", root)[0], 2)
+
+
 class SpillTest(unittest.TestCase):
     def setUp(self):
         patcher = mock.patch.object(tools, "SPILL_DIR", Path(tempfile.mkdtemp()) / "purr-out")
