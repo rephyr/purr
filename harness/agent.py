@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -424,19 +425,21 @@ def provider_key(provider):
 
 
 def opencode_key(integration):
-    """A key you saved with `opencode auth login`, so it doesn't have to live in ~/.zshrc too."""
-    if integration in _OPENCODE_KEYS:
-        return _OPENCODE_KEYS[integration]
-    try:
-        out = subprocess.run(["opencode", "auth", "export"], capture_output=True, text=True, timeout=20).stdout
-        creds = json.loads(out)
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return None
-    for c in creds:
-        if c.get("integrationID") == integration and c.get("active", True):
-            _OPENCODE_KEYS[integration] = (c.get("value") or {}).get("key")
-            return _OPENCODE_KEYS[integration]
-    return None
+    """A key you saved with `opencode auth login`, so it doesn't have to live in ~/.zshrc too. OpenCode
+    is asked once per run, and only if it's installed: with no key it took up to 20 s a provider,
+    and purr asks about ~30 of them on first start."""
+    if None not in _OPENCODE_KEYS:  # asked already (None marks it)
+        _OPENCODE_KEYS[None] = True
+        try:
+            out = subprocess.run(["opencode", "auth", "export"], capture_output=True, text=True,
+                                 timeout=5).stdout if shutil.which("opencode") else "[]"
+            creds = json.loads(out)
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            creds = []
+        for c in creds if isinstance(creds, list) else []:
+            if c.get("active", True) and (c.get("value") or {}).get("key"):
+                _OPENCODE_KEYS.setdefault(c.get("integrationID"), c["value"]["key"])
+    return _OPENCODE_KEYS.get(integration)
 
 
 def is_peak(provider):
@@ -528,7 +531,7 @@ class Agent:
         self.time_limit = None   # seconds for a turn (purr --time-limit): reminders at half and four fifths
         self.one_shot = False    # nobody answers questions (purr -p, benchmarks): set_one_shot
         self._echo_all = False   # True once a provider refused trimmed thinking (_for_provider)
-        self.shell = None        # minimal mode's bash session, opened by its first command
+        self._bash = None        # minimal mode's bash session, opened by its first command
         # /refine: "auto" rewrites a short first message into a clear task (you approve it),
         # "on" every message, "off" none. purr bench measured +2 solved hard tasks from vague asks.
         # Unset, it follows the model (auto for local models, off for API ones); /refine or
@@ -1450,9 +1453,9 @@ class Agent:
         if not isinstance(command, str) or not command.strip():
             return f"error: {name} needs a command (the only tool is bash, with one argument: command)"
         self.view.tool(f"run {command[:100]}")
-        if self.shell is None:
-            self.shell = minimal.BashSession(self.root)
-        result = self.shell.run(command)
+        if self._bash is None:
+            self._bash = minimal.BashSession(self.root)
+        result = self._bash.run(command)
         for line in result.splitlines()[-4:]:
             self.view.note(line[:160])
         return result

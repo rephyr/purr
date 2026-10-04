@@ -157,7 +157,8 @@ class FinalCheckTest(unittest.TestCase):
 class PromptTest(unittest.TestCase):
     def test_one_shot_prompt_drops_what_needs_a_person(self):
         normal = agent_module.system_prompt("/app", "m", "openrouter")
-        short = agent_module.system_prompt("/app", "m", "openrouter", one_shot=True)
+        with mock.patch.object(agent_module.Path, "home", return_value=Path("/")):  # a clone outside $HOME
+            short = agent_module.system_prompt("/app", "m", "openrouter", one_shot=True)  # adds no purr-folder note
         self.assertIn("running inside purr", normal)
         self.assertIn("approves every edit", normal)
         self.assertNotIn("running inside purr", short)

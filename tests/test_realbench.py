@@ -329,7 +329,7 @@ class WindowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(local.cat_label, f"{local.name_} is benchmarking")
         real.mood("proud", "x", label="custom")
         self.assertEqual((real.cat_label, real.cat_detail), ("custom", "x"))
-        with mock.patch.object(window.subprocess, "Popen") as popen:
+        with mock.patch.object(window.subprocess, "Popen") as popen, mock.patch.object(window.sys, "platform", "linux"):
             real.open_path(None)
             real.open_path(Path("/tmp/job"))
         self.assertEqual(popen.call_args.args[0], ["xdg-open", "/tmp/job"])

@@ -103,6 +103,6 @@ and OpenCode **14**. Published runs: [benchmarks/](benchmarks/) · how they're r
 - [docs/guide.md](docs/guide.md): every command, mode and setting
 - [packaging/](packaging/): releases, PyPI, the AUR
 - [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
-- Tests: `python3 -m unittest discover -s tests -t .` (no model is called)
+- Tests: `uv sync && uv run python -m unittest discover -s tests -t .` (no model is called)
 
 MIT licensed.
