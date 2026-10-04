@@ -8,8 +8,8 @@
 --note: a footnote under the run's row, for something a reader should know about it.
 
 --pr: then everything not committed (the new results and pages, and anything else waiting) goes
-into one pull request on a branch of its own, co-authored by purr-<report_model> (config.toml:
-co_author_email, report_model), and the checkout goes back to where it was.
+into one pull request on a branch of its own, labelled with report_model from your config.toml (and
+co-authored like /pr's, with co_author_email), and the checkout goes back to where it was.
 
 A run stopped part-way can be filed with --stopped and a note saying why: it goes in its own table
 of stopped runs (the score over the tasks graded before it stopped), never next to the real ones.
@@ -402,7 +402,7 @@ def row(r, full):
             f"{short(r['tokens_out'])} | {r['median_agent_minutes']} min |")
 
 
-REPORT_MODEL = "claude-opus-5.5"  # the co-author model on report PRs (config.toml report_model)
+REPORT_MODEL = "bench"  # the model label on report PRs (config.toml report_model)
 
 
 def report_pr(summaries):

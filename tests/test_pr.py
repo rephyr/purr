@@ -39,7 +39,7 @@ class PRTest(unittest.TestCase):
         scripted(self.a, [reply("TITLE: Make x two\nBODY:\n- x is 2 now")])
         self.assertEqual(pr.draft(self.a), (f"Make x two · {self.a.model_name}", "- x is 2 now"))
 
-    def test_create_branches_commits_with_co_author_and_pushes(self):
+    def test_create_branches_commits_and_pushes(self):
         with self.assertRaises(RuntimeError) as err:  # no GitHub here, so gh pr create fails
             pr.create(self.a, "Make x two", "- x is 2 now")
         self.assertIn("pushed purr/make-x-two", str(err.exception))
@@ -48,7 +48,7 @@ class PRTest(unittest.TestCase):
         self.assertEqual(title.strip(), f"Make x two · {self.a.model_name}")  # the model in the top bar
         root = self.a.root
         msg = subprocess.run(["git", "log", "-1", "--format=%B"], cwd=root, capture_output=True, text=True).stdout
-        self.assertIn(f"Co-Authored-By: purr-{self.a.model_name} <", msg)
+        self.assertNotIn("Co-Authored-By", msg)  # only when you set one up (co_author_email)
         self.assertIn(f"Model: {self.a.model_name}", msg)
         branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root,
                                 capture_output=True, text=True).stdout.strip()

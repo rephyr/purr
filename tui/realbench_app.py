@@ -709,7 +709,7 @@ class RealBenchApp(BenchWindow):
     @work(thread=True)
     def publish_in_background(self, runs):
         """publish.py writes every run, then wraps everything not committed into one pull request
-        (co-authored by purr-harness): seconds of git and gh, not on the window's own thread."""
+        (co-authored as /pr does): seconds of git and gh, not on the window's own thread."""
         res = subprocess.run(["python3", str(realbench.ROOT / "tbench" / "publish.py"), "--pr",
                               *[str(r["job"]) for r in runs]], capture_output=True, text=True, cwd=realbench.ROOT)
         self.call_from_thread(self.published_it, runs, res.returncode, (res.stdout + res.stderr).strip().splitlines())

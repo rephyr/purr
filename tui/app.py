@@ -1442,12 +1442,14 @@ class PurrApp(App):
     # ---- copying: drag over any text to copy it; ctrl+c copies a selection too ----
 
     def copy_text(self, text):
-        """To the clipboard, two ways: through the terminal (OSC 52, kitty allows it) and
-        with wl-copy on Wayland, in case the terminal says no."""
+        """To the clipboard, two ways: through the terminal (OSC 52, kitty allows it) and with
+        the system's copy tool, in case the terminal says no."""
         self.copy_to_clipboard(text)
-        if shutil.which("wl-copy"):
+        tool = next((t for t in (["wl-copy"], ["pbcopy"], ["xclip", "-selection", "clipboard"], ["xsel", "-ib"])
+                     if shutil.which(t[0])), None)
+        if tool:
             try:
-                subprocess.run(["wl-copy"], input=text, text=True, timeout=3)
+                subprocess.run(tool, input=text, text=True, timeout=3)
             except (OSError, subprocess.SubprocessError):
                 pass
         lines = text.count("\n") + 1
