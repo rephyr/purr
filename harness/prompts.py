@@ -407,3 +407,65 @@ They can be wrong too: for each FAIL, read the request's words again, then fix i
 show the check misread it. A check that errors or SKIPs proves nothing.)
 """
 
+
+# ---- big (API) models: they rarely loop, but the same task passes in one run and fails in the next
+# (DeepSeek V4.1 Flash, two full Terminal-Bench runs: 11 of 89 tasks flipped). So: pick the approach
+# from two independent drafts, and have a fresh pair of eyes test the result.
+
+PLAN_DRAFT = """You plan how to solve a task before anyone starts on it. You see only the request and \
+what is on the machine now. {angle}
+
+The request:
+{request}
+
+On the machine now:
+{files}
+
+Write the plan in at most 12 short lines: the approach (name the tools, libraries, file paths); the \
+hard requirements it must meet, in the request's own words; what is most likely to go wrong and how to \
+avoid it; and how to check the finished result the way the request's user will use it. No code."""
+PLAN_ANGLES = ("Take the most direct, standard way a careful expert would.",
+               "First work out what a quick solution would most likely get wrong (a scope, a format, an \
+edge case, the time it takes, how it will really be run), then plan around those.")
+PLAN_PICK = """Two people planned the same task independently. Pick the plan more likely to fully meet \
+the request, and improve it with anything the other got right that it misses (a requirement, a risk, a \
+check). Judge only by the request.
+
+The request:
+{request}
+
+Plan A:
+{a}
+
+Plan B:
+{b}
+
+Answer with the final plan only, at most 15 short lines, starting with "PLAN:"."""
+PLAN_NOTE = """
+
+(purr: before any code, two independent plans were drafted and the better one kept. Follow it unless \
+what you find on the machine says otherwise:
+{plan})"""
+
+TESTER = """
+
+You are a tester. Another agent says it has finished the task below; you didn't see its work and you \
+don't trust it. Check every hard requirement independently, the way the task's user (or an automatic \
+grader) will: run the deliverable as the request says it will be run, feed it the inputs the request \
+describes, compare against what the request demands. Read the code only to find out how to run it. \
+Don't fix or change anything: write any scratch files under /tmp and remove them. Be quick: a few \
+commands per requirement.
+
+Then reply in exactly this form and nothing else:
+PASS <requirement>: <the command and what it showed>
+FAIL <requirement>: <the command, what it showed, and what the request demands>
+one line per requirement, and at the end ALL PASS if nothing failed."""
+TESTER_TASK = """The task, word for word:
+{request}
+
+Files the other agent changed or made: {files}"""
+FRESH_NOTE = """(purr: a tester with a fresh context, who never saw your work, ran checks against the \
+request and reports:
+{findings}
+Its checks can be wrong too: for each FAIL, read the request's words again and reproduce it, then fix \
+what's really wrong. After any change, run your end-to-end check again. Then finish in at most 3 lines.)"""

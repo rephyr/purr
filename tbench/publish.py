@@ -386,6 +386,8 @@ def label(r):
     settings = r.get("settings") or {}
     on = [name for key, name in VARIANTS.items()
           if str(settings.get(key, "")).lower() not in ("", "false", "0", "no", "off", "none")]
+    if str(settings.get("extras", "")).lower() in ("false", "0", "no", "off"):
+        on.append("without the newer checks")
     more_time = float(settings.get("agent_timeout_multiplier") or 1.0)
     if more_time != 1.0:
         on.append(f"×{more_time:g} time")

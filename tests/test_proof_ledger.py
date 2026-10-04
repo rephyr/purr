@@ -51,12 +51,15 @@ class LedgerTest(unittest.TestCase):
             del os.environ["PURR_LEDGER_SECRET"]
         self.assertFalse([u for u in users(a) if u.startswith("(purr ran your checks again")])  # it passed: env -i
 
-    def test_api_models_dont_get_it(self):
-        a = one_shot("api", time_limit=900)  # light training wheels
-        scripted(a, [reply("", tool=("write_file", {"path": "out.txt", "content": "41\n"})),
-                     todo(("out.txt says 42", "grep -qx 42 out.txt")), reply("Done."), reply("ok"), reply("ok")])
-        a.turn("write 42 to out.txt")
-        self.assertFalse([u for u in users(a) if u.startswith("(purr ran your checks again")])
+    def test_every_model_gets_it_unless_turned_off(self):
+        for on in (True, False):
+            a = one_shot("api", time_limit=900)  # cheap: API models get it too
+            if not on:
+                a.config = dict(a.config, proof_ledger=False)
+            scripted(a, [reply("", tool=("write_file", {"path": "out.txt", "content": "41\n"})),
+                         todo(("out.txt says 42", "grep -qx 42 out.txt")), reply("Done."), reply("ok"), reply("ok")])
+            a.turn("write 42 to out.txt")
+            self.assertEqual(bool([u for u in users(a) if u.startswith("(purr ran your checks again")]), on)
 
     def test_the_todo_list_keeps_its_checks(self):
         a = one_shot("small")

@@ -259,12 +259,22 @@ edge-case step in the final check; API models (which `purr bench` showed don't n
 DeepSeek V4.1 Flash they only made purr slower) get a short final check instead. Setting
 `refine`, `reminders` or `edge_cases` in your config (or `/refine ...`) overrides that.
 
-In one-shot runs (`purr -p`, benchmarks), local models also get:
-acceptance checks written from the request alone before any code (`blind_checks`); their own
-checks rerun in a fresh shell before they may stop (`proof_ledger`); limits the task states
+In one-shot runs (`purr -p`, benchmarks), every model gets three cheap checks: its own
+checks rerun in a fresh shell before it may stop (`proof_ledger`); limits the task states
 (under 1 s, at most 50 MB) measured rather than assumed (`margin_check`); and a watch on
-background jobs (with a time limit) that reads their logs and says when one won't finish in the time left or has
-stalled, plus a reminder to time a small piece of a long run first (`job_watch`).
+background jobs (with a time limit) that reads their logs and says when one won't finish in the
+time left or has stalled, plus a reminder to time a small piece of a long run first (`job_watch`).
+Local models also get acceptance checks written from the request alone before any code
+(`blind_checks`).
+
+Big API models rarely loop, but the same task can pass in one run and fail in the next (11 of
+89 Terminal-Bench tasks flipped between two DeepSeek runs). So in one-shot runs they get two
+independent plans before any code, with a third call keeping the better one (`two_plans`); a
+tester with a fresh chat and no view of the work, which runs checks against the request before
+the run finishes and sends its FAILs back (`fresh_eyes`); and more reasoning effort for the
+first step, the checks and the judging (`effort_phases`, DeepSeek and OpenRouter). In any chat,
+past 160k tokens an API model goes on from a summary (`fresh_context`, `fresh_at`). Benchmark
+runs take `--ak extras=false` to leave all of these out and compare with the published runs.
 
 ## Different models, different limits
 purr adapts to the model it is running. A model's `context` (found by itself for local models) sets how big a
