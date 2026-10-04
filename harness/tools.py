@@ -88,6 +88,8 @@ SCHEMAS = [
         "items": {"type": "array", "items": {"type": "object", "properties": {
             "text": {"type": "string"},
             "status": {"type": "string", "enum": ["pending", "doing", "done"]},
+            "check": {"type": "string", "description": "optional: a shell command that exits 0 only when "
+                      "this item holds (purr runs it again before the end)"},
         }, "required": ["text", "status"]}},
     }, ["items"]),
     _schema("task", "Hand a research job to a helper with a fresh, empty memory. It can only read "
@@ -758,7 +760,8 @@ class Tools:
         return f"(the image {path} comes right after this)"
 
     def t_todo(self, items):
-        clean = [{"text": str(i.get("text", "")), "status": i.get("status", "pending")}
+        clean = [{"text": str(i.get("text", "")), "status": i.get("status", "pending"),
+                  **({"check": i["check"].strip()} if isinstance(i.get("check"), str) and i["check"].strip() else {})}
                  for i in items if isinstance(i, dict)]
         self.view.todos(clean)
         self.todo_list = clean
