@@ -51,13 +51,30 @@ def load(discover=True):
     path = os.environ.get("PURR_CONFIG")
     if path:
         return tomllib.loads(Path(path).read_text())
-    config = merge(tomllib.loads(DEFAULTS.read_text()), user_config())
+    mine = user_config()
+    config = merge(tomllib.loads(DEFAULTS.read_text()), mine)
+    host = ollama_host(os.environ.get("OLLAMA_HOST", ""))
+    if host and "base_url" not in (mine.get("providers") or {}).get("ollama", {}):
+        config["providers"]["ollama"]["base_url"] = host + "/v1"  # Ollama elsewhere: WSL, another machine
     if discover:
         from harness.discover import add_found
         add_found(config)
     if config.get("default_model") not in config.get("models", {}):
         config["default_model"] = pick_default(config)
     return config
+
+
+def ollama_host(value):
+    """OLLAMA_HOST as Ollama's own CLI reads it ("host", "host:port", "http://host:port") -> its URL,
+    or "" when unset. 0.0.0.0 (what a server listens on) means this machine."""
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    scheme, _, rest = value.rpartition("://")
+    host, _, port = rest.partition(":")
+    host = "127.0.0.1" if host in ("", "0.0.0.0") else host
+    port = port or {"http": 80, "https": 443}.get(scheme, 11434)  # a scheme given: its usual port, as Ollama does
+    return f"{scheme or 'http'}://{host}:{port}"
 
 
 def usable(config, name):

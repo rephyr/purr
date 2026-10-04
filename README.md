@@ -19,6 +19,10 @@ Or with uv: `uv tool install git+https://github.com/rephyr/purr`.
 git clone https://github.com/rephyr/purr && cd purr/packaging/aur/purr-agent-git && makepkg -si
 ```
 
+**Windows:** run purr inside WSL (`wsl --install`). For Ollama on the Windows side, turn on WSL's
+mirrored networking (`networkingMode=mirrored` in `.wslconfig`) or set `OLLAMA_HOST` to its address.
+Ollama on another machine works the same way.
+
 ## First start
 
 Run `purr` in a project folder. A setup window walks you through it:

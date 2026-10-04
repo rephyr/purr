@@ -12,6 +12,10 @@ HERE = Path(__file__).resolve().parent
 VENV_PYTHON = HERE / ".venv/bin/python"
 sys.path.insert(0, str(HERE))
 
+if os.name == "nt":  # its shell and terminal tools need a POSIX system (pty, bash)
+    sys.exit("purr runs on Linux and macOS. On Windows, run it inside WSL: `wsl --install`, then "
+             "install purr in the WSL terminal (README: Windows).")
+
 from harness import commands, settings, ui  # noqa: E402
 from harness.agent import STATE_DIR, Agent, list_sessions  # noqa: E402
 
