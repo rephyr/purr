@@ -1,0 +1,23 @@
+name: Bug
+description: Something broke or behaved oddly
+body:
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you typed, what purr did, what you expected.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: purr version and OS
+      placeholder: "purr --version · Arch Linux / macOS 15 / WSL Ubuntu"
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Model and provider
+      placeholder: "qwen3.6-27b on Ollama, 32k context"
+  - type: textarea
+    attributes:
+      label: Session log
+      description: From ~/.local/state/purr/sessions/ (check it for anything private first).

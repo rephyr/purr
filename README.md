@@ -87,6 +87,12 @@ and OpenCode work too.
 - **Loops get caught:** reworking the same file over and over triggers a step back.
 - **Plan mode** splits big tasks into small tickets.
 
+## Privacy
+
+No telemetry, no account. purr talks only to the model provider you pick, to web pages the model
+fetches, and to GitHub for Godot docs. Chats are saved on your machine (`~/.local/state/purr`).
+`/private` switches to local models only: no web, and the chat isn't saved.
+
 ## Benchmarks
 
 On Terminal-Bench's quick set (DeepSeek V4.1 Flash, one try each), purr solved **16 of 17** tasks
@@ -96,6 +102,7 @@ and OpenCode **14**. Published runs: [benchmarks/](benchmarks/) · how they're r
 
 - [docs/guide.md](docs/guide.md): every command, mode and setting
 - [packaging/](packaging/): releases, PyPI, the AUR
+- [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
 - Tests: `python3 -m unittest discover -s tests -t .` (no model is called)
 
 MIT licensed.
