@@ -9,6 +9,7 @@ import difflib
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -25,7 +26,7 @@ from .prompts import (  # noqa: F401 - the words purr says; some only re-exporte
     TIME_NOTES, CUT_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK,
     ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
-    ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT, GAP_NUDGE,
+    ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT, GAP_NUDGE, LEDGER_NOTE,
 )
 from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, run_shell, schemas
 
@@ -91,6 +92,10 @@ SYSTEM_DIRS = {"bin", "boot", "dev", "etc", "home", "lib", "lib64", "opt", "proc
 INTERACTIVE = re.compile(r"\b(ssh|qemu|vm|repl|interactive|tmux|telnet|gdb)\b", re.I)
 
 # a final reply that hands a choice back to someone who isn't there
+# the proof ledger: checks not worth running again at the end (slow), and ones that prove little
+LEDGER_SLOW = re.compile(r"\b(train|fit|epochs?|boot|qemu|docker|pip install|apt(-get)? install|npm install)\b", re.I)
+LEDGER_EMPTY = re.compile(r"^\s*(ls|test -[efs]|\[ -[efs]|true|cat|echo|stat|file)\b")
+
 # the final reply admits part of the work isn't done (harness: _admitted_gap)
 GAP = re.compile(r"\b(best[- ]effort|best guess|not (?:been )?verified|unverified|couldn'?t (?:get|make|verify|find a way)|"
                  r"could not (?:get|make|verify)|unable to|a stub\b|placeholder|not the real|falls? short|short of the|"
@@ -1441,6 +1446,7 @@ class Agent:
         self._hedged = False   # one-shot: told once that nobody will answer its question
         self._evidence = False  # one-shot: the second look (EVIDENCE_PASS) at most once
         self._gap_said = False  # one-shot: an admitted gap sent back at most once
+        self._ledger_gen, self._ledger_runs, self._ledger_sent = -1, 0, 0  # _ledger_rerun
         self._disk_before = self._disk_snapshot() if self.one_shot and not self.helper else None
         self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
         self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
@@ -1522,8 +1528,48 @@ class Agent:
     def _one_more_look(self, reply_text):
         """The model wants to stop: every check that may send it back once, in order. True when one
         did (the turn goes on). One place, so a new check can't end up in only one of the stops."""
-        return (self._final_check(reply_text) or self._admitted_gap(reply_text) or self._evidence_pass()
-                or self._review() or self._learn_check() or self._hedge(reply_text))
+        return (self._final_check(reply_text) or self._admitted_gap(reply_text) or self._ledger_rerun()
+                or self._evidence_pass() or self._review() or self._learn_check() or self._hedge(reply_text))
+
+    def _ledger_rerun(self):
+        """The proof ledger (small models; proof_ledger = false turns it off): the todo items' check
+        commands, run again by purr itself in a fresh shell (no environment, no stdin) when files
+        changed since the last time. A failing one goes back, at most twice a turn. True when sent."""
+        if not (self.one_shot and self.coding) or self.helper or not self._helper_on("proof_ledger"):
+            return False
+        items = [i for i in self.tools.todo_list if i.get("check")][:12]
+        if not items or self._ledger_sent >= 2 or (self._ledger_runs and self._ledger_gen == self.tools.edit_gen):
+            return False
+        left = self._minutes_left()
+        budget = min(300, left * 6) if left else 300  # about 10% of the time left, at most 5 minutes
+        per = max(10, int(budget / len(items)))
+        rows, failed = [], 0
+        self.view.note("♡ purr runs your checks again, in a fresh shell")
+        for item in items:
+            cmd, text = item["check"], item["text"][:70]
+            if LEDGER_SLOW.search(cmd):
+                rows.append(f"… {text}: not run again (slow): {cmd[:80]}")
+                continue
+            if self.tools._benchmark_lookup(cmd):
+                rows.append(f"✗ {text}: refused (it looks the benchmark up)")
+                failed += 1
+                continue
+            output, code = run_shell(f"env -i PATH=\"$PATH\" HOME=\"$HOME\" LANG=C.UTF-8 bash -c "
+                                     f"{shlex.quote(cmd)} </dev/null", self.root, per)
+            if code == 0:
+                rows.append(f"✓ {text}" + ("  (proves little: it only shows a file is there)"
+                                            if LEDGER_EMPTY.match(cmd) else ""))
+            else:
+                failed += 1
+                tail = " | ".join(output.strip().splitlines()[-3:])[:240]
+                rows.append(f"✗ {text}: `{cmd[:100]}` exit {code}: {tail}")
+        self._ledger_gen, self._ledger_runs = self.tools.edit_gen, self._ledger_runs + 1
+        if not failed:
+            return False
+        self._ledger_sent += 1
+        self.tools.repairs.append("a check from the task list failed when purr ran it again -> sent back")
+        self.messages.append({"role": "user", "content": LEDGER_NOTE.format(rows="\n".join(rows))})
+        return True
 
     def _admitted_gap(self, reply):
         """A one-shot run whose final reply says part of the work isn't done ("best guess", "a stub",

@@ -331,7 +331,8 @@ ONE_SHOT_LINE = (
     "- Hard requirements (exact paths, names, format, size/time/score limits) are part of done.\n"
     # a requirement misread at the start stays misread ("all winning moves" became "a move")
     "- First put the request's requirements in your todo list, one each, quoting the words that set "
-    "them (all, only, exactly, every, at least, unless); check them off with evidence as you go.\n"
+    "them (all, only, exactly, every, at least, unless), each with a check: a command exiting 0 when it "
+    "holds.\n"
     "- Hidden tests will check your files on other inputs; they aren't on this machine. Scratch files go in /tmp.\n"
     "- Never edit what the task runs your work with (emulator, test script): tests bring their own copy. "
     "Undo test leftovers (keys, users, pushes).")
@@ -355,3 +356,10 @@ STEP_BACK = ("(purr: you have changed {what} {n} times now and it still isn't do
 CHECKPOINT = ("(purr: checkpoint after {steps} steps. The request: {request}\n"
               "In 3 short lines: what is done and proven, what is left, and whether your current "
               "approach is getting closer. If it isn't, switch to a different approach now.)")
+
+# the proof ledger (small models): purr runs the todo items' checks again itself, in a fresh shell, before
+# the run ends and after any later change: late fixes broke work that had been checked (filter-js, doom)
+LEDGER_NOTE = """(purr ran your checks again itself, in a fresh shell:
+{rows}
+Fix what fails (a late change may have broken it), then finish in at most 3 lines.)"""
+
