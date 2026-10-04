@@ -374,3 +374,34 @@ LIMIT_NOTE = """(purr compared your measurements with the limits:
 A limit missed, met with almost no room, unmeasured or not backed by a command's output: fix it now, \
 getting headroom from the method (not by tuning to the example data). Then finish in at most 3 lines.)"""
 
+# blind acceptance checks (small models): written from the request alone before any code exists, so they
+# don't share the solver's blind spots (it checked per file where the request said across both, cosine
+# where it said equal, lowercased text the grader never sends)
+BLIND_SPEC = """You write acceptance checks for a task before anyone has solved it. You see only the request \
+and what is on the machine now, never a solution.
+
+The request:
+{request}
+
+On the machine now:
+{files}
+
+Answer in exactly this form and nothing else:
+SPEC:
+- up to 6 short lines a solver could easily get wrong: exact paths and names; the scope of each limit \
+(per, each, across, total); what "equal", "same" or "matches" means (exact, element-wise); the input the \
+user will feed it (raw, not cleaned up); how it will be run and how long that may take
+CHECKS:
+```sh
+# at most {checks} checks. Each: a comment quoting the request words it tests, then commands that print
+# "PASS <n>" or "FAIL <n>: <why>". Run the deliverable the way the request says its user will; don't
+# assume function names or internals the request doesn't give; print "SKIP <n>" when what it needs isn't
+# there yet. No network.
+```"""
+BLIND_NOTE = """(purr ran the checks an independent reader wrote from the request alone, before your code \
+existed:
+{rows}
+They can be wrong too: for each FAIL, read the request's words again, then fix it or say which words \
+show the check misread it. A check that errors or SKIPs proves nothing.)
+"""
+

@@ -35,6 +35,7 @@ class FakeView:
 
 
 CONFIG = {
+    "blind_checks": False,  # its extra first call would shift every scripted reply (tests/test_blind_checks.py has it on)
     "providers": {"ollama": {"base_url": "http://127.0.0.1:1/v1"}, "openrouter": {"base_url": "http://127.0.0.1:1/v1"}},
     "models": {
         "small": {"provider": "ollama", "id": "small", "context": 32768},

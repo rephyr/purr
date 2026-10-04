@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from .prompts import (  # noqa: F401 - the words purr says; some only re-exporte
     ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
     ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT, GAP_NUDGE, LEDGER_NOTE,
-    MEASURE_ASK, LIMIT_NOTE,
+    MEASURE_ASK, LIMIT_NOTE, BLIND_SPEC, BLIND_NOTE,
 )
 from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, run_shell, schemas
 
@@ -1469,7 +1470,76 @@ class Agent:
             content += "\n\n" + TIME_INTRO.format(minutes=max(1, round(self.time_limit / 60)))
             if len(self.messages) == 1:
                 content += self._probe()
+        if len(self.messages) == 1:
+            content += self._blind_card(text)
         return content
+
+    # ---- blind acceptance checks (small models; blind_checks = false turns them off) ----
+
+    def _blind_card(self, request):
+        """Before any code: one tool-less call that sees only the request and the machine writes the
+        spec card (what's easy to get wrong) and a check script purr runs at the final check."""
+        self._blind_script = None
+        if not (self.one_shot and self.coding) or self.helper or not self._helper_on("blind_checks"):
+            return ""
+        small = self.limits.context <= 65_536
+        prompt = BLIND_SPEC.format(request=_ends(request, 4000, 1500), files=self._given_files(),
+                                   checks=3 if small else 6)
+        self.view.activity("thinking", "an independent reading of the request")
+        try:
+            reply = self._call([{"role": "user", "content": prompt}], tools=False, quiet=True)
+        except ApiError:
+            return ""
+        self._count(reply.get("usage"))
+        text = reply.get("text") or ""
+        card = text.split("SPEC:", 1)[1].split("CHECKS:", 1)[0].strip() if "SPEC:" in text else ""
+        script = re.search(r"```(?:sh|bash)?\n(.*?)```", text.split("CHECKS:", 1)[-1], re.S)
+        if script and re.search(r"\b(PASS|FAIL)\b", script.group(1)):
+            folder = Path(tempfile.gettempdir()) / f"purr-accept-{os.getpid()}"
+            folder.mkdir(parents=True, exist_ok=True)
+            self._blind_script = folder / f"check-{int(time.time())}.sh"
+            self._blind_script.write_text(script.group(1))
+        if not card:
+            return ""
+        return ("\n\n(purr: an independent reading of the request, written before any code, says these are "
+                f"easy to get wrong:\n{card[:1500]})")
+
+    def _given_files(self, limit=6000):
+        """What's in the project now: file names, and the start of small text files."""
+        names = sorted(os.path.relpath(p, self.root) for p in (getattr(self, "_disk_before", None) or {}))
+        out = ["files: " + (", ".join(names[:60]) + (" …" if len(names) > 60 else "") if names else "(none)")]
+        size = len(out[0])
+        for name in names[:30]:
+            p = self.root / name
+            try:
+                if p.stat().st_size > 20_000:
+                    continue
+                head = "".join(p.read_text(errors="strict").splitlines(True)[:15])
+            except (OSError, UnicodeDecodeError):
+                continue
+            if size + len(head) > limit:
+                break
+            out.append(f"--- {name}\n{head}")
+            size += len(head)
+        probe = self._probe().strip()
+        return "\n".join(out + ([probe] if probe else []))
+
+    def _blind_report(self):
+        """The blind checks, run by purr at the final check: "" when there are none."""
+        script = getattr(self, "_blind_script", None)
+        if not script or not Path(script).exists():
+            return ""
+        if self.tools._benchmark_lookup(Path(script).read_text()):
+            return ""
+        left = self._minutes_left()
+        output, code = run_shell(f"sh {shlex.quote(str(script))} </dev/null", self.root,
+                                 min(120, max(20, left * 6)) if left else 120)
+        rows = [line.strip() for line in output.splitlines() if re.match(r"\s*(PASS|FAIL|SKIP)\b", line)]
+        if not rows:
+            rows = ["(none of them got to say: " + " | ".join(output.strip().splitlines()[-3:])[:300] + ")"]
+        if any(r.startswith("FAIL") for r in rows):
+            self.tools.repairs.append("a blind check from the request failed -> shown at the final check")
+        return BLIND_NOTE.format(rows="\n".join(rows[:12]))
 
     def _make_room(self):
         """Before a call: trim old tool output when the context fills up, and compact when that's
@@ -1693,7 +1763,7 @@ class Agent:
             check = (FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT).format(services=services)
         if self.one_shot and self._helper_on("margin_check"):
             check = check[:-1] + MEASURE_ASK + ")" if check.endswith(".)") else check + MEASURE_ASK
-        self.messages.append({"role": "user", "content": self._test_report() + check})
+        self.messages.append({"role": "user", "content": self._test_report() + self._blind_report() + check})
         return True
 
     def _new_files_note(self):
