@@ -32,7 +32,7 @@ from .prompts import (  # noqa: F401 - the words purr says; some only re-exporte
     MEASURE_ASK, LIMIT_NOTE, BLIND_SPEC, BLIND_NOTE,
     PLAN_DRAFT, PLAN_ANGLES, PLAN_PICK, PLAN_NOTE, TESTER, TESTER_TASK, FRESH_NOTE,
 )
-from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, run_shell, schemas
+from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, files_under, run_shell, schemas, search
 
 
 LEARN_TODO_LINES = 4  # a longer TODO(you) comment has usually written out the answer
@@ -2076,12 +2076,12 @@ class Agent:
         """Pair mode: remember the project's text files, so the next message can show the model
         what the user changed in their own editor meanwhile."""
         try:
-            res = subprocess.run(["rg", "--files"], capture_output=True, text=True, timeout=10, cwd=self.root)
+            listed = [os.path.relpath(f, self.root) for f in files_under(self.root)]
         except (OSError, subprocess.SubprocessError):
             self._pair_files = None
             return
         files = {}
-        for rel in res.stdout.splitlines()[:PAIR_SNAPSHOT_FILES]:
+        for rel in listed[:PAIR_SNAPSHOT_FILES]:
             path = self.root / rel
             try:
                 if path.stat().st_size < 200_000:
@@ -2142,11 +2142,11 @@ class Agent:
     def learn_todos(self):
         """Where the TODO(you) pieces are: ["inventory.gd:12", ...]."""
         try:
-            res = subprocess.run(["rg", "-n", "--fixed-strings", "--max-count", "20", TODO_YOU, "."],
-                                 capture_output=True, text=True, timeout=10, cwd=self.root)
+            code, found = search(TODO_YOU, self.root, fixed=True, per_file=20)
         except (OSError, subprocess.SubprocessError):
             return []
-        return [":".join(line.removeprefix("./").split(":", 2)[:2]) for line in res.stdout.splitlines()][:20]
+        root = str(self.root) + "/"
+        return [":".join(line.removeprefix(root).split(":", 2)[:2]) for line in found if code == 0][:20]
 
     def _helper_on(self, key):
         """A training-wheels helper (reminders, edge_cases): config.toml decides if it's set there,

@@ -114,6 +114,52 @@ ARG_ALIASES = {"file_path": "path", "filePath": "path", "filename": "path", "fil
 UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 READ_ONLY = {"read_file", "list_files", "grep", "fetch_url"}
+SKIP_DIRS = {"node_modules", "__pycache__", "venv", "dist", "build", "target"}  # besides hidden ones
+
+
+def files_under(base, glob=None):
+    """The files below base, as `rg --files` lists them. ripgrep when it's installed (fast, knows
+    .gitignore); plain Python when it isn't (a fresh Mac or CI box), skipping hidden and build folders."""
+    if shutil.which("rg"):
+        cmd = ["rg", "--files", str(base)] + (["--glob", glob] if glob else [])
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout.splitlines()
+    base = Path(base)
+    if base.is_file():
+        return [str(base)]
+    negate, glob = (glob or "").startswith("!"), (glob or "").lstrip("!")
+    out = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in SKIP_DIRS)
+        for name in sorted(filenames):
+            path = os.path.join(dirpath, name)
+            if name.startswith(".") or (glob and negate == (fnmatch.fnmatch(name, glob)
+                                                          or fnmatch.fnmatch(os.path.relpath(path, base), glob))):
+                continue
+            out.append(path)
+    return out
+
+
+def search(pattern, base, glob=None, fixed=False, per_file=50, columns=300):
+    """`rg -n --smart-case` over base: (exit code, lines). 0 found, 1 nothing, 2 an error (the lines
+    then say what). Plain Python when ripgrep isn't installed; a single file gives "line:text"."""
+    if shutil.which("rg"):
+        cmd = ["rg", "-n", "--smart-case", "--max-columns", str(columns), "--max-count", str(per_file)]
+        cmd += (["--glob", glob] if glob else []) + (["--fixed-strings"] if fixed else []) + ["--", pattern, str(base)]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        return res.returncode, (res.stdout if res.returncode < 2 else res.stderr).strip().splitlines()
+    try:  # smart case: an all-lower-case pattern ignores case
+        rx = re.compile(re.escape(pattern) if fixed else pattern, re.I if pattern == pattern.lower() else 0)
+    except re.error as e:
+        return 2, [f"regex parse error: {e}"]
+    single, hits = Path(base).is_file(), []
+    for f in files_under(base, glob):
+        try:
+            lines = Path(f).read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue  # binary or unreadable, as rg skips them
+        found = [(n, line) for n, line in enumerate(lines, 1) if rx.search(line)][:per_file]
+        hits += [f"{n}:{line[:columns]}" if single else f"{f}:{n}:{line[:columns]}" for n, line in found]
+    return (0 if hits else 1), hits
 TOOL_NAMES = {s["function"]["name"] for s in SCHEMAS}  # an MCP tool with one of these names isn't offered
 SHELL_CHAINING = set(";&|`$()<>\n")
 # commands where the second word matters for "always allow" (git status vs git push)
@@ -486,11 +532,7 @@ class Tools:
         return body or "(empty file)"
 
     def t_list_files(self, path=".", glob=None):
-        cmd = ["rg", "--files", str(self._path(path))]
-        if glob:
-            cmd[2:2] = ["--glob", glob]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        files = [os.path.relpath(f, self.root) for f in res.stdout.splitlines()]
+        files = [os.path.relpath(f, self.root) for f in files_under(self._path(path), glob)]
         files.sort()
         most = self.limits.list_files
         if len(files) > most:
@@ -500,16 +542,12 @@ class Tools:
     def t_grep(self, pattern, path=".", glob=None):
         # smart case: "discount" also finds HAPPY_HOUR_DISCOUNT; "Discount" only matches exactly.
         # Without it a model's lower-case search comes back empty and it reads whole files instead.
-        cmd = ["rg", "-n", "--smart-case", "--max-columns", "300", "--max-count", "50", pattern,
-               str(self._path(path))]
-        if glob:
-            cmd[1:1] = ["--glob", glob]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=self.root)
-        if res.returncode == 1:
+        code, found = search(pattern, self._path(path), glob)
+        if code == 1:
             return f"no matches for {pattern!r}; try a shorter or different word"
-        if res.returncode > 1:
-            return "error: " + res.stderr.strip()
-        lines = [line.replace(str(self.root) + "/", "", 1) for line in res.stdout.splitlines()]
+        if code > 1:
+            return "error: " + "\n".join(found)
+        lines = [line.replace(str(self.root) + "/", "", 1) for line in found]
         most = self.limits.grep_matches
         if len(lines) > most:
             return "\n".join(lines[:most]) + f"\n[{len(lines) - most} more matches]"

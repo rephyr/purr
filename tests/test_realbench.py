@@ -271,7 +271,7 @@ class ReportPrTest(unittest.TestCase):
             self.assertEqual(realbench.PUBLISH.main(["--pr", *jobs]), 0)
         self.assertEqual(one.call_count, 2)
         (root, config, model, title, body), kwargs = made[0]
-        self.assertEqual(model, "claude-opus-5.5")
+        self.assertEqual(model, realbench.PUBLISH.REPORT_MODEL)  # no report_model in a fresh config
         self.assertIn("Benchmarks: 2 runs", title)
         self.assertIn("**88.8%** ± 3.3 over 89 tasks", body)
         self.assertIn("M benchmarks/terminal-bench/README.md", body)

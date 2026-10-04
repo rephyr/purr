@@ -6,6 +6,7 @@ Run: python3 -m unittest discover tests
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -30,6 +31,7 @@ class CodeCheckTest(unittest.TestCase):
         known(self.a)  # as if it had read the files first
         return self.a.tools.call(name, json.dumps(args))
 
+    @unittest.skipUnless(shutil.which("ruff"), "needs ruff (purr runs it when it's installed)")
     def test_an_undefined_name_is_pointed_out(self):
         out = self.call("edit_file", path="shop.py", old_text="sum(order)", new_text="sum(ordr)")
         self.assertIn("edited", out)
