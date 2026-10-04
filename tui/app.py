@@ -715,6 +715,8 @@ class PurrApp(App):
         self.tick()
 
     def tick(self):
+        if not self.screen.query("#prompt"):  # quitting: the widgets are gone (a test once failed on it)
+            return
         if self.busy:
             self.busy_since = self.busy_since or time.monotonic()
         else:
