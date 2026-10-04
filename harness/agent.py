@@ -104,7 +104,6 @@ SYSTEM_DIRS = {"bin", "boot", "dev", "etc", "home", "lib", "lib64", "opt", "proc
                "srv", "sys", "usr", "var"}  # named on their own, they don't open the whole folder
 INTERACTIVE = re.compile(r"\b(ssh|qemu|vm|repl|interactive|tmux|telnet|gdb)\b", re.I)
 
-# a final reply that hands a choice back to someone who isn't there
 # the proof ledger: checks not worth running again at the end (slow), and ones that prove little
 LEDGER_SLOW = re.compile(r"\b(train|fit|epochs?|boot|qemu|docker|pip install|apt(-get)? install|npm install)\b", re.I)
 LEDGER_EMPTY = re.compile(r"^\s*(ls|test -[efs]|\[ -[efs]|true|cat|echo|stat|file)\b")
@@ -114,6 +113,7 @@ GAP = re.compile(r"\b(best[- ]effort|best guess|not (?:been )?verified|unverifie
                  r"could not (?:get|make|verify)|unable to|a stub\b|placeholder|not the real|falls? short|short of the|"
                  r"below the (?:required|target|threshold)|didn'?t (?:reach|meet|pass|finish)|"
                  r"known (?:issue|limitation|gap)|likely (?:garbled|wrong|incorrect)|can'?t (?:certify|confirm|verify))", re.I)
+# a final reply that hands a choice back to someone who isn't there
 HEDGE = re.compile(r"say so|tell me if|if you'?d (rather|prefer|like)|if you (want|prefer|intended)|"
                    r"say the word|shall i|want me to|judge?ment call", re.I)
 
@@ -572,8 +572,7 @@ class Agent:
             if not local:
                 raise KeyError("private mode needs a local model (an Ollama one in config.toml)")
             self.config["_private"] = True
-            want = self.config.get("private_model")
-            pick = (want if want in local else self.model_name if self.model_name in local
+            pick = (self.model_name if self.model_name in local
                     else self.config.get("default_model") if self.config.get("default_model") in local
                     else (self.config.get("plan") or {}).get("executor") if (self.config.get("plan") or {}).get("executor") in local
                     else local[0])

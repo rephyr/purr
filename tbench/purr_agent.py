@@ -46,6 +46,7 @@ from harbor.models.agent.context import AgentContext
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # purr's own code, for its version
 from harness import full_version as purr_version  # noqa: E402
+from harness.settings import to_toml  # noqa: E402
 
 PURR = Path(__file__).resolve().parent.parent
 REMOTE = "/opt/purr"
@@ -58,39 +59,6 @@ PY = f"{REMOTE}/py"  # uv's Python 3.12, linked here when installing
 EXTRAS = ("two_plans", "fresh_eyes", "effort_phases", "fresh_context", "proof_ledger", "margin_check",
           "job_watch", "blind_checks")  # extras=false turns these off
 SHIPPED = ("purr.py", "harness", "servers")  # all plain mode needs
-
-
-def _key(k):
-    return k if k.replace("_", "").replace("-", "").isalnum() else json.dumps(k)
-
-
-def _value(v):
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return repr(v)
-    if isinstance(v, str):
-        return json.dumps(v)
-    if isinstance(v, list):
-        return "[" + ", ".join(_value(x) for x in v) + "]"
-    if isinstance(v, dict):  # only inside lists: tables get their own [header]
-        return "{ " + ", ".join(f"{_key(k)} = {_value(x)}" for k, x in v.items()) + " }"
-    raise TypeError(f"can't write {type(v).__name__} to TOML")
-
-
-def to_toml(data):
-    """purr's config as TOML: every nested dict as its own [a.b.c] table, its plain values first."""
-    out = []
-
-    def emit(name, table):
-        if name:
-            out.append(f"\n[{'.'.join(_key(p) for p in name)}]")
-        out.extend(f"{_key(k)} = {_value(v)}" for k, v in table.items() if not isinstance(v, dict))
-        for k, v in table.items():
-            if isinstance(v, dict):
-                emit(name + (k,), v)
-    emit((), data)
-    return "\n".join(out).strip() + "\n"
 
 
 def ollama_default_context():
@@ -151,9 +119,6 @@ class PurrAgent(BaseInstalledAgent):
     @staticmethod
     def name() -> str:
         return "purr"
-
-    def get_version_command(self) -> str | None:
-        return None
 
     # ---- the config purr gets in the container ----
 

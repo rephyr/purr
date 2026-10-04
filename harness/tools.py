@@ -363,9 +363,6 @@ class Tools:
                 args[real] = args.pop(alias)
                 self.repairs.append(f"argument {alias} -> {real}")
         fn = getattr(self, "t_" + name, None)
-        mcp = getattr(self, "mcp", None)
-        if fn is None and mcp and mcp.has(wanted):  # a tool from an MCP server ([mcp.*] in config.toml)
-            return self._mcp_call(wanted, args)
         if fn is None and not self.read_only and not self.no_tools:
             command = self._as_command(wanted, args)
             if command:  # objdump, size...: a program on this machine, called as if it were a tool

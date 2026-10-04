@@ -2,10 +2,8 @@
 """purr: a tiny coding agent for the terminal. Run `purr` in a project folder."""
 
 import argparse
-import json
 import os
 import sys
-import tomllib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -159,7 +157,7 @@ def save_key(name, config):
     """purr --key groq: asks for the key without showing it and keeps it in ~/.config/purr/keys.toml,
     readable only by you. Typed into the chat, it would end up in the saved chat logs."""
     import getpass
-    from harness.agent import KEYS_FILE
+    from harness import onboard
     provider = config["providers"].get(name)
     if not provider or not provider.get("api_key_env"):
         have = ", ".join(n for n, p in config["providers"].items() if p.get("api_key_env"))
@@ -171,17 +169,7 @@ def save_key(name, config):
     if not key:
         ui.say(ui.ROSE, "nothing saved")
         return 1
-    try:
-        keys = tomllib.loads(KEYS_FILE.read_text())
-    except (OSError, ValueError):
-        keys = {}
-    keys[provider["api_key_env"]] = key
-    KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    KEYS_FILE.touch(mode=0o600)
-    KEYS_FILE.chmod(0o600)
-    # quoted the TOML way (json.dumps escapes " and \\ the same): one odd character used to make the
-    # whole file unreadable, and every saved key silently vanished with it
-    KEYS_FILE.write_text("".join(f"{k} = {json.dumps(v)}\n" for k, v in keys.items()))
+    onboard.store_key(provider["api_key_env"], key)
     ui.say(ui.MINT, f"saved ♡ {name} models work now (/free check tests them)")
     return 0
 
