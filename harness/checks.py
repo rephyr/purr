@@ -141,3 +141,49 @@ def test_command(root):
     if makefile and re.search(r"^test\s*:", makefile.read_text(errors="ignore"), re.M):
         return "make test"
     return None
+
+
+# ---- limits: the numbers a request sets, and what the model measured (the margin check) ----
+
+_NUM = r"([-+]?\d+(?:\.\d+)?)"
+_AT_LEAST = r"(?:at least|no less than|not less than|minimum of|greater than or equal to|above|over|exceeds?|more than|>=|≥|>)"
+_AT_MOST = (r"(?:at most|no more than|not more than|maximum of|less than or equal to|under|below|within|"
+            r"less than|faster than|<=|≤|<)")
+LIMIT = re.compile(rf"({_AT_LEAST}|{_AT_MOST})\s*{_NUM}\s*(%|x\b|×|times\b|ms\b|s\b|seconds?\b|minutes?\b|mb\b|gb\b|kb\b|bytes?\b)?",
+                   re.I)
+MEASURE = re.compile(r"^\s*MEASURE\s+(?P<name>[^|]+?)\s*\|\s*(?P<value>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)[^|]*\|\s*"
+                     r"(?P<op><=|>=|==|<|>|=)\s*(?P<target>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)[^|]*\|\s*(?P<command>.+?)\s*$",
+                     re.I | re.M)
+
+
+def stated_limits(request):
+    """[(the words, op, value)] for the numeric limits a request states ("accuracy at least 0.62",
+    "no more than 1.05 times as slow"). Rough on purpose: only for saying which ones went unmeasured."""
+    out = []
+    for m in LIMIT.finditer(request):
+        start = request.rfind("\n", 0, m.start()) + 1
+        words = " ".join(request[max(start, m.start() - 60):m.end()].split())
+        op = ">=" if re.fullmatch(_AT_LEAST, m.group(1), re.I) else "<="
+        out.append((words, op, float(m.group(2))))
+    return out[:12]
+
+
+def measures(reply):
+    """The MEASURE lines of a final reply: [{name, value, op, target, command}]."""
+    return [{"name": m["name"].strip(), "value": float(m["value"]), "op": m["op"], "target": float(m["target"]),
+             "command": m["command"].strip().strip("`")} for m in MEASURE.finditer(reply or "")]
+
+
+def margin(value, op, target):
+    """(meets it, relative room left): room is negative when it misses."""
+    scale = abs(target) or 1.0
+    if op in (">=", ">"):
+        room = (value - target) / scale
+        ok = value >= target if op == ">=" else value > target
+    elif op in ("<=", "<"):
+        room = (target - value) / scale
+        ok = value <= target if op == "<=" else value < target
+    else:
+        room = -abs(value - target) / scale
+        ok = abs(value - target) <= 1e-9 * scale
+    return ok, room
