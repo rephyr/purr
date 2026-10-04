@@ -24,6 +24,9 @@ Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the 
     minimal=true          purr the way DSH Minimal ran: one-line prompt, one bash tool in a shell that
                           stays open, all thinking kept, effort high, no MCP and no checks
                           (harness/minimal.py)
+    extras=false          leave out the checks added after the published DeepSeek runs (v0.5.0): two plans,
+                          the fresh-eyes tester, effort per phase, a fresh context, the proof ledger,
+                          the margin check, the job watch and blind checks. To compare with those runs
 """
 
 
@@ -52,6 +55,8 @@ GATEWAY = "HOST_GATEWAY"
 BRIDGE_PORT = 11435
 LOCAL_HOSTS = ("127.0.0.1", "localhost")
 PY = f"{REMOTE}/py"  # uv's Python 3.12, linked here when installing
+EXTRAS = ("two_plans", "fresh_eyes", "effort_phases", "fresh_context", "proof_ledger", "margin_check",
+          "job_watch", "blind_checks")  # extras=false turns these off
 SHIPPED = ("purr.py", "harness", "servers")  # all plain mode needs
 
 
@@ -127,7 +132,7 @@ class PurrAgent(BaseInstalledAgent):
 
     def __init__(self, *args, mcp: str | bool = True, hosts: str | None = None, temperature=None,
                  top_p=None, max_tokens=None, max_steps=200, edge_cases=None, time_limit=None, web=True,
-                 routine_effort=None, keep_reasoning=None, minimal=False, **kwargs):
+                 routine_effort=None, keep_reasoning=None, minimal=False, extras=True, **kwargs):
         kwargs.setdefault("version", purr_version())
         super().__init__(*args, **kwargs)
         self.use_mcp = str(mcp).lower() not in ("false", "0", "no", "off")
@@ -141,6 +146,7 @@ class PurrAgent(BaseInstalledAgent):
         self.routine_effort = routine_effort
         self.keep_reasoning = keep_reasoning
         self.minimal = str(minimal).lower() in ("true", "1", "yes", "on")
+        self.extras = str(extras).lower() not in ("false", "0", "no", "off")
 
     @staticmethod
     def name() -> str:
@@ -192,6 +198,8 @@ class PurrAgent(BaseInstalledAgent):
             config["keep_reasoning"] = self.keep_reasoning
         if self.minimal:
             config["minimal"] = True
+        if not self.extras:
+            config.update({key: False for key in EXTRAS})
         config["bench_guard"] = True  # the model may not look the benchmark up (harness/benchguard.py)
         config.update({"default_model": "bench", "max_steps": self.max_steps, "providers": {provider: prov},
                        "models": {"bench": spec}})

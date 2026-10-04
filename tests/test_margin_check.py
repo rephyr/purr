@@ -37,8 +37,9 @@ class LimitWordsTest(unittest.TestCase):
         self.assertLess(room, 0.02)  # met, at the edge
 
 
-def run_and_finish(final, *, model="small", out="accuracy: 0.6400"):
+def run_and_finish(final, *, model="small", out="accuracy: 0.6400", **config):
     a = one_shot(model, time_limit=900)
+    a.config = dict(a.config, **config)
     scripted(a, [reply("", tool=("write_file", {"path": "train.py", "content": "print(1)\n"})),
                  reply("", tool=("run", {"command": f"echo '{out}'"})),
                  reply("Done."), reply(final), reply("Fixed."), reply("ok")])
@@ -74,8 +75,10 @@ class MarginFlowTest(unittest.TestCase):
         self.assertIn("accuracy at least 0.62", notes[0])
         self.assertIn("no MEASURE line", notes[0])
 
-    def test_api_models_dont_get_it(self):
-        a, notes = run_and_finish("All done.", model="api")
+    def test_api_models_get_it_too_unless_turned_off(self):
+        _, notes = run_and_finish("All done.", model="api")  # cheap: every model gets it
+        self.assertIn("no MEASURE line", notes[0])
+        a, notes = run_and_finish("All done.", model="api", margin_check=False)
         self.assertEqual(notes, [])
         self.assertFalse(any("MEASURE name" in u for u in users(a)))
 

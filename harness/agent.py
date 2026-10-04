@@ -30,6 +30,7 @@ from .prompts import (  # noqa: F401 - the words purr says; some only re-exporte
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
     ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT, GAP_NUDGE, LEDGER_NOTE,
     MEASURE_ASK, LIMIT_NOTE, BLIND_SPEC, BLIND_NOTE,
+    PLAN_DRAFT, PLAN_ANGLES, PLAN_PICK, PLAN_NOTE, TESTER, TESTER_TASK, FRESH_NOTE,
 )
 from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, run_shell, schemas
 
@@ -69,6 +70,12 @@ STEP_BACK_MAX = 3     # step backs a turn
 ONE_SHOT_STEPS = 150  # one-shot runs with a time limit: nobody can say "keep going", so a fixed cap
 ONE_SHOT_STEPS_FREE = 200  # without a time limit (at least this, or max_steps if that's higher)
 CHECK_STEPS = 10      # steps left for the final check once the cap is hit
+
+# big (API) models (two_plans, fresh_eyes, effort_phases, fresh_context; see _big_on)
+TESTER_STEPS = 25     # model calls for the fresh-eyes tester
+TESTER_SHARE = 0.15   # ... and at most this share of the time limit (never more than half what's left)
+FRESH_AT = 160_000    # tokens: past this a big model's chat is summarised and goes on fresh (fresh_at)
+HARD_PROVIDERS = ("deepseek", "openrouter")  # take a reasoning effort; others may refuse the field
 
 # one-shot runs on a bare machine (benchmarks): what's there and what isn't, in one line, so the
 # model doesn't spend five steps finding out gcc is missing or pip has no network
@@ -495,6 +502,8 @@ class Agent:
         self.view = view
         self.helper = helper
         self.parent = parent
+        self.tester = False   # the fresh-eyes tester: a helper that may run commands (_fresh_eyes)
+        self._stop_at = None  # time.monotonic() when the tester has to stop
         perms = config.get("permissions", {})
         self.tools = Tools(self.root, view, read_only=helper, allow_run=perms.get("allow_run", []))
         # MCP servers ([mcp.*] in config.toml): started on first use, shared with helpers
@@ -528,7 +537,8 @@ class Agent:
         self.new()
 
     def stopping(self):
-        return self.stop_flag or bool(self.parent and self.parent.stopping())
+        return (self.stop_flag or bool(self.parent and self.parent.stopping())
+                or bool(self._stop_at and time.monotonic() > self._stop_at))
 
     @property
     def minimal(self):
@@ -577,7 +587,8 @@ class Agent:
         not_its = tuple(sorted(TOOL_NAMES - agent["tools"])) if agent and isinstance(agent["tools"], set) else ()
         return (tuple(self.limits.hidden_tools) + (("fetch_url",) if self.private else ())
                 + (() if self.model.get("vision") else ("look_at_image",))  # only models that can see
-                + (("terminal",) if hide_terminal else ()) + not_its)  # one of your agents: only its tools
+                + (("terminal",) if hide_terminal else ()) + not_its  # one of your agents: only its tools
+                + (("write_file", "edit_file", "terminal", "task", "todo") if self.tester else ()))
 
     @property
     def chosen_model(self):
@@ -647,7 +658,7 @@ class Agent:
 
     def looks_only(self):
         """Nothing may be changed: a helper, ask mode, or one of your look-only agents."""
-        return self.helper or self.mode == "ask" or self.mode_level() == "read"
+        return (self.helper and not self.tester) or self.mode == "ask" or self.mode_level() == "read"
 
     @property
     def coding(self):
@@ -962,7 +973,7 @@ class Agent:
                              one_shot=self.one_shot)
         if agent:
             text += agent_files.role(agent)
-        return text + HELPER if self.helper else text
+        return text + TESTER if self.tester else text + HELPER if self.helper else text
 
     def new(self):
         self.messages = [{"role": "system", "content": self._system()}]
@@ -986,7 +997,8 @@ class Agent:
             {"model": self.chosen_model, "mode": self.mode, "folder": str(self.root), "title": self.title,
              "cost": self.session_cost, "out": self.session_out, "in": self.session_in,
              "cached": self.session_cached, "messages": self.messages,
-             **({"cut_off_reply": self.cut_off} if getattr(self, "cut_off", None) else {})},
+             **({"cut_off_reply": self.cut_off} if getattr(self, "cut_off", None) else {}),
+             **({"tester": self.tester_log} if getattr(self, "tester_log", None) else {})},
             indent=1, ensure_ascii=False))
 
     def load(self, path):
@@ -1010,7 +1022,7 @@ class Agent:
 
     # ---- one model call ----
 
-    def _body(self, messages, tools):
+    def _body(self, messages, tools, hard=False):
         msgs = messages or self.messages
         if tools and self.mode_level() == "none":
             tools, msgs = False, plain_history(msgs)
@@ -1041,12 +1053,19 @@ class Agent:
             # output (mostly thinking) is about half of an agent's cost; after only reading and
             # searching, the next step rarely needs deep thought (off unless routine_effort is set)
             effort = routine
+        if hard and self._big_on("effort_phases") and self._takes_effort():
+            effort = self.config.get("effort_hard", "high")  # planning, checks, judging: think it through
         if effort:
             if self.model.get("provider") == "openrouter" or "openrouter.ai" in self.provider.get("base_url", ""):
                 body["reasoning"] = {**(body.get("reasoning") or {}), "effort": effort}
             else:
                 body["reasoning_effort"] = effort
         return body
+
+    def _takes_effort(self):
+        """The provider takes a reasoning effort (DeepSeek's API, OpenRouter): others may refuse it."""
+        url = self.provider.get("base_url", "")
+        return self.model.get("provider") in HARD_PROVIDERS or any(f"{p}." in url for p in HARD_PROVIDERS)
 
     def _routine_step(self):
         """The last step only looked around (read, grep, list, outline): every tool call in the last
@@ -1154,13 +1173,14 @@ class Agent:
         self._use_model(pick)
         return True
 
-    def _call(self, messages=None, tools=True, quiet=False):
+    def _call(self, messages=None, tools=True, quiet=False, hard=False):
         on_text = (lambda s: None) if quiet else self.view.text
         on_think = (lambda s: None) if quiet else self.view.thinking
         attempt = 0
         self._refused = 0  # 400s that made the free router switch, this call
         while True:
-            body = self._body(messages, tools)  # again after a switch: another model, id and hosts
+            hard_now = hard or (messages is None and getattr(self, "_think_hard", False))
+            body = self._body(messages, tools, hard_now)  # again after a switch: another model, id and hosts
             try:
                 return stream_chat(self.provider["base_url"], self.key, body, on_text, on_think, self.stopping)
             except ApiError as e:
@@ -1209,6 +1229,10 @@ class Agent:
         self.session_cached += _cached(usage)
         if self.parent:
             self.parent.session_cost += cost
+            if self.tester:  # it works for the run: its tokens count in the run's numbers too
+                self.parent.session_out += usage.get("completion_tokens", 0)
+                self.parent.session_in += usage.get("prompt_tokens", 0)
+                self.parent.session_cached += _cached(usage)
         return cost
 
     def context_used(self):
@@ -1272,7 +1296,9 @@ class Agent:
                             steps=steps - 1, request=_ends(text, 500, 300))})
                     self._time_note()
                     self.view.activity("thinking")
+                    self._think_hard = steps == 1 or self._think_hard
                     reply = self._call()
+                    self._think_hard = False
                 except ApiError as e:
                     self.view.note(f"api error: {e}", "error")
                     self.failed = str(e)  # the turn ended on the model server, not on the task
@@ -1452,10 +1478,12 @@ class Agent:
         self._gap_said = False  # one-shot: an admitted gap sent back at most once
         self._ledger_gen, self._ledger_runs, self._ledger_sent = -1, 0, 0  # _ledger_rerun
         self._margin_said = False  # _margin_check: at most once a turn
-        self.jobs = Jobs(self.root) if self.time_limit and not self.helper and self._helper_on("job_watch") else None
+        self.jobs = Jobs(self.root) if self.time_limit and not self.helper and self._on("job_watch") else None
         self._disk_before = self._disk_snapshot() if self.one_shot and not self.helper else None
         self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
         self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
+        self._tested = False    # one-shot: the fresh-eyes tester at most once
+        self._think_hard = False  # the next call gets effort_hard (effort_phases)
 
     def _turn_content(self, text):
         """Your message as the model gets it: @files attached, your own edits (pair mode), the
@@ -1471,13 +1499,100 @@ class Agent:
         self._learn_nudged = bool(open_todos)  # pieces already out there: no need to leave new ones
         if self.time_limit and not self.helper:
             content += "\n\n" + TIME_INTRO.format(minutes=max(1, round(self.time_limit / 60)))
-            if self._helper_on("job_watch"):
+            if self._on("job_watch"):
                 content = content[:-1] + " " + PILOT + ")"
             if len(self.messages) == 1:
                 content += self._probe()
         if len(self.messages) == 1:
-            content += self._blind_card(text)
+            content += self._blind_card(text) + self._two_plans(text)
         return content
+
+    # ---- big models: two plans and a judge, a fresh-eyes tester (two_plans, fresh_eyes) ----
+
+    def _two_plans(self, request):
+        """Before any code (big models, one-shot): two tool-less calls plan the task from different
+        angles and a third keeps the better plan, improved with what the other got right. The same
+        model passes a task in one run and fails it in the next mostly by how it starts."""
+        if not (self.one_shot and self.coding) or self.helper or not self._big_on("two_plans"):
+            return ""
+        from concurrent.futures import ThreadPoolExecutor
+        files = self._given_files()
+        wanted = _ends(request, 4000, 1500)
+        prompts = [PLAN_DRAFT.format(angle=angle, request=wanted, files=files) for angle in PLAN_ANGLES]
+        self.view.activity("thinking", "two independent plans")
+
+        def draft(prompt):
+            try:
+                return self._call([{"role": "user", "content": prompt}], tools=False, quiet=True, hard=True)
+            except ApiError:
+                return None
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            drafts = list(pool.map(draft, prompts))
+        for d in drafts:
+            if d:
+                self._count(d.get("usage"))
+        plans = [(d.get("text") or "").strip() for d in drafts if d]
+        plans = [p for p in plans if p]
+        if not plans:
+            return ""
+        plan = plans[0]
+        if len(plans) == 2:
+            self.view.activity("thinking", "picking the better plan")
+            try:
+                pick = self._call([{"role": "user", "content": PLAN_PICK.format(request=wanted, a=plans[0], b=plans[1])}],
+                                  tools=False, quiet=True, hard=True)
+                self._count(pick.get("usage"))
+                text = (pick.get("text") or "").strip()
+                plan = text.split("PLAN:", 1)[1].strip() if "PLAN:" in text else text or plan
+            except ApiError:
+                pass
+        self.tools.repairs.append("two plans drafted before any code -> the better one kept")
+        return PLAN_NOTE.format(plan=plan[:2500])
+
+    def _fresh_eyes(self):
+        """Once, before a one-shot run finishes (big models): a tester with a fresh chat and the
+        tools to run things, who never saw the work, checks every requirement the way a grader would.
+        Its FAILs go back to the model. Returns True when it found something (the turn goes on)."""
+        if (not (self.one_shot and self.coding) or self.helper or getattr(self, "_tested", True)
+                or not self._big_on("fresh_eyes") or not self.tools.trust_all):  # nobody to ok its commands
+            return False
+        changed = self.tools.undo_stack[-1] if self.tools.undo_stack else {}
+        if not (changed or self._acted):
+            return False
+        budget = 600.0
+        if self.time_limit:
+            left = self.time_limit - (time.monotonic() - self._started)
+            budget = min(self.time_limit * TESTER_SHARE, left / 2)
+            if budget < 90:
+                return False  # no time for it and a fix after
+        self._tested = True
+        self.view.note("♡ a tester with fresh eyes checks the result")
+        tester = Agent(self.config, self.root, self.model_name, SubView(self.view), helper=True, parent=self)
+        tester.tester = True
+        tester.tools.read_only = False
+        tester.tools.trust_all = self.tools.trust_all
+        tester.tools.outside_ok = getattr(self.tools, "outside_ok", [])
+        tester._refresh_system()
+        tester._stop_at = time.monotonic() + budget
+        names = sorted(os.path.relpath(p, self.root) if self.root in p.parents else str(p)
+                       for p in self.tools.session_changes())
+        try:
+            tester.turn(TESTER_TASK.format(request=_ends(getattr(self, "_request", ""), 6000, 2000),
+                                           files=", ".join(names[:30]) or "(only commands)"))
+        except (ApiError, Stopped):
+            pass
+        self.tester_log = tester.messages  # in the session log, next to the chat
+        if self.stopping():
+            raise Stopped
+        answers = [m.get("content") for m in tester.messages if m.get("role") == "assistant" and m.get("content")]
+        report = (answers[-1] if answers else "").strip()
+        fails = [line.strip() for line in report.splitlines() if line.strip().startswith("FAIL")]
+        if not fails:
+            return False
+        self.tools.repairs.append("fresh-eyes tester found failing requirements -> sent back to fix")
+        self.messages.append({"role": "user", "content": FRESH_NOTE.format(findings="\n".join(fails)[:3000])})
+        return True
+
 
     # ---- blind acceptance checks (small models; blind_checks = false turns them off) ----
 
@@ -1553,6 +1668,18 @@ class Agent:
         if not ctx or len(self.messages) <= 4:
             return
         used = self.context_used()
+        fresh_at = self.config.get("fresh_at", FRESH_AT)
+        if (self._big_on("fresh_context") and ctx > 2 * fresh_at and used > fresh_at and not self.helper
+                and len(self.messages) >= self._compact_again_at):
+            # a big model gets worse long before its context is full: summarise and go on fresh
+            self.view.note(f"the chat passed {ui.short(fresh_at)} tokens: going on from a summary", "info")
+            try:
+                done = self.compact(auto=True)
+            except ApiError:
+                done = None
+            if done:
+                return
+            self._compact_again_at = len(self.messages) + 10
         if used > ctx * self.limits.prune_at:
             self._prune_old_tools()
             used = self.context_used()
@@ -1605,16 +1732,18 @@ class Agent:
     def _one_more_look(self, reply_text):
         """The model wants to stop: every check that may send it back once, in order. True when one
         did (the turn goes on). One place, so a new check can't end up in only one of the stops."""
-        return (self._final_check(reply_text) or self._admitted_gap(reply_text) or self._ledger_rerun()
-                or self._margin_check(reply_text) or self._evidence_pass() or self._review()
-                or self._learn_check() or self._hedge(reply_text))
+        again = (self._final_check(reply_text) or self._admitted_gap(reply_text) or self._ledger_rerun()
+                 or self._margin_check(reply_text) or self._evidence_pass() or self._review()
+                 or self._fresh_eyes() or self._learn_check() or self._hedge(reply_text))
+        self._think_hard = bool(again)  # what it was sent back for deserves a careful look
+        return again
 
     def _margin_check(self, reply):
         """The margin check (small models; margin_check = false turns it off): the final reply's
         MEASURE lines against the limits, each backed by a command purr saw run and a value in its
         output; a limit missed, at the edge, unbacked or unmeasured goes back once. True when sent."""
         if not (self.one_shot and self.coding and self._checked) or self.helper or self._margin_said \
-                or not self._helper_on("margin_check"):
+                or not self._on("margin_check"):
             return False
         stated = checks.stated_limits(getattr(self, "_request", ""))
         found = checks.measures(reply)
@@ -1670,7 +1799,7 @@ class Agent:
         """The proof ledger (small models; proof_ledger = false turns it off): the todo items' check
         commands, run again by purr itself in a fresh shell (no environment, no stdin) when files
         changed since the last time. A failing one goes back, at most twice a turn. True when sent."""
-        if not (self.one_shot and self.coding) or self.helper or not self._helper_on("proof_ledger"):
+        if not (self.one_shot and self.coding) or self.helper or not self._on("proof_ledger"):
             return False
         items = [i for i in self.tools.todo_list if i.get("check")][:12]
         if not items or self._ledger_sent >= 2 or (self._ledger_runs and self._ledger_gen == self.tools.edit_gen):
@@ -1766,7 +1895,7 @@ class Agent:
             self._hedged = self._hedged or self._hedges(reply)
         else:
             check = (FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT).format(services=services)
-        if self.one_shot and self._helper_on("margin_check"):
+        if self.one_shot and self._on("margin_check"):
             check = check[:-1] + MEASURE_ASK + ")" if check.endswith(".)") else check + MEASURE_ASK
         self.messages.append({"role": "user", "content": self._test_report() + self._blind_report() + check})
         return True
@@ -1900,6 +2029,8 @@ class Agent:
         fixed cap, and never less than max_steps: a benchmark's own limit (500 in the fair runs)
         wins. Capping those at 150 cut 17 of 54 DeepSWE tasks off before they could commit."""
         steps = self.config.get("max_steps", 40)
+        if self.tester:
+            return TESTER_STEPS
         if self.one_shot and not self.helper:
             return max(steps, ONE_SHOT_STEPS if self.time_limit else ONE_SHOT_STEPS_FREE)
         return steps
@@ -2021,6 +2152,16 @@ class Agent:
         """A training-wheels helper (reminders, edge_cases): config.toml decides if it's set there,
         else the model's size does (on for local models, off for API ones)."""
         return self.config[key] if key in self.config else self.limits.helpers == "full"
+
+    def _big_on(self, key):
+        """A helper for big models (two_plans, fresh_eyes, effort_phases, fresh_context): the other
+        way round, on for API models and off for local ones (a 32k model has no room for them)."""
+        return self.config[key] if key in self.config else self.limits.helpers != "full"
+
+    def _on(self, key):
+        """A cheap check every model gets (proof_ledger, margin_check, job_watch) unless config.toml
+        turns it off."""
+        return self.config.get(key, True)
 
     def _run_tests(self, cmd, ask=True):
         """Run the project's tests: (output, exit code), or None when you said no. Plan mode doesn't

@@ -33,11 +33,19 @@ code_checks = true
 #  step_back = true   after 8 changes to one file (or 6 number-tweaked versions of one command), ask
 #                     the model to step back: what's known, why it fails, a different approach
 #  edge_cases = true  in the final check, also try 2-3 edge cases the request implies
-# In one-shot runs (purr -p, benchmarks):
-#  blind_checks = true   before any code, write acceptance checks from the request alone
+# In one-shot runs (purr -p, benchmarks), every model (cheap; set false to turn one off):
 #  proof_ledger = true   rerun the model's own checks in a fresh shell before it may stop
 #  margin_check = true   a stated limit (under 1 s, at most 50 MB) is measured, not assumed
 #  job_watch = true      (with a time limit) a background job's log is read: purr says when it won't finish
+# ... local models only:
+#  blind_checks = true   before any code, write acceptance checks from the request alone
+# ... API models only (they don't loop, but pass a task in one run and fail it in the next):
+#  two_plans = true      before any code, two independent plans, and a third call keeps the better one
+#  fresh_eyes = true     before finishing, a tester with a fresh chat runs checks against the request
+#  effort_phases = true  "high" reasoning effort (effort_hard) for the first step, checks and judging
+#                        (DeepSeek and OpenRouter only)
+# And in every chat with an API model:
+#  fresh_context = true  past fresh_at tokens (160000) the chat goes on from a summary
 # Edits only on files the model has read (so old_text matches what's really there).
 read_before_edit = true
 
