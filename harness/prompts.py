@@ -155,6 +155,8 @@ This ticket:
 
 TIME_INTRO = """(purr: you have about {minutes} minutes for this. Get a version that meets every hard \
 requirement in place early, then improve it: when the time is up, only what's in the files counts.)"""
+PILOT = ("Before a long run (training, sampling, a big build), time a small piece of it first (one epoch, a "
+         "few hundred samples) and work out whether the whole fits the time left; if not, make it smaller.")
 
 TIME_NOTES = [  # (share of the time gone, what to say then)
     (0.5, "(purr: about {left} minutes left. If what the task asks for doesn't exist or doesn't work "

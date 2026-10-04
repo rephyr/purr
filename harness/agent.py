@@ -21,9 +21,10 @@ from .limits import LOCAL, Limits
 from .free import FreeRouter, rest_for
 from .mcp import Mcp
 from . import agents as agent_files, checks, minimal
+from .jobs import Jobs
 from .prompts import (  # noqa: F401 - the words purr says; some only re-exported for others
     SYSTEM, ASK_TOOLS, LEARN, LEARN_NUDGE, LEARN_SHORTEN, PAIR,
-    PAIR_HAND_BACK, CHAT, CREATE, PLAN, TICKET_WORK, TIME_INTRO,
+    PAIR_HAND_BACK, CHAT, CREATE, PLAN, TICKET_WORK, TIME_INTRO, PILOT,
     TIME_NOTES, CUT_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK,
     ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
@@ -1353,6 +1354,7 @@ class Agent:
                     if back:
                         self.view.note("it keeps reworking the same thing: purr asked for a step back", "warn")
                         self.messages.append({"role": "user", "content": back})
+                self._job_note()
                 # small models can get stuck ticking their task list forever instead of
                 # stopping (it never ends the turn, since a tool call always asks for more)
                 if all(c["name"] == "todo" for c in reply["tool_calls"]):
@@ -1450,6 +1452,7 @@ class Agent:
         self._gap_said = False  # one-shot: an admitted gap sent back at most once
         self._ledger_gen, self._ledger_runs, self._ledger_sent = -1, 0, 0  # _ledger_rerun
         self._margin_said = False  # _margin_check: at most once a turn
+        self.jobs = Jobs(self.root) if self.time_limit and not self.helper and self._helper_on("job_watch") else None
         self._disk_before = self._disk_snapshot() if self.one_shot and not self.helper else None
         self._compact_again_at = 0  # after a failed compaction: the chat length to try again at
         self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
@@ -1468,6 +1471,8 @@ class Agent:
         self._learn_nudged = bool(open_todos)  # pieces already out there: no need to leave new ones
         if self.time_limit and not self.helper:
             content += "\n\n" + TIME_INTRO.format(minutes=max(1, round(self.time_limit / 60)))
+            if self._helper_on("job_watch"):
+                content = content[:-1] + " " + PILOT + ")"
             if len(self.messages) == 1:
                 content += self._probe()
         if len(self.messages) == 1:
@@ -2142,6 +2147,18 @@ class Agent:
         command = str(_args(args).get("command") or "").strip()
         if name == "terminal" or command.endswith("&") or command.startswith(("nohup ", "setsid ")):
             self._background = True
+        if name == "run" and getattr(self, "jobs", None) is not None:
+            self.jobs.saw(command)
+
+    def _job_note(self):
+        """A background job with a log (small models, time limit; job_watch = false turns it off):
+        say once when its progress says it won't finish in the time left, or its log stopped."""
+        if getattr(self, "jobs", None) is None or not self.jobs.jobs:
+            return
+        left = self.time_limit - (time.monotonic() - self._started)
+        for line in self.jobs.notes(left):
+            self.view.note("a background job won't make it in time, or stalled: purr said so", "warn")
+            self.messages.append({"role": "user", "content": f"(purr: {line})"})
 
     def _check_repeats(self):
         """A small model can get stuck making the same call and learning nothing.
