@@ -10,7 +10,9 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
@@ -136,12 +138,33 @@ def command_head(command):
     return words[0]
 
 
-def clip(s, limit=MAX_OUTPUT):
+# a cut or pruned tool result is kept whole here, so the model reads parts of it instead of running a
+# slow command again (it was told "save the output to a file" after the output was already gone)
+SPILL_DIR = Path(tempfile.gettempdir()) / f"purr-out-{os.getpid()}"
+SPILL_CAP = 50_000_000  # bytes: the oldest files go first
+SPILL_FILES = 300       # and at most this many files (/tmp's inodes run out before its space does)
+
+
+def clip(s, limit=MAX_OUTPUT, spilled=None):
     if len(s) <= limit:
         return s
     half = limit // 2
-    return (s[:half] + f"\n... [{len(s) - limit} chars cut; save the output to a file and look at parts "
-            "with grep or sed -n] ...\n" + s[-half:])
+    where = (f"the whole output is in {spilled}: look at parts with grep -n or sed -n" if spilled
+             else "save the output to a file and look at parts with grep or sed -n")
+    return s[:half] + f"\n... [{len(s) - limit} chars cut; {where}] ...\n" + s[-half:]
+
+
+def edit_window(after, before, size):
+    """The numbered lines around the first change, for an edit's result."""
+    old, new = before.splitlines(), after.splitlines()
+    ops = [op for op in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes() if op[0] != "equal"]
+    if not ops or not new:
+        return ""
+    first, last = ops[0][3], max(op[4] for op in ops)
+    start = max(0, min(first, (first + last) // 2) - size // 4)
+    end = min(len(new), start + size)
+    lines = "\n".join(f"{n + 1:>5}\t{new[n]}" for n in range(start, end))
+    return f"\nnow (lines {start + 1}-{end} of {len(new)}):\n{lines}"
 
 
 def _lead(line):
@@ -198,6 +221,8 @@ class Tools:
         self.read_before_edit = True  # edits only on files read this session
         self.seen = set()        # files read (or written) so far
         self.limits = limits or Limits.for_model({})
+        self.step = 0         # tool calls so far: spill files and stale marks say "as of step N"
+        self.last_spill = None  # where the last call's whole output went, if it was cut
         self.allow_run = list(allow_run)  # patterns from config.toml that never ask
         self.always = set()      # tools you said "always" to this session
         self.always_run = set()  # command heads you said "always" to ("git status", "python3")
@@ -292,8 +317,13 @@ class Tools:
         self.view.activity(name, self.summary(name, args)[len(name):].strip())
         if name != "todo":
             self.view.tool(self.summary(name, args))
+        self.step += 1
+        self.last_spill = None
         try:
-            result = clip(fn(**args), self.limits.tool_output)
+            raw = fn(**args)
+            if isinstance(raw, str) and len(raw) > self.limits.tool_output:
+                self.last_spill = self.spill(name, raw)
+            result = clip(raw, self.limits.tool_output, self.last_spill)
         except TypeError as e:
             missing = re.search(r"missing \d+ required positional arguments?: (.+)", str(e))
             result = (f"error: {name} needs {missing.group(1).replace(chr(39), '')}" if missing
@@ -303,6 +333,26 @@ class Tools:
         if name != "todo":
             self.view.tool_result(name, args, result)  # the exact call and what the model got back
         return result
+
+    def spill(self, name, text):
+        """Keep a whole tool result in a file of its own (SPILL_DIR); returns its path, or None in
+        private mode (nothing kept) or when it can't be written."""
+        if getattr(self, "is_private", lambda: False)():
+            return None
+        try:
+            if not SPILL_DIR.exists():  # purr's own: gone when purr exits
+                atexit.register(shutil.rmtree, SPILL_DIR, ignore_errors=True)
+            SPILL_DIR.mkdir(parents=True, exist_ok=True)
+            path = SPILL_DIR / f"{self.step:04d}-{re.sub(r'[^A-Za-z0-9_-]', '', name)[:30] or 'tool'}.txt"
+            path.write_text(text)
+            files = sorted(SPILL_DIR.iterdir(), key=lambda f: f.stat().st_mtime)
+            total = sum(f.stat().st_size for f in files)
+            while (total > SPILL_CAP or len(files) > SPILL_FILES) and len(files) > 1:
+                total -= files[0].stat().st_size
+                files.pop(0).unlink()
+            return str(path)
+        except OSError:
+            return None
 
     def _mcp_call(self, name, args):
         if self.no_tools:
@@ -518,7 +568,9 @@ class Tools:
             return self._refused(reason)
         self._remember(p)
         p.write_text(after)
-        return f"edited {path} ({count if replace_all else 1} change)" + self._check_code(path, before, after)
+        window = edit_window(after, before, self.limits.edit_window) if self.limits.edit_window else ""
+        return (f"edited {path} ({count if replace_all else 1} change)" + window
+                + self._check_code(path, before, after))
 
     def _not_found(self, path, text, old_text):
         """old_text isn't in the file: say where it is instead, or show the closest lines,
@@ -572,7 +624,8 @@ class Tools:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
         self.seen.add(p.resolve())  # it knows what it just wrote
-        return f"wrote {path} ({len(content.splitlines())} lines)" + self._check_code(path, before, content)
+        window = edit_window(content, before, self.limits.edit_window) if self.limits.edit_window and before else ""
+        return f"wrote {path} ({len(content.splitlines())} lines)" + window + self._check_code(path, before, content)
 
     # ---- checks on the model's code (harness/checks.py); code_checks = false turns them off ----
 

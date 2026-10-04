@@ -13,6 +13,7 @@ from pathlib import Path
 
 os.environ["PURR_STATE"] = tempfile.mkdtemp()  # keep test chats away from the real ones
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import tests  # noqa: F401,E402 - one temporary folder for the whole run (tests/__init__.py)
 
 from harness.agent import Agent  # noqa: E402
 from harness.limits import Limits  # noqa: E402

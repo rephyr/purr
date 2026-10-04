@@ -1906,6 +1906,9 @@ class Agent:
                 else:
                     result = early[c["id"]] if c["id"] in early else self.tools.call(c["name"], c["args"])
                     self._executed.append((c["name"], c["args"], result))
+                    if self.limits.edit_window and c["name"] in ("edit_file", "write_file") \
+                            and result.startswith(("edited ", "wrote ")):
+                        self._mark_stale(_args(c["args"]).get("path"))
                     self._note_action(c["name"], c["args"])
                 self.messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
                 done += 1
@@ -1916,6 +1919,24 @@ class Agent:
                 self.messages.append({"role": "tool", "tool_call_id": c["id"],
                                       "content": "cancelled: the user stopped it"})
             raise
+
+    def _mark_stale(self, path):
+        """After an edit (small models): earlier read_file results of that file show the old text,
+        which a small model then edits against. Replace them with a short note."""
+        if not path:
+            return
+        target = (self.root / str(path)).resolve()
+        calls = {}  # each result belongs to the call just before it (ids may repeat across steps)
+        for m in self.messages:
+            if m.get("role") == "assistant":
+                calls = {c["id"]: c["function"] for c in m.get("tool_calls") or []}
+            fn = calls.get(m.get("tool_call_id")) if m.get("role") == "tool" else None
+            if not fn or fn.get("name") != "read_file" or str(m.get("content", "")).startswith("[stale:"):
+                continue
+            read = _args(fn.get("arguments")).get("path")
+            if read and (self.root / str(read)).resolve() == target:
+                m["content"] = (f"[stale: {path} was read here before it changed at step {self.tools.step}; "
+                                "the edit's result shows the new lines, read it again if you need more]")
 
     def _look_in_parallel(self, calls):
         """When a reply asks for several read-only tools (read_file, grep, list_files, fetch_url),
@@ -2033,8 +2054,10 @@ class Agent:
                 continue
             fn = calls.get(m.get("tool_call_id"), {})
             call = f"{fn.get('name', 'a tool')}({(fn.get('arguments') or '')[:160]})"
-            m["content"] = (f"[old output of {call} removed to save room "
-                            f"({len(content)} characters); run it again if you need it]")
+            kept = self.tools.spill(fn.get("name", "tool"), content)  # read parts of it, don't run it again
+            m["content"] = (f"[old output of {call} removed to save room ({len(content)} characters); "
+                            + (f"it's kept in {kept}: look at parts with grep -n or sed -n]" if kept
+                               else "run it again if you need it]"))
             freed += len(content) - len(m["content"])
         if freed:
             self.last_usage = None  # the old count is stale; use the fresh size guess
