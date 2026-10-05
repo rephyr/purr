@@ -85,10 +85,12 @@ from harness.agent import provider_key
 from harness.settings import load
 p = load(discover=False)["providers"]["openrouter"]
 model = os.environ["PURR_MODEL"].split("/", 1)[1]
+if not provider_key(p):
+    sys.exit("no OpenRouter key found: `purr --key openrouter`, OPENROUTER_API_KEY, or `opencode auth login`")
 body = {"model": model, "messages": [{"role": "user", "content": "Reply: ok"}],
         "max_tokens": 5, "provider": {"only": ["deepseek"], "allow_fallbacks": False}}
 req = urllib.request.Request(p["base_url"] + "/chat/completions", data=json.dumps(body).encode(),
-                             headers={"Authorization": "Bearer " + (provider_key(p) or ""), "Content-Type": "application/json"})
+                             headers={"Authorization": "Bearer " + provider_key(p), "Content-Type": "application/json"})
 try:
     urllib.request.urlopen(req, timeout=60).read()
 except urllib.error.HTTPError as e:
