@@ -55,6 +55,16 @@ class BlindChecksTest(unittest.TestCase):
         self.assertIn("proves nothing", check)
         self.assertGreaterEqual(calls["n"], 4)
 
+    def test_checks_written_in_python_run_with_python(self):
+        # sh would run `import time` as ImageMagick's screenshot tool and wait for a click
+        a = blind_agent()
+        py = BLIND.split("CHECKS:")[0] + 'CHECKS:\n```sh\nimport os\nprint("PASS 1" if os.path.exists("out.txt") else "FAIL 1: no out.txt")\n```'
+        scripted(a, [reply(py), reply("", tool=("write_file", {"path": "out.txt", "content": "42\n"})),
+                     reply("Done."), reply("ok"), reply("ok")])
+        a.turn("write 42 to out.txt")
+        check = next(u for u in users(a) if "before you finish" in u)
+        self.assertIn("PASS 1", check)
+
     def test_the_reader_sees_the_files_not_a_solution(self):
         a = blind_agent()
         Path(a.root, "given.py").write_text("LIMIT = 8  # shapes across both buckets\n")
