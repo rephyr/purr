@@ -377,6 +377,10 @@ class Tools:
         name = TOOL_ALIASES.get(re.sub(r"[^\w]", "", name), name)
         if name != wanted:
             self.repairs.append(f"tool {wanted} -> {name}")
+        # keys with stray whitespace ("\nnew_text", gpt-oss) are the key without it
+        for key in [k for k in args if isinstance(k, str) and k != k.strip() and k.strip() not in args]:
+            args[key.strip()] = args.pop(key)
+            self.repairs.append(f"argument {key.strip()} had spaces around its name -> fixed")
         for alias, real in ARG_ALIASES.items():
             if alias in args and real not in args:
                 args[real] = args.pop(alias)
@@ -547,7 +551,11 @@ class Tools:
 
     # ---- tools ----
 
-    def t_read_file(self, path, offset=1, limit=None, line_start=None, line_end=None):
+    def t_read_file(self, path, offset=1, limit=None, line_start=None, line_end=None, line_range=None):
+        if line_range is not None and line_start is None:  # gpt-oss: [10, 40] or "10-40"
+            nums = [int(n) for n in re.findall(r"\d+", str(line_range))][:2]
+            if nums:
+                line_start, line_end = nums[0], (nums[1] if len(nums) > 1 else None)
         if line_start is not None:  # what some models (gpt-oss) call it
             self.repairs.append("read_file line_start/line_end -> offset/limit")
             offset = int(line_start)
