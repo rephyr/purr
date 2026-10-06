@@ -830,7 +830,9 @@ def child_env(root, **extra):
     install), so python3 and pip are the machine's or the project's, not purr's. In purr bench,
     `python3 -m unittest discover -s tests` in a task without tests/ ran purr's own 453 tests.
     A venv inside the project folder is the project's own and stays."""
-    env = {**os.environ, **extra}
+    # no .pyc files: a file rewritten in the same second at the same size runs its old bytecode, and
+    # models blamed "stale bytecode" for their own bugs anyway
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", **extra}
     if sys.prefix != sys.base_prefix and not Path(sys.prefix).resolve().is_relative_to(Path(root).resolve()):
         bin_dir = os.path.realpath(Path(sys.prefix) / "bin")
         env["PATH"] = os.pathsep.join(d for d in env.get("PATH", "").split(os.pathsep)

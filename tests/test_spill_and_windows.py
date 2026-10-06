@@ -94,7 +94,7 @@ class EditWindowTest(unittest.TestCase):
                      reply("done")])
         a.turn("make x50 a word")
         results = [m["content"] for m in a.messages if m["role"] == "tool"]
-        self.assertTrue(results[0].startswith("[stale: app.py was read here before it changed"))
+        self.assertTrue(results[0].startswith("[an earlier read of app.py, taken out: you changed the file"))
         self.assertIn("now (lines", results[1])
         self.assertIn("   51\tx50 = 'fifty'", results[1])
 

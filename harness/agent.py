@@ -252,6 +252,9 @@ def calls_from_text(text):
     return calls, cleaned
 
 
+# what an old read becomes after an edit. Not "stale": Ornith-9B took "[stale: ...]" to mean purr's reads
+# were out of date and spent whole tasks hunting a cache
+EARLIER_READ = "[an earlier read of"
 LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file does
 ROUTINE_TOOLS = (*LOOKS, "outline", "find_symbol", "todo")  # steps routine_effort may think less after
 
@@ -2292,12 +2295,12 @@ class Agent:
             if m.get("role") == "assistant":
                 calls = {c["id"]: c["function"] for c in m.get("tool_calls") or []}
             fn = calls.get(m.get("tool_call_id")) if m.get("role") == "tool" else None
-            if not fn or fn.get("name") != "read_file" or str(m.get("content", "")).startswith("[stale:"):
+            if not fn or fn.get("name") != "read_file" or str(m.get("content", "")).startswith(EARLIER_READ):
                 continue
             read = _args(fn.get("arguments")).get("path")
             if read and (self.root / str(read)).resolve() == target:
-                m["content"] = (f"[stale: {path} was read here before it changed at step {self.tools.step}; "
-                                "the edit's result shows the new lines, read it again if you need more]")
+                m["content"] = (f"{EARLIER_READ} {path}, taken out: you changed the file after it. Your change's "
+                                "result shows the new lines; read_file shows the file as it is now]")
 
     def _look_in_parallel(self, calls):
         """When a reply asks for several read-only tools (read_file, grep, list_files, fetch_url),
