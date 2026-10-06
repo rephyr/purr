@@ -14,8 +14,10 @@ final_check = true
 # ...and runs the project's tests itself for that check, so the model sees the real result
 final_check_tests = true
 # one-shot runs (purr -p, benchmarks): before finishing, one call that sees only the request and the
-# diff lists what doesn't match the request (the model that wrote it reads its own assumptions back)
-review = true
+# diff lists what doesn't match the request (the model that wrote it reads its own assumptions back).
+# On for API models, off for local ones unless set here: a small reviewer misread diffs and the
+# small model "fixed" correct work to match (gpt-oss-20b, slow-dedupe).
+# review = true
 # Less reasoning for steps that only follow reads and searches (output, mostly thinking, is about
 # half of an agent's cost). Off by default: measure it first (fair.sh --ak routine_effort=low).
 # routine_effort = "low"
@@ -33,6 +35,8 @@ code_checks = true
 #  proof_ledger = true   rerun the model's own checks in a fresh shell before it may stop
 #  margin_check = true   a stated limit (under 1 s, at most 50 MB) is measured, not assumed
 #  job_watch = true      (with a time limit) a background job's log is read: purr says when it won't finish
+#  safety_net = true     the files are kept each time the tests pass; ending with them failing puts that
+#                        state back (with a time limit, purr also stops at it, to leave time for this)
 # ... off unless you set it (a 9B model thought for minutes on it, or without thinking got it wrong):
 #  blind_checks = true   before any code, write acceptance checks from the request alone
 # ... API models only (they don't loop, but pass a task in one run and fail it in the next):

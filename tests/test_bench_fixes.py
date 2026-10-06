@@ -528,9 +528,9 @@ class CompactFailureTest(unittest.TestCase):
 
 
 class SecondReaderTest(unittest.TestCase):
-    def run_with_review(self, verdict, **config):
-        a = one_shot()
-        a.config = {**a.config, **config}
+    def run_with_review(self, verdict, model="small", **config):
+        a = one_shot(model)
+        a.config = {**a.config, "review": True, **config}
         seen = []
         replies = iter([reply("", tool=("write_file", {"path": "moves.txt", "content": "e2e4\n"})),
                         reply("Done."), reply("Done."), reply(verdict), reply("Fixed both moves."), reply("Done.")])
@@ -551,6 +551,12 @@ class SecondReaderTest(unittest.TestCase):
         notes = [u for u in users(a) if "second reader" in u]
         self.assertEqual(len(notes), 1)
         self.assertIn("g2g4 also wins", notes[0])
+
+    def test_local_models_skip_it_unless_asked(self):
+        # gpt-oss-20b's reviewer misread a diff and the model "fixed" correct work to match
+        a = one_shot()
+        self.assertFalse(a._big_on("review"))
+        self.assertTrue(one_shot("api")._big_on("review"))
 
     def test_all_met_means_no_note(self):
         a, _ = self.run_with_review("ALL MET")
@@ -581,6 +587,11 @@ class SideCallThinkingTest(unittest.TestCase):
         a = agent()
         self.assertEqual(a._body([{"role": "user", "content": "x"}], False, think=False)["reasoning_effort"], "none")
         self.assertNotIn("reasoning_effort", a._body(None, True))  # the work itself still thinks
+
+    def test_gpt_oss_gets_a_low_effort(self):
+        a = agent()
+        a.model = {**a.model, "id": "gpt-oss:20b"}
+        self.assertEqual(a._body([{"role": "user", "content": "x"}], False, think=False)["reasoning_effort"], "low")
 
     def test_other_local_servers_use_the_template_switch(self):
         a = agent()

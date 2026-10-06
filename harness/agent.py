@@ -119,6 +119,21 @@ HEDGE = re.compile(r"say so|tell me if|if you'?d (rather|prefer|like)|if you (wa
 
 REFINE_MODES = ("auto", "on", "off")
 
+SAFETY_BYTES = 20_000_000  # the safety net keeps the changed files when tests pass, up to this much
+SAFETY_WAIT = 120          # seconds for its test run at the end (5% of a time limit, at least 15)
+
+
+def TESTS_PASSED(result):
+    """A run's result (output + "[exit code N]") is a test suite that ran tests and passed."""
+    text = result or ""
+    if not re.search(r"\[exit code 0\]\s*$", text):
+        return False
+    ran = re.search(r"^Ran (\d+) tests? in", text, re.M)
+    if ran:
+        return int(ran.group(1)) > 0 and re.search(r"^OK\b", text, re.M) is not None
+    passed = re.search(r"\b(\d+) passed\b", text)
+    return bool(passed and int(passed.group(1)) > 0 and not re.search(r"\b\d+ (failed|errors?)\b", text))
+
 # the second reader's "nothing to fix", said its own way ("All requirements are met.", not ALL MET)
 ALL_MET = re.compile(r"\ball\b[\w ]{0,25}\bmet\b", re.I)
 NOT_MET = re.compile(r"\bnot (?:all |every \w+ )?(?:yet )?met\b|\bunmet\b|\bmissing\b|\bnot (?:meet|handled|done)\b", re.I)
@@ -255,6 +270,27 @@ def calls_from_text(text):
 # what an old read becomes after an edit. Not "stale": Ornith-9B took "[stale: ...]" to mean purr's reads
 # were out of date and spent whole tasks hunting a cache
 EARLIER_READ = "[an earlier read of"
+REQUIRED = {s["function"]["name"]: set(s["function"]["parameters"].get("required", [])) for s in schemas()}
+
+
+def call_from_json(text):
+    """gpt-oss sometimes ends with a tool call's arguments as its whole answer, {"path": "x.py",
+    "offset": 10}, so nothing runs and the turn ends. When only one tool takes exactly those keys,
+    that's the call: [call] or []."""
+    body = (text or "").strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    if not (body.startswith("{") and body.endswith("}")):
+        return []
+    try:
+        args = json.loads(body)
+    except ValueError:
+        return []
+    if not isinstance(args, dict) or not args:
+        return []
+    keys = set(args)
+    fits = [name for name, params in PARAM_TYPES.items() if REQUIRED[name] <= keys <= set(params)]
+    return [{"id": "json_call_0", "name": fits[0], "args": json.dumps(args)}] if len(fits) == 1 else []
+
+
 LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file does
 ROUTINE_TOOLS = (*LOOKS, "outline", "find_symbol", "todo")  # steps routine_effort may think less after
 
@@ -1080,7 +1116,8 @@ class Agent:
             # a side call (checks from the request, the second reader, a summary) on a local thinking
             # model: left to think, Ornith-9B spent 18k tokens (280 s of a 600 s task) before any code
             if self.model.get("provider") == "ollama" or ":11434" in self.provider.get("base_url", ""):
-                body["reasoning_effort"] = "none"
+                # gpt-oss can't stop thinking (Ollama ignores "none" for it), but takes a low effort
+                body["reasoning_effort"] = "low" if "gpt-oss" in str(self.model.get("id", "")) else "none"
             else:  # llama.cpp, vLLM: the chat template's own switch (Qwen and others)
                 body["chat_template_kwargs"] = {**(body.get("chat_template_kwargs") or {}), "enable_thinking": False}
         return body
@@ -1338,6 +1375,9 @@ class Agent:
                 if not reply["tool_calls"] and "<function=" in reply["text"]:
                     reply["tool_calls"], reply["text"] = calls_from_text(reply["text"])
                     self.tools.repairs += ["tool call written as text -> real call"] * len(reply["tool_calls"])
+                elif not reply["tool_calls"] and call_from_json(reply["text"]):
+                    reply["tool_calls"], reply["text"] = call_from_json(reply["text"]), ""
+                    self.tools.repairs.append("tool call written as text -> real call")
 
                 if self._pair_handing_back and reply["tool_calls"]:
                     # the step is done: whatever it wanted next becomes a suggestion, not an action
@@ -1371,7 +1411,9 @@ class Agent:
                         self.messages.append({"role": "user", "content": EMPTY_NUDGE})
                         continue
                     # local models sometimes write a tool call as plain text, so it never runs
-                    if "tool_call>" in (reply["text"] or "") and retries < 2:
+                    said = (reply["text"] or "").strip()
+                    if ("tool_call>" in said or (said.startswith("{") and said.endswith("}") and '":' in said)) \
+                            and retries < 2:
                         retries += 1
                         self.view.note("tool call came out as text, asking it to try again")
                         self.messages.append({"role": "user", "content":
@@ -1513,6 +1555,11 @@ class Agent:
         self._reviewed = False  # one-shot: the second reader (REVIEW) at most once
         self._tested = False    # one-shot: the fresh-eyes tester at most once
         self._think_hard = False  # the next call gets effort_hard (effort_phases)
+        self._good = None  # (test command, {path: bytes or None}): the files when the tests last passed
+        if self.one_shot and self.time_limit and not self.helper and self._on("safety_net"):
+            # stop at the time limit (a benchmark's own is about 10% later): a model still editing when
+            # it's killed leaves whatever it was in the middle of, and the safety net needs a moment
+            self._stop_at = self._started + self.time_limit
 
     def _turn_content(self, text):
         """Your message as the model gets it: @files attached, your own edits (pair mode), the
@@ -1892,6 +1939,7 @@ class Agent:
 
     def _after_turn(self, turn_cost):
         """The turn is over: save, show the numbers, and what's next in pair and learn mode."""
+        self._safety_net()
         self.save_log()
         self._status(turn_cost)
         changed = len(self.tools.undo_stack[-1]) if self.tools.undo_stack else 0
@@ -1933,6 +1981,72 @@ class Agent:
             check = check[:-1] + MEASURE_ASK + ")" if check.endswith(".)") else check + MEASURE_ASK
         self.messages.append({"role": "user", "content": self._test_report() + self._blind_report() + check})
         return True
+
+    # ---- the safety net (one-shot runs; safety_net = false turns it off) ----
+
+    def _changed_files(self):
+        """The files this run changed or made: edits, and what commands changed on disk."""
+        paths = set(self.tools.session_changes())
+        before = getattr(self, "_disk_before", None)
+        if before is not None:
+            paths |= {p for p, st in self._disk_snapshot().items() if before.get(p) != st}
+        return paths
+
+    def _keep_good(self, command):
+        """The tests just passed: remember the changed files as they are now, with the command."""
+        if not (self.one_shot and self.coding) or self.helper or not self._on("safety_net") or not command:
+            return
+        files, size = {}, 0
+        for p in self._changed_files():
+            try:
+                data = p.read_bytes() if p.exists() else None
+            except OSError:
+                continue
+            size += len(data or b"")
+            if size > SAFETY_BYTES:
+                return  # too big to keep (a build, a dataset): no net rather than half of one
+            files[p] = data
+        if files:
+            self._good = (command, files)
+
+    def _put_files(self, files):
+        for p, data in files.items():
+            try:
+                if data is None:
+                    p.unlink(missing_ok=True)
+                else:
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_bytes(data)
+            except OSError:
+                pass
+
+    def _safety_net(self):
+        """A one-shot run that ends with its tests failing where they passed before: the last
+        state they passed in is put back. Small models keep rewriting until the time runs out,
+        and are often stopped halfway (Ornith-9B: a passing inventory left at 1 of 9)."""
+        good = getattr(self, "_good", None)
+        if not good or not self.one_shot or self.helper:
+            return
+        command, files = good
+        now = {}
+        for p in set(files) | self._changed_files():
+            try:
+                now[p] = p.read_bytes() if p.exists() else None
+            except OSError:
+                return
+        if all(now.get(p) == data for p, data in files.items()):
+            return  # nothing changed since they passed
+        wait = SAFETY_WAIT if not self.time_limit else max(15, min(SAFETY_WAIT, int(self.time_limit * 0.05)))
+        output, code = run_shell(command, self.root, wait)
+        if TESTS_PASSED(f"{output}\n[exit code {code}]"):
+            return
+        self._put_files({p: files.get(p) for p in now})  # files made after it go too
+        output, code = run_shell(command, self.root, wait)
+        if not TESTS_PASSED(f"{output}\n[exit code {code}]"):
+            self._put_files(now)  # failing either way (time, the machine): leave the latest work
+            return
+        self.tools.repairs.append("tests failed at the end -> files put back to when they last passed")
+        self.view.note(f"♡ the tests failed at the end: purr put the files back to when `{command[:60]}` passed", "warn")
 
     def _new_files_note(self):
         """The files this run created that still exist, for the check: leftovers break real tests.
@@ -1997,7 +2111,7 @@ class Agent:
         """Once, before a one-shot run finishes: a call that sees only the request and the diff.
         Returns True when it found something to look at (the turn goes on)."""
         if (not self.one_shot or self.helper or not self.coding or getattr(self, "_reviewed", True)
-                or not self.config.get("review", True)):
+                or not self._big_on("review")):
             return False
         self._reviewed = True
         budget = min(30_000, self.limits.context)  # characters: well inside even a 32k model
@@ -2223,6 +2337,8 @@ class Agent:
         if ran is None:
             return ""
         output, code = ran
+        if TESTS_PASSED(f"{output}\n[exit code {code}]"):
+            self._keep_good(cmd)
         self.view.tool_result("run", {"command": cmd}, f"{output}\n[exit code {code}]")
         tail = "\n".join(output.strip().splitlines()[-40:])
         verdict = "they pass" if code == 0 else (
@@ -2270,6 +2386,8 @@ class Agent:
                 else:
                     result = early[c["id"]] if c["id"] in early else self.tools.call(c["name"], c["args"])
                     self._executed.append((c["name"], c["args"], result))
+                    if c["name"] in ("run", "bash", "shell") and TESTS_PASSED(result):
+                        self._keep_good(str(_args(c["args"]).get("command", "")))
                     if self.limits.edit_window and c["name"] in ("edit_file", "write_file") \
                             and result.startswith(("edited ", "wrote ")):
                         self._mark_stale(_args(c["args"]).get("path"))
@@ -2348,8 +2466,9 @@ class Agent:
         for name, args, result in getattr(self, "_executed", []):
             if name == "todo":  # updating the task list over and over is normal
                 continue
-            # reading a file again after an edit is new information, not a loop
-            key = (name, _stable(args), self.tools.edit_gen if name in LOOKS else 0)
+            # reading a file again after an edit is new information, not a loop; so is running the
+            # tests again after one (gpt-oss was told "don't repeat it" for checking its fix)
+            key = (name, _stable(args), self.tools.edit_gen if name in LOOKS or name == "run" else 0)
             failed = _looks_failed(result)
             rec = self._repeats.get(key)
             if rec and rec["result"] == result:

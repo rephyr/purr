@@ -263,11 +263,17 @@ edge-case step in the final check; API models (which `purr bench` showed don't n
 DeepSeek V4.1 Flash they only made purr slower) get a short final check instead. Setting
 `refine`, `reminders` or `edge_cases` in your config (or `/refine ...`) overrides that.
 
-In one-shot runs (`purr -p`, benchmarks), every model gets three cheap checks: its own
+In one-shot runs (`purr -p`, benchmarks), every model gets four cheap checks: its own
 checks rerun in a fresh shell before it may stop (`proof_ledger`); limits the task states
-(under 1 s, at most 50 MB) measured rather than assumed (`margin_check`); and a watch on
+(under 1 s, at most 50 MB) measured rather than assumed (`margin_check`); a watch on
 background jobs (with a time limit) that reads their logs and says when one won't finish in the
-time left or has stalled, plus a reminder to time a small piece of a long run first (`job_watch`).
+time left or has stalled, plus a reminder to time a small piece of a long run first (`job_watch`);
+and a safety net (`safety_net`): each time the tests pass, purr keeps the changed files, and a run
+that ends with that test command failing gets them back. With a time limit, purr stops at it, so a
+model isn't killed halfway through a rewrite. Side calls on a local model (summaries, refine) go without thinking: a 9B model otherwise
+thinks for minutes on each. A second reader that compares the request with the diff before a
+one-shot run ends (`review`) is on for API models only: a small one misread diffs, and the model
+then "fixed" work that was right.
 Acceptance checks written from the request alone before any code (`blind_checks = true`) are off
 by default: Ornith-9B spent 2 to 8 minutes of a 10-minute task thinking about them, and without
 thinking it wrote wrong ones that the solver then followed.
