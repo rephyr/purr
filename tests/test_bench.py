@@ -123,6 +123,13 @@ class OutsideTest(unittest.TestCase):
         self.assertIsNone(bench.outside({"path": str(work / "a.py")}, work))
         self.assertIsNone(bench.outside({"command": "/usr/bin/python3 x.py"}, work))
 
+    def test_text_written_into_a_file_is_not_a_path(self):
+        work = Path(tempfile.mkdtemp()) / "work"
+        work.mkdir()
+        edit = {"path": "cafe/receipt.py", "old_text": 'lines = ["~ cat café ~", ""]', "new_text": "x = a / b"}
+        self.assertIsNone(bench.outside(edit, work))
+        self.assertIsNone(bench.outside({"path": "notes.txt", "content": "see ~ and /etc/x"}, work))
+
     def test_scratch_in_tmp_is_fine_and_collected(self):
         work = Path(tempfile.mkdtemp(prefix="purr-bench-")) / "work"
         work.mkdir()
