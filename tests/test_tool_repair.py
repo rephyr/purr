@@ -77,3 +77,16 @@ class GptOssSlipsTest(unittest.TestCase):
         self.assertTrue(out.startswith("edited b.py"), out)
         self.assertIn('\n\ndef f(d):\n    """doc"""\n    for x in d:\n        print(x)\n    return d\n',
                       Path(a.root, "b.py").read_text())
+
+
+class ExtraArgumentTest(unittest.TestCase):
+    def test_an_argument_the_tool_doesnt_have_is_dropped(self):
+        # gpt-oss added replace_whole_file to every edit and each one failed whole
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "b.py").write_text("x = 1\n")
+        a.tools.seen.add(Path(a.root, "b.py").resolve())
+        out = a.tools.call("edit_file", json.dumps({"path": "b.py", "old_text": "x = 1", "new_text": "x = 2",
+                                                     "replace_whole_file": False}))
+        self.assertTrue(out.startswith("edited b.py"), out)
+        self.assertIn("unknown argument replace_whole_file for edit_file -> dropped", a.tools.repairs)

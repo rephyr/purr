@@ -44,6 +44,17 @@ class RepairTest(unittest.TestCase):
         out = self.call("edit_file", path="shop/basket.py", old_text="def calc_total(items):", new_text="x")
         self.assertIn("shop/prices.py (line 1)", out)
 
+    def test_text_from_another_file_is_a_maybe_not_an_order(self):
+        # gpt-oss quoted save.py's import to add one to crafting.py, and was sent off to edit save.py
+        (self.root / "shop/basket.py").write_text("from .prices import calc_total\n\ndef basket():\n    pass\n")
+        out = self.call("edit_file", path="shop/basket.py", old_text="def calc_total(items):", new_text="x")
+        self.assertIn("if you meant that file, edit it there", out)
+        self.assertNotIn("edit that file instead", out)
+
+    def test_a_function_that_is_gone_is_said_to_be_gone(self):
+        out = self.call("edit_file", path="shop/prices.py", old_text="def _expired(self):\n    return 1", new_text="x")
+        self.assertIn("There is no `def _expired` in shop/prices.py now", out)
+
     def test_closest_lines_when_slightly_off(self):
         out = self.call("edit_file", path="shop/prices.py", old_text="def calc_totals(items):", new_text="x")
         self.assertIn("closest lines are 1-1", out)
