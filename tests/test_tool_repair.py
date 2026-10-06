@@ -115,3 +115,21 @@ class LineRangeEditTest(unittest.TestCase):
     def test_lines_past_the_end_are_an_error(self):
         out = self.a.tools.call("edit_file", json.dumps({"path": "c.py", "line_start": 2, "line_end": 9, "new_text": "x"}))
         self.assertIn("error: edit_file needs old_text", out)
+
+
+class GptOssArgumentsTest(unittest.TestCase):
+    def setUp(self):
+        self.a = agent()
+        self.a.tools.trust_all = True
+        Path(self.a.root, "n.py").write_text("".join(f"x{i} = {i}\n" for i in range(1, 51)))
+
+    def test_a_line_range_reads_those_lines(self):
+        out = self.a.tools.call("read_file", json.dumps({"path": "n.py", "line_range": [10, 12]}))
+        self.assertTrue(out.startswith("   10\tx10 = 10"), out)
+        self.assertIn("x12 = 12", out)
+        self.assertNotIn("x13", out.split("[")[0])
+
+    def test_a_key_with_whitespace_still_counts(self):
+        self.a.tools.seen.add(Path(self.a.root, "n.py").resolve())
+        out = self.a.tools.call("edit_file", json.dumps({"path": "n.py", "old_text": "x1 = 1\n", "\nnew_text": "x1 = 100\n"}))
+        self.assertTrue(out.startswith("edited n.py"), out)
