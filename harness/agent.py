@@ -150,6 +150,7 @@ RETRY_WAITS_LOCAL = [2]    # Ollama on this machine: one more try; it's up or it
 CUT_MAX = 5  # one-shot runs: cut-off replies nudged on before the turn may end (a chat: 2)
 CUT_TAIL_CHARS = 1200  # of a cut-off reply's end, quoted back so it can carry on from there
 REPEAT_NUDGE = 2  # same tool call this many times: tell the model to stop repeating
+PRUNE_TO = 0.15  # trimming old output goes this far under prune_at (a share of the context)
 
 
 def _notes(path, label):
@@ -1762,7 +1763,9 @@ class Agent:
                 return
             self._compact_again_at = len(self.messages) + 10
         if used > ctx * self.limits.prune_at:
-            self._prune_old_tools()
+            # only what it takes to get well under the line, least useful first: everything older than
+            # the newest few went at once, the README with the task's rules included (Qwen3.6, 32k)
+            self._prune_old_tools(need=int((used - ctx * (self.limits.prune_at - PRUNE_TO)) * 4))
             used = self.context_used()
         if used > ctx * self.limits.compact_at and len(self.messages) >= self._compact_again_at:
             try:
@@ -2544,9 +2547,11 @@ class Agent:
                 return STEP_BACK.format(what=what, n=limit)
         return None
 
-    def _prune_old_tools(self, keep=None):
+    def _prune_old_tools(self, keep=None, need=None):
         """Free room cheaply by eliding old tool output, keeping the newest results whole.
-        Cheaper than a full compaction: no model call, and it keeps the messages."""
+        Cheaper than a full compaction: no model call, and it keeps the messages. need: characters
+        to free, least useful first (old command output, then searches and listings, then file
+        reads); None frees all it can."""
         keep = self.limits.keep_recent_tools if keep is None else keep
         # the stub names the call it came from, so the model knows what to redo if it needs it
         # each result belongs to the call just before it: ids repeat across steps (text_call_0 in every
@@ -2569,9 +2574,14 @@ class Agent:
                     cut = i + 1
                     break
         older = tools[:cut]
+        if need is not None:
+            rank = {"read_file": 2, "grep": 1, "list_files": 1, "outline": 1, "find_symbol": 1}
+            older = sorted(older, key=lambda m: rank.get(fn_of[id(m)].get("name"), 0))  # stable: oldest first
         freed = 0
         for m in older:
             content = m.get("content") or ""
+            if need is not None and freed >= need:
+                break
             if len(content) <= 400 or content.startswith("[old output of"):
                 continue
             fn = fn_of[id(m)]

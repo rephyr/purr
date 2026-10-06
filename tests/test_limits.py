@@ -375,6 +375,19 @@ class PruneTest(unittest.TestCase):
         self.assertTrue(all(t.startswith("[old output of") for t in tools[:-keep]))
         self.assertTrue(all(t.startswith("file") for t in tools[-keep:]))
 
+    def test_trimming_what_it_takes_keeps_file_reads_longest(self):
+        a = agent("small")
+        self.chat(a, 2)  # two file reads first (the README, the code)
+        for i in range(2, 8):
+            a.messages.append({"role": "assistant", "content": None, "tool_calls": [
+                {"id": f"c{i}", "type": "function", "function": {"name": "run", "arguments": '{"command": "pytest"}'}}]})
+            a.messages.append({"role": "tool", "tool_call_id": f"c{i}", "content": f"run {i}\n" + "y" * 2000})
+        a._prune_old_tools(need=3000)  # about two outputs
+        tools = [m["content"] for m in a.messages if m["role"] == "tool"]
+        self.assertTrue(tools[0].startswith("file 0") and tools[1].startswith("file 1"))  # reads kept
+        self.assertTrue(tools[2].startswith("[old output of") and tools[3].startswith("[old output of"))
+        self.assertTrue(tools[4].startswith("run 4"))  # freed enough: the rest stays
+
     def test_pruning_twice_changes_nothing(self):
         a = agent("small")
         self.chat(a, 6)
