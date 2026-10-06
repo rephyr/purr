@@ -1095,7 +1095,8 @@ class Agent:
             # a side call (checks from the request, the second reader, a summary) on a local thinking
             # model: left to think, Ornith-9B spent 18k tokens (280 s of a 600 s task) before any code
             if self.model.get("provider") == "ollama" or ":11434" in self.provider.get("base_url", ""):
-                body["reasoning_effort"] = "none"
+                # gpt-oss can't stop thinking (Ollama ignores "none" for it), but takes a low effort
+                body["reasoning_effort"] = "low" if "gpt-oss" in str(self.model.get("id", "")) else "none"
             else:  # llama.cpp, vLLM: the chat template's own switch (Qwen and others)
                 body["chat_template_kwargs"] = {**(body.get("chat_template_kwargs") or {}), "enable_thinking": False}
         return body

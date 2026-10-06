@@ -582,6 +582,11 @@ class SideCallThinkingTest(unittest.TestCase):
         self.assertEqual(a._body([{"role": "user", "content": "x"}], False, think=False)["reasoning_effort"], "none")
         self.assertNotIn("reasoning_effort", a._body(None, True))  # the work itself still thinks
 
+    def test_gpt_oss_gets_a_low_effort(self):
+        a = agent()
+        a.model = {**a.model, "id": "gpt-oss:20b"}
+        self.assertEqual(a._body([{"role": "user", "content": "x"}], False, think=False)["reasoning_effort"], "low")
+
     def test_other_local_servers_use_the_template_switch(self):
         a = agent()
         a.provider = {"base_url": "http://127.0.0.1:8080/v1"}
