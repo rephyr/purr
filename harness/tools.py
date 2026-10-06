@@ -242,18 +242,26 @@ def _loose_match(text, old, new):
     if len(hits) != 1:
         return None
     real = lines[hits[0]:hits[0] + len(want)]
+    new_lines = new.strip("\n").splitlines()
+    first = None  # (model's lead, real lead) of a first line indented on its own
     # how the model's indents map onto the file's real ones, e.g. 6 spaces -> 4 spaces or a tab
-    imap = {}
-    for o, r in zip(old_lines, real):
-        if o.strip():
-            if imap.setdefault(_lead(o), _lead(r)) != _lead(r):
-                return None
+    imap = _indent_map(old_lines, real)
+    if imap is None and len(old_lines) > 1:
+        # only the first line off ("    def f():" for "def f():", gpt-oss): it alone maps its own way
+        imap = _indent_map(old_lines[1:], real[1:])
+        if imap is None or not new_lines or _lead(new_lines[0]) != _lead(old_lines[0]):
+            return None
+        first = (_lead(old_lines[0]), _lead(real[0]))
+    if not imap:
+        imap = {first[0]: first[1]} if first else {"": ""}
     keys = sorted(imap, key=len)
     fixed = []
-    for l in new.strip("\n").splitlines():
+    for i, l in enumerate(new_lines):
         lead, body = _lead(l), l.lstrip(" \t")
         if not body:
             fixed.append("")
+        elif i == 0 and first:
+            fixed.append(first[1] + body)
         elif lead in imap:
             fixed.append(imap[lead] + body)
         else:
@@ -264,6 +272,15 @@ def _loose_match(text, old, new):
     real_text = "".join(real)
     ending = "\n" if real_text.endswith("\n") else ""
     return real_text, "\n".join(fixed) + ending
+
+def _indent_map(model_lines, real_lines):
+    """{model's indent: the file's} for lines that match ignoring indents; None if they disagree."""
+    imap = {}
+    for o, r in zip(model_lines, real_lines):
+        if o.strip() and imap.setdefault(_lead(o), _lead(r)) != _lead(r):
+            return None
+    return imap
+
 
 class Tools:
     def __init__(self, root, view, read_only=False, allow_run=(), limits=None):

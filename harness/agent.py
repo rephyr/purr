@@ -270,6 +270,27 @@ def calls_from_text(text):
 # what an old read becomes after an edit. Not "stale": Ornith-9B took "[stale: ...]" to mean purr's reads
 # were out of date and spent whole tasks hunting a cache
 EARLIER_READ = "[an earlier read of"
+REQUIRED = {s["function"]["name"]: set(s["function"]["parameters"].get("required", [])) for s in schemas()}
+
+
+def call_from_json(text):
+    """gpt-oss sometimes ends with a tool call's arguments as its whole answer, {"path": "x.py",
+    "offset": 10}, so nothing runs and the turn ends. When only one tool takes exactly those keys,
+    that's the call: [call] or []."""
+    body = (text or "").strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    if not (body.startswith("{") and body.endswith("}")):
+        return []
+    try:
+        args = json.loads(body)
+    except ValueError:
+        return []
+    if not isinstance(args, dict) or not args:
+        return []
+    keys = set(args)
+    fits = [name for name, params in PARAM_TYPES.items() if REQUIRED[name] <= keys <= set(params)]
+    return [{"id": "json_call_0", "name": fits[0], "args": json.dumps(args)}] if len(fits) == 1 else []
+
+
 LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file does
 ROUTINE_TOOLS = (*LOOKS, "outline", "find_symbol", "todo")  # steps routine_effort may think less after
 
@@ -1354,6 +1375,9 @@ class Agent:
                 if not reply["tool_calls"] and "<function=" in reply["text"]:
                     reply["tool_calls"], reply["text"] = calls_from_text(reply["text"])
                     self.tools.repairs += ["tool call written as text -> real call"] * len(reply["tool_calls"])
+                elif not reply["tool_calls"] and call_from_json(reply["text"]):
+                    reply["tool_calls"], reply["text"] = call_from_json(reply["text"]), ""
+                    self.tools.repairs.append("tool call written as text -> real call")
 
                 if self._pair_handing_back and reply["tool_calls"]:
                     # the step is done: whatever it wanted next becomes a suggestion, not an action
@@ -1387,7 +1411,9 @@ class Agent:
                         self.messages.append({"role": "user", "content": EMPTY_NUDGE})
                         continue
                     # local models sometimes write a tool call as plain text, so it never runs
-                    if "tool_call>" in (reply["text"] or "") and retries < 2:
+                    said = (reply["text"] or "").strip()
+                    if ("tool_call>" in said or (said.startswith("{") and said.endswith("}") and '":' in said)) \
+                            and retries < 2:
                         retries += 1
                         self.view.note("tool call came out as text, asking it to try again")
                         self.messages.append({"role": "user", "content":

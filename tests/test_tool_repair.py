@@ -42,3 +42,38 @@ class ToolRepairTest(unittest.TestCase):
         out = self.a.tools.call("wc", json.dumps({"args": "-l notes.txt"}))
         self.assertIn("there is no tool called wc", out)
         self.assertNotIn("3 notes.txt", out)
+
+
+class GptOssSlipsTest(unittest.TestCase):
+    """gpt-oss-20b in purr bench: a tool call's arguments written as the whole answer, and an edit
+    whose first line alone got an extra indent."""
+
+    def test_arguments_written_as_the_answer_still_run(self):
+        from tests.test_limits import reply, scripted
+        a = agent()
+        Path(a.root, "a.py").write_text("x = 1\n")
+        calls = scripted(a, [reply('{"limit": 200, "offset": 1, "path": "a.py"}'), reply("x is 1")])
+        a.turn("what is x?")
+        self.assertEqual(calls["n"], 2)
+        self.assertIn("x = 1", [m for m in a.messages if m["role"] == "tool"][0]["content"])
+        self.assertIn("tool call written as text -> real call", a.tools.repairs)
+
+    def test_unclear_arguments_get_asked_again(self):
+        from tests.test_limits import reply, scripted
+        a = agent()
+        calls = scripted(a, [reply('{"path": "a.py"}'), reply("ok")])
+        a.turn("look at a.py")
+        self.assertEqual(calls["n"], 2)
+        self.assertTrue(any("came out as plain text" in (m.get("content") or "") for m in a.messages))
+
+    def test_a_first_line_indented_on_its_own_still_edits(self):
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "b.py").write_text('class E(Exception):\n    pass\n\n\ndef f(d):\n    """doc"""\n    raise NotImplementedError\n')
+        a.tools.seen.add(Path(a.root, "b.py").resolve())
+        out = a.tools.call("edit_file", json.dumps({
+            "path": "b.py", "old_text": '    def f(d):\n    """doc"""\n    raise NotImplementedError',
+            "new_text": '    def f(d):\n    """doc"""\n    for x in d:\n        print(x)\n    return d'}))
+        self.assertTrue(out.startswith("edited b.py"), out)
+        self.assertIn('\n\ndef f(d):\n    """doc"""\n    for x in d:\n        print(x)\n    return d\n',
+                      Path(a.root, "b.py").read_text())
