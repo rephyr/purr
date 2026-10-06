@@ -2466,8 +2466,9 @@ class Agent:
         for name, args, result in getattr(self, "_executed", []):
             if name == "todo":  # updating the task list over and over is normal
                 continue
-            # reading a file again after an edit is new information, not a loop
-            key = (name, _stable(args), self.tools.edit_gen if name in LOOKS else 0)
+            # reading a file again after an edit is new information, not a loop; so is running the
+            # tests again after one (gpt-oss was told "don't repeat it" for checking its fix)
+            key = (name, _stable(args), self.tools.edit_gen if name in LOOKS or name == "run" else 0)
             failed = _looks_failed(result)
             rec = self._repeats.get(key)
             if rec and rec["result"] == result:

@@ -97,6 +97,13 @@ class LoopGuardTest(unittest.TestCase):
         self.assertIn("keeps failing", guard(self.a, [fail]))
         self.assertEqual(guard(self.a, [fail]), "stop failed")
 
+    def test_running_the_tests_again_after_an_edit_is_no_repeat(self):
+        ok = ("run", '{"command": "python3 -m unittest"}', "OK\n[exit code 0]")
+        self.assertIsNone(guard(self.a, [ok]))
+        self.a.tools.edit_gen += 1  # a file changed in between
+        self.assertIsNone(guard(self.a, [ok]))
+        self.assertIn("returns the same thing", guard(self.a, [ok]))  # nothing changed: a repeat
+
     def test_rereading_a_file_gets_more_room(self):
         read = ("read_file", '{"path": "x.py"}', "    1\tprint(1)")
         results = [guard(self.a, [read]) for _ in range(5)]
