@@ -628,10 +628,21 @@ class Tools:
             self.view.tool_result(name, args, error)
         return error
 
-    def t_edit_file(self, path, old_text=None, new_text=None, replace_all=False, content=None):
-        if old_text is None and content is not None:  # it meant "replace the whole file"
+    def t_edit_file(self, path, old_text=None, new_text=None, replace_all=False, content=None,
+                    line_start=None, line_end=None):
+        if old_text is None and content is not None and line_start is None:  # it meant "replace the whole file"
             self.repairs.append("edit_file with only content -> write_file")
             return self.t_write_file(path, content)
+        if old_text is None and line_start is not None and (new_text is not None or content is not None):
+            # gpt-oss edits by line numbers: those lines (as read_file numbers them) are the old text
+            p = self._path(path)
+            if p.is_file() and (not self.read_before_edit or p.resolve() in self.seen):
+                lines = p.read_text().splitlines(keepends=True)
+                start, end = int(line_start), int(line_end if line_end is not None else line_start)
+                if 1 <= start <= end <= len(lines):
+                    old_text = "".join(lines[start - 1:end]).rstrip("\n")
+                    new_text = (new_text if new_text is not None else content).rstrip("\n")
+                    self.repairs.append("edit_file by line numbers -> those lines' text")
         if old_text is None or new_text is None:
             return ("error: edit_file needs old_text (copied from the file) and new_text. "
                     "To replace the whole file, use write_file(path, content).")
