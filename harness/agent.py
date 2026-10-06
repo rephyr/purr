@@ -1620,20 +1620,22 @@ class Agent:
         return True
 
 
-    # ---- blind acceptance checks (small models; blind_checks = false turns them off) ----
+    # ---- blind acceptance checks (off unless blind_checks = true) ----
 
     def _blind_card(self, request):
         """Before any code: one tool-less call that sees only the request and the machine writes the
-        spec card (what's easy to get wrong) and a check script purr runs at the final check."""
+        spec card (what's easy to get wrong) and a check script purr runs at the final check.
+        Off by default: Ornith-9B thought for 2 to 8 minutes of a 10-minute task on it, and without
+        thinking its card was confidently wrong ("1h5m10s" -> 3700, and the solver followed it)."""
         self._blind_script = None
-        if not (self.one_shot and self.coding) or self.helper or not self._helper_on("blind_checks"):
+        if not (self.one_shot and self.coding) or self.helper or not self.config.get("blind_checks", False):
             return ""
         small = self.limits.context <= 65_536
         prompt = BLIND_SPEC.format(request=_ends(request, 4000, 1500), files=self._given_files(),
                                    checks=3 if small else 6)
         self.view.activity("thinking", "an independent reading of the request")
         try:
-            reply = self._call([{"role": "user", "content": prompt}], tools=False, quiet=True, think=False)
+            reply = self._call([{"role": "user", "content": prompt}], tools=False, quiet=True)
         except ApiError:
             return ""
         self._count(reply.get("usage"))
