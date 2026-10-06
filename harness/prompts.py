@@ -355,13 +355,17 @@ FOLDER_LINE = "(use paths relative to it, like src/app.py, not full paths)"
 STEP_BACK = ("(purr: you have changed {what} {n} times now and it still isn't done. Stop changing it "
              "for a moment and write 3 short lines: 1. what you know for sure (results you have seen), "
              "2. why the attempts so far fail, 3. a different approach, not another variant of this one. "
-             "Then try that approach, testing its riskiest part first.)")
+             "Then try that approach, testing its riskiest part first. If what the request asks for already "
+             "works and only cases it doesn't mention fail, stop changing it and finish.)")
 
 # every few steps for small models: the request again, and a look at whether it's getting closer
-# (a plain "reminder of what the user asked" came 13 times in one task and changed nothing)
+# (a plain "reminder of what the user asked" came 13 times in one task and changed nothing). Ornith-9B had
+# duration working at 2 minutes, then chased a case it made up ("1h2x") for 8 more and ended broken
 CHECKPOINT = ("(purr: checkpoint after {steps} steps. The request: {request}\n"
               "In 3 short lines: what is done and proven, what is left, and whether your current "
-              "approach is getting closer. If it isn't, switch to a different approach now.)")
+              "approach is getting closer. If it isn't, switch to a different approach now. If everything "
+              "the request asks for is done and proven, stop here and give your final answer: cases the "
+              "request doesn't ask for aren't left to do.)")
 
 # the proof ledger (small models): purr runs the todo items' checks again itself, in a fresh shell, before
 # the run ends and after any later change: late fixes broke work that had been checked (filter-js, doom)
