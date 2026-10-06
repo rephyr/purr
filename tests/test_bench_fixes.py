@@ -187,7 +187,7 @@ class PromptTest(unittest.TestCase):
         self.assertIn("exact absolute path", short)
         self.assertIn("Hidden tests", short)
         self.assertTrue(short.startswith("You are m, an AI model"))
-        self.assertLess(len(short), len(normal) + 400)
+        self.assertLess(len(short), len(normal) + 450)  # +50: the relative-paths line
 
     def test_one_shot_runs_leave_the_graders_tools_and_no_test_leftovers(self):
         # Terminal-Bench 2.1: an SSH key and a test push left behind, an edited emulator (vm.js)
