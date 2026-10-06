@@ -2063,6 +2063,8 @@ class Agent:
         if all(now.get(p) == data for p, data in files.items()):
             return  # nothing changed since they passed
         wait = SAFETY_WAIT if not self.time_limit else max(15, min(SAFETY_WAIT, int(self.time_limit * 0.05)))
+        if self.stopping():
+            wait = min(wait, 20)  # stopped (by you, or a benchmark's clock): be quick about it
         output, code = run_shell(command, self.root, wait)
         if TESTS_PASSED(f"{output}\n[exit code {code}]"):
             return
