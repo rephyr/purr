@@ -2111,7 +2111,7 @@ class Agent:
         """Once, before a one-shot run finishes: a call that sees only the request and the diff.
         Returns True when it found something to look at (the turn goes on)."""
         if (not self.one_shot or self.helper or not self.coding or getattr(self, "_reviewed", True)
-                or not self.config.get("review", True)):
+                or not self._big_on("review")):
             return False
         self._reviewed = True
         budget = min(30_000, self.limits.context)  # characters: well inside even a 32k model

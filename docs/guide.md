@@ -270,8 +270,10 @@ background jobs (with a time limit) that reads their logs and says when one won'
 time left or has stalled, plus a reminder to time a small piece of a long run first (`job_watch`);
 and a safety net (`safety_net`): each time the tests pass, purr keeps the changed files, and a run
 that ends with that test command failing gets them back. With a time limit, purr stops at it, so a
-model isn't killed halfway through a rewrite. Side calls on a local model (the second reader,
-summaries, refine) go without thinking: a 9B model otherwise thinks for minutes on each.
+model isn't killed halfway through a rewrite. Side calls on a local model (summaries, refine) go without thinking: a 9B model otherwise
+thinks for minutes on each. A second reader that compares the request with the diff before a
+one-shot run ends (`review`) is on for API models only: a small one misread diffs, and the model
+then "fixed" work that was right.
 Acceptance checks written from the request alone before any code (`blind_checks = true`) are off
 by default: Ornith-9B spent 2 to 8 minutes of a 10-minute task thinking about them, and without
 thinking it wrote wrong ones that the solver then followed.
