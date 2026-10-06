@@ -3,6 +3,7 @@
 import http.client
 import json
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -23,6 +24,38 @@ class Stopped(Exception):
         self.partial = partial
 
 
+def _tracked(base, sockets):
+    """An HTTP(S) connection class that hands its socket to `sockets` once connected."""
+    class Tracked(base):
+        def connect(self):
+            super().connect()
+            sockets.append(self.sock)
+    return Tracked
+
+
+class _Http(urllib.request.HTTPHandler):
+    def __init__(self, sockets):
+        super().__init__()
+        self.sockets = sockets
+
+    def http_open(self, req):
+        return self.do_open(_tracked(http.client.HTTPConnection, self.sockets), req)
+
+
+class _Https(urllib.request.HTTPSHandler):
+    def __init__(self, sockets):
+        super().__init__()
+        self.sockets = sockets
+
+    def https_open(self, req):
+        return self.do_open(_tracked(http.client.HTTPSConnection, self.sockets), req, context=self._context)
+
+
+def _open(req, sockets):
+    """urlopen, keeping the request's socket in `sockets`, so another thread can cut it off."""
+    return urllib.request.build_opener(_Http(sockets), _Https(sockets)).open(req, timeout=600)
+
+
 def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lambda: False):
     """POST /chat/completions with stream=True. Calls on_text / on_reasoning as pieces arrive.
 
@@ -30,7 +63,46 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
     once the reply is complete. gen_seconds runs from the first piece to the last, so it leaves
     out the time the model spent reading the prompt: output tokens / gen_seconds is the speed
     you feel. call_seconds is the whole call.
+
+    A stop works even before the first piece: the call runs in a thread, and stopping cuts its
+    connection (a local model reading a 40k-token prompt sent nothing for minutes, so stop and
+    the bench's time limit waited; cutting it also makes Ollama drop the work).
     """
+    sockets, out = [], {}
+
+    def work():
+        try:
+            out["reply"] = _stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop, sockets)
+        except BaseException as e:  # noqa: BLE001 - handed to the caller as is
+            out["error"] = e
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    try:
+        while worker.is_alive():
+            worker.join(0.2)
+            if worker.is_alive() and should_stop():
+                _cut(sockets)
+                worker.join(10)
+                break
+    except BaseException:  # Ctrl-C: don't leave the model working for nobody
+        _cut(sockets)
+        raise
+    if "reply" in out:
+        return out["reply"]
+    if isinstance(out.get("error"), BaseException):
+        raise out["error"]
+    raise Stopped(None)
+
+
+def _cut(sockets):
+    for sock in sockets:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+def _stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop, sockets):
     started = time.monotonic()
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -42,21 +114,29 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
         method="POST",
     )
     try:
-        resp = urllib.request.urlopen(req, timeout=600)
+        resp = _open(req, sockets)
     except urllib.error.HTTPError as e:
         raise ApiError(f"{e.code}: {e.read().decode(errors='replace')[:800]}",
                        retry=e.code == 429 or e.code >= 500, status=e.code) from None
     except urllib.error.URLError as e:
+        if should_stop():
+            raise Stopped(None) from None
         raise ApiError(f"can't reach {base_url}: {e.reason}", retry=True) from None
     except (http.client.HTTPException, ConnectionError, socket.timeout) as e:
+        if should_stop():  # cut off by a stop while the model read the prompt
+            raise Stopped(None) from None
         # the server hung up or went quiet before answering (RemoteDisconnected, a reset, a
         # timeout): urllib doesn't wrap these, so without this a run would end in a traceback
         raise ApiError(f"can't reach {base_url}: {type(e).__name__}: {e}", retry=True) from None
 
+    if should_stop():
+        raise Stopped(None)
     try:
         with resp:
             return _read_stream(resp, started, on_text, on_reasoning, should_stop)
-    except (http.client.IncompleteRead, ConnectionError, socket.timeout, json.JSONDecodeError) as e:
+    except (http.client.IncompleteRead, OSError, json.JSONDecodeError) as e:
+        if should_stop():  # cut off by a stop: not a broken connection
+            raise Stopped(None) from None
         # the connection broke mid-reply (seen on long benchmark runs): the call can go again
         raise ApiError(f"the reply broke off: {type(e).__name__}: {e}", retry=True) from None
 

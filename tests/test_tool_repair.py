@@ -90,3 +90,28 @@ class ExtraArgumentTest(unittest.TestCase):
                                                      "replace_whole_file": False}))
         self.assertTrue(out.startswith("edited b.py"), out)
         self.assertIn("unknown argument replace_whole_file for edit_file -> dropped", a.tools.repairs)
+
+
+class LineRangeEditTest(unittest.TestCase):
+    def setUp(self):
+        self.a = agent()
+        self.a.tools.trust_all = True
+        Path(self.a.root, "c.py").write_text("a = 1\nb = 2\nc = 3\n")
+        self.a.tools.seen.add(Path(self.a.root, "c.py").resolve())
+
+    def test_lines_by_number_are_replaced(self):
+        # gpt-oss: {"path": ..., "line_start": 2, "line_end": 2, "new_text": ...} and no old_text
+        out = self.a.tools.call("edit_file", json.dumps({"path": "c.py", "line_start": 2, "line_end": 2,
+                                                          "new_text": "b = 20\nbb = 21"}))
+        self.assertTrue(out.startswith("edited c.py"), out)
+        self.assertEqual(Path(self.a.root, "c.py").read_text(), "a = 1\nb = 20\nbb = 21\nc = 3\n")
+
+    def test_old_text_wins_over_line_numbers(self):
+        out = self.a.tools.call("edit_file", json.dumps({"path": "c.py", "line_start": 1, "line_end": 200,
+                                                          "old_text": "c = 3", "new_text": "c = 30"}))
+        self.assertTrue(out.startswith("edited c.py"), out)
+        self.assertEqual(Path(self.a.root, "c.py").read_text(), "a = 1\nb = 2\nc = 30\n")
+
+    def test_lines_past_the_end_are_an_error(self):
+        out = self.a.tools.call("edit_file", json.dumps({"path": "c.py", "line_start": 2, "line_end": 9, "new_text": "x"}))
+        self.assertIn("error: edit_file needs old_text", out)

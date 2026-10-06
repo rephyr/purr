@@ -206,7 +206,9 @@ def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=()
     if one_shot:
         text = text.replace(ASK_LINE, ONE_SHOT_LINE).replace(APPROVE_LINE, "")
         text = text.replace(IDENTITY_TAIL.format(model=model_id, provider=provider), "")
-        text = text.replace(FOLDER_LINE, "(use the exact absolute path when the task gives one)")
+        # commands already run here: models that wrote the folder into every command ("cd /tmp/purr-bench-
+        # fkuf_u49/messy-csv && ...") garbled it into its parent (Ornith-9B, 15 times in one run)
+        text = text.replace(FOLDER_LINE, "(commands run here; use relative paths, or the exact absolute path the task gives)")
         purr_dir = Path(__file__).resolve().parent.parent
         if Path.home() not in purr_dir.parents:  # installed somewhere like /opt/purr (a container)
             text = text.replace("- System: Linux", f"- System: Linux ({purr_dir} is purr itself, not the task)")
@@ -2061,6 +2063,8 @@ class Agent:
         if all(now.get(p) == data for p, data in files.items()):
             return  # nothing changed since they passed
         wait = SAFETY_WAIT if not self.time_limit else max(15, min(SAFETY_WAIT, int(self.time_limit * 0.05)))
+        if self.stopping():
+            wait = min(wait, 20)  # stopped (by you, or a benchmark's clock): be quick about it
         output, code = run_shell(command, self.root, wait)
         if TESTS_PASSED(f"{output}\n[exit code {code}]"):
             return

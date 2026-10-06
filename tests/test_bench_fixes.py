@@ -187,7 +187,7 @@ class PromptTest(unittest.TestCase):
         self.assertIn("exact absolute path", short)
         self.assertIn("Hidden tests", short)
         self.assertTrue(short.startswith("You are m, an AI model"))
-        self.assertLess(len(short), len(normal) + 400)
+        self.assertLess(len(short), len(normal) + 450)  # +50: the relative-paths line
 
     def test_one_shot_runs_leave_the_graders_tools_and_no_test_leftovers(self):
         # Terminal-Bench 2.1: an SSH key and a test push left behind, an edited emulator (vm.js)
@@ -379,12 +379,12 @@ class EndTest(unittest.TestCase):
 
     def test_a_dropped_stream_can_be_retried(self):
         resp = self.stream('data: {"error": {"message": "upstream reset"}}')
-        with mock.patch.object(api.urllib.request, "urlopen", return_value=resp):
+        with mock.patch.object(api, "_open", return_value=resp):
             with self.assertRaises(ApiError) as e:
                 api.stream_chat("http://x", "", {}, print, print)
         self.assertTrue(e.exception.retry)
         resp = self.stream('data: {"error": {"message": "bad request", "code": 400}}')
-        with mock.patch.object(api.urllib.request, "urlopen", return_value=resp):
+        with mock.patch.object(api, "_open", return_value=resp):
             with self.assertRaises(ApiError) as e:
                 api.stream_chat("http://x", "", {}, print, print)
         self.assertFalse(e.exception.retry)
@@ -393,7 +393,7 @@ class EndTest(unittest.TestCase):
         resp = mock.MagicMock()
         resp.__enter__.return_value = resp
         resp.__iter__.side_effect = http.client.IncompleteRead(b"")
-        with mock.patch.object(api.urllib.request, "urlopen", return_value=resp):
+        with mock.patch.object(api, "_open", return_value=resp):
             with self.assertRaises(ApiError) as e:
                 api.stream_chat("http://x", "", {}, print, print)
         self.assertTrue(e.exception.retry)
