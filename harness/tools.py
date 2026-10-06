@@ -399,6 +399,15 @@ class Tools:
             self.view.tool(self.summary(name, args))
         self.step += 1
         self.last_spill = None
+        # arguments the tool doesn't have are dropped, not fatal: gpt-oss added replace_whole_file
+        # to every edit_file call, and each failed whole ("unexpected keyword argument")
+        import inspect
+        known = inspect.signature(fn).parameters
+        extra = [k for k in args if k not in known]
+        if extra and not any(p.kind == p.VAR_KEYWORD for p in known.values()):
+            for k in extra:
+                args.pop(k)
+                self.repairs.append(f"unknown argument {k} for {name} -> dropped")
         try:
             raw = fn(**args)
             if isinstance(raw, str) and len(raw) > self.limits.tool_output:
