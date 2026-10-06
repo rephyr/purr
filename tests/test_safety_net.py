@@ -78,3 +78,23 @@ class SafetyNetTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SyntaxNetTest(unittest.TestCase):
+    def test_a_file_left_broken_gets_its_last_version_that_compiled(self):
+        a = one_shot(time_limit=600)
+        a.config = {**a.config, "final_check": False}
+        scripted(a, [write("a.py", "def f():\n    return 1\n"), write("a.py", "def f():\nreturn 2\n"),
+                     write("b.py", "def g(:\n"), reply("I'm out of time.")])
+        a.turn("write f")
+        self.assertEqual(Path(a.root, "a.py").read_text(), "def f():\n    return 1\n")
+        self.assertEqual(Path(a.root, "b.py").read_text(), "def g(:\n")  # never compiled: nothing to go back to
+        self.assertIn("a file left with a syntax error -> its last version that compiled", a.tools.repairs)
+
+    def test_chats_keep_what_the_model_wrote(self):
+        from tests.test_limits import agent
+        a = agent()
+        a.tools.trust_all = True
+        scripted(a, [write("a.py", "x = 1\n"), write("a.py", "x = (\n"), reply("oops")])
+        a.turn("write a.py")
+        self.assertEqual(Path(a.root, "a.py").read_text(), "x = (\n")

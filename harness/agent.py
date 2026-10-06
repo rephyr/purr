@@ -2024,10 +2024,31 @@ class Agent:
         """A one-shot run that ends with its tests failing where they passed before: the last
         state they passed in is put back. Small models keep rewriting until the time runs out,
         and are often stopped halfway (Ornith-9B: a passing inventory left at 1 of 9)."""
-        good = getattr(self, "_good", None)
-        if not good or not self.one_shot or self.helper:
+        if not self.one_shot or self.helper or not self._on("safety_net"):
             return
-        command, files = good
+        good = getattr(self, "_good", None)
+        if good:
+            self._tests_net(*good)
+        self._syntax_net()
+
+    def _syntax_net(self):
+        """A Python file the run leaves unable to even compile gets its last version that did: one
+        broken file fails everything that imports it (gpt-oss ended inventory on an IndentationError,
+        "too many attempts")."""
+        for p, text in list(self.tools.compiled.items()):
+            try:
+                now = p.read_text()
+                compile(now, str(p), "exec")
+                continue
+            except SyntaxError:
+                pass
+            except (OSError, ValueError):
+                continue
+            p.write_text(text)
+            self.tools.repairs.append("a file left with a syntax error -> its last version that compiled")
+            self.view.note(f"♡ {p.name} ended with a syntax error: purr put back its last version that compiled", "warn")
+
+    def _tests_net(self, command, files):
         now = {}
         for p in set(files) | self._changed_files():
             try:

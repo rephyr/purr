@@ -312,6 +312,7 @@ class Tools:
         self.deadline = None     # time.monotonic() when a time-limited run ends: run's timeout stops there
         self.edit_gen = 0        # goes up with every edit: re-reading a file after one isn't a repeat
         self.todo_list = []      # the last task list (a compaction keeps its open items)
+        self.compiled = {}       # Python file -> its last text that compiled (the safety net's fallback)
 
     def _path(self, p):
         p = Path(p).expanduser()
@@ -492,8 +493,19 @@ class Tools:
     def begin_turn(self):
         self.undo_stack.append({})
 
+    def _compiles(self, p, text):
+        """Note text as p's last version that compiles (Python files only)."""
+        if p.suffix == ".py" and text is not None:
+            try:
+                compile(text, str(p), "exec")
+                self.compiled[p] = text
+            except (SyntaxError, ValueError):
+                pass
+
     def _remember(self, p):
         """Keep a file's old text the first time this turn changes it, for /undo."""
+        if p.suffix == ".py" and p not in self.compiled and p.exists():
+            self._compiles(p, p.read_text(errors="replace"))
         self.edit_gen += 1
         if not self.undo_stack:
             self.begin_turn()
@@ -652,6 +664,7 @@ class Tools:
             return self._refused(reason)
         self._remember(p)
         p.write_text(after)
+        self._compiles(p, after)
         window = edit_window(after, before, self.limits.edit_window) if self.limits.edit_window else ""
         return (f"edited {path} ({count if replace_all else 1} change)" + window
                 + self._check_code(path, before, after))
@@ -671,11 +684,13 @@ class Tools:
                 continue
             if old_text in body:
                 elsewhere.append(f"{f} (line {body[:body.index(old_text)].count(chr(10)) + 1})")
-        if elsewhere:
-            return msg + f" That text is in {', '.join(elsewhere[:3])}: edit that file instead."
+        # it's also in another file: say so, but as a maybe. gpt-oss adding an import to crafting.py
+        # quoted save.py's, was told "edit that file instead" and edited save.py three times
+        there = (f" That exact text is in {', '.join(elsewhere[:3])}: if you meant that file, edit it there."
+                 if elsewhere else "")
         lines, want = text.splitlines(), old_text.strip("\n").splitlines()
         if not want or not lines:
-            return msg + " Read the file again and copy the text exactly."
+            return msg + there + " Read the file again and copy the text exactly."
         size = len(want)
         best, at = 0.0, 0
         for i in range(max(1, len(lines) - size + 1)):
@@ -683,9 +698,9 @@ class Tools:
             if r > best:
                 best, at = r, i
         if best < 0.5:
-            return msg + " Read the file again and copy the text exactly."
+            return msg + there + " Read the file again and copy the text exactly."
         shown = "\n".join(f"{n:>5}\t{line}" for n, line in enumerate(lines[at:at + size], at + 1))
-        return (msg + f" The closest lines are {at + 1}-{at + size} (copy them exactly, "
+        return (msg + there + f" In {path}, the closest lines are {at + 1}-{at + size} (copy them exactly, "
                 f"without the line numbers):\n{shown}")
 
     def t_write_file(self, path, content):
@@ -707,6 +722,7 @@ class Tools:
         self._remember(p)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
+        self._compiles(p, content)
         self.seen.add(p.resolve())  # it knows what it just wrote
         window = edit_window(content, before, self.limits.edit_window) if self.limits.edit_window and before else ""
         return f"wrote {path} ({len(content.splitlines())} lines)" + window + self._check_code(path, before, content)
