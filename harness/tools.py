@@ -698,6 +698,11 @@ class Tools:
         there = (f" That exact text is in {', '.join(elsewhere[:3])}: if you meant that file, edit it there."
                  if elsewhere else "")
         lines, want = text.splitlines(), old_text.strip("\n").splitlines()
+        head = re.match(r"\s*(?:async\s+)?(def|class|func|fn|function)\s+(\w+)", want[0] if want else "")
+        if head and not re.search(rf"\b{head.group(1)}\s+{re.escape(head.group(2))}\b", text):
+            # gpt-oss kept editing a method an earlier edit of its own had removed
+            there += (f" There is no `{head.group(1)} {head.group(2)}` in {path} now (misspelled, or an earlier "
+                      "change removed it; to add it back, put it next to code that is there).")
         if not want or not lines:
             return msg + there + " Read the file again and copy the text exactly."
         size = len(want)
