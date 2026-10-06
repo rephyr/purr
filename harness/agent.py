@@ -35,7 +35,7 @@ from .prompts import (  # noqa: F401 - the words purr says; some only re-exporte
     MEASURE_ASK, LIMIT_NOTE, BLIND_SPEC, BLIND_NOTE,
     PLAN_DRAFT, PLAN_ANGLES, PLAN_PICK, PLAN_NOTE, TESTER, TESTER_TASK, FRESH_NOTE,
 )
-from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, files_under, run_shell, schemas, search
+from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, child_env, clip, files_under, run_shell, schemas, search
 
 
 LEARN_TODO_LINES = 4  # a longer TODO(you) comment has usually written out the answer
@@ -2081,7 +2081,7 @@ class Agent:
                         if d and not d.startswith(purr_dir) and "/opt/purr" not in d)
         try:
             res = subprocess.run(["bash", "-c", PROBE], capture_output=True, text=True, timeout=8,
-                                 cwd=self.root, env={**os.environ, "PATH": path}, stdin=subprocess.DEVNULL)
+                                 cwd=self.root, env={**child_env(self.root), "PATH": path}, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError):
             return ""
         line = res.stdout.strip().splitlines()[-1:] if res.returncode == 0 else []

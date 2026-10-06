@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from harness import agent as agent_module  # noqa: E402
 from harness import api  # noqa: E402
 from harness.api import ApiError  # noqa: E402
-from harness.tools import clip, run_shell  # noqa: E402
+from harness.tools import child_env, clip, run_shell  # noqa: E402
 from tests.test_limits import CONFIG, FakeView, agent, reply, scripted  # noqa: E402
 
 
@@ -59,6 +59,19 @@ class ShellTest(unittest.TestCase):
         self.assertEqual(run_shell("set -o pipefail; false | cat", ".")[1], 1)
         self.assertEqual(run_shell("echo x # a comment", "."), ("x", 0))
         self.assertEqual(run_shell("sleep 0.1 & echo bg", "."), ("bg", 0))
+
+    def test_commands_dont_run_in_purrs_own_venv(self):
+        # in purr bench, `python3 -m unittest discover -s tests` ran purr's own tests from its venv
+        venv = Path(tempfile.mkdtemp()) / "purr-venv"
+        (venv / "bin").mkdir(parents=True)
+        env = {"PATH": f"{venv / 'bin'}{os.pathsep}/usr/bin", "VIRTUAL_ENV": str(venv)}
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "prefix", str(venv)), \
+                mock.patch.object(sys, "base_prefix", "/usr"):
+            elsewhere = child_env(tempfile.mkdtemp())
+            self.assertEqual(elsewhere["PATH"], "/usr/bin")
+            self.assertNotIn("VIRTUAL_ENV", elsewhere)
+            own = child_env(venv.parent)  # purr working on the project its venv belongs to
+            self.assertEqual(own["PATH"], env["PATH"])
 
     def test_progress_bars_and_bad_bytes(self):
         self.assertEqual(run_shell(r"printf '10%%\r50%%\r100%%\ndone\n'", ".")[0], "100%\ndone")
