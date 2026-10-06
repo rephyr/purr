@@ -100,11 +100,14 @@ def scratch(p):
     """The temp folder entry `p` is in, if it's a model's own scratch there (DeepSeek tests its work
     from /tmp/verify.py): fine to use, and the bench removes it after the run so the next harness
     can't read it. None for anything else, like another bench run's purr-bench-* folder."""
-    for tmp in TMPS:
+    for tmp in sorted(TMPS, key=lambda t: -len(t.parts)):  # the deeper one first (TMPDIR inside /tmp)
         if tmp in p.parents:
             top = tmp / p.relative_to(tmp).parts[0]
             return None if top.name.startswith("purr-bench-") else top
     return None
+
+
+FILE_TEXT = {"old_text", "new_text", "content"}  # what goes into a file: "~ cat café ~" is no path
 
 
 def outside(args, work, made=None):
@@ -116,8 +119,8 @@ def outside(args, work, made=None):
     home = work.resolve()
     if home.parent.is_dir() and [p.name for p in home.parent.iterdir()] == [home.name]:
         home = home.parent  # the bench's own wrapper folder (w/03) holds only this task: not outside
-    for value in args.values():
-        if not isinstance(value, str):
+    for key, value in args.items():
+        if not isinstance(value, str) or key in FILE_TEXT:
             continue
         for path in re.findall(r"(?:^|[\s'\"=])(~(?=[\s'\";|&)]|$)|(?:/|~/)[^\s'\";|&()]+)", value):
             p = Path(os.path.expanduser(path)).resolve()
@@ -264,6 +267,7 @@ def run_purr(config, model, task, work, log_dir, timeout, refine=False, final_ch
         r["providers"] = s["providers"]  # which OpenRouter providers answered, and how often
     r["in_tokens"], r["cached_in"] = s.get("in", 0), s.get("cached", 0)  # input sent, and how much was cached
     r["model_seconds"] = round(s.get("model_s", 0.0), 1)
+    r["side_seconds"] = round(s.get("side_s", 0.0), 1)  # side calls: blind checks, the second reader, summaries
     r["cost"] = round(agent.session_cost, 5)
     r["repaired"] = len(agent.tools.repairs)  # slips purr fixed by itself (search -> grep, ...)
     r["caught"] = len(agent.tools.warnings)   # problems purr's code checks pointed out

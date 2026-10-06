@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from html.parser import HTMLParser
@@ -824,6 +825,23 @@ class Tools:
         return self.spawn(prompt)
 
 
+def child_env(root, **extra):
+    """The environment for the model's commands: without purr's own Python venv (`uv run purr`, a venv
+    install), so python3 and pip are the machine's or the project's, not purr's. In purr bench,
+    `python3 -m unittest discover -s tests` in a task without tests/ ran purr's own 453 tests.
+    A venv inside the project folder is the project's own and stays."""
+    # no .pyc files: a file rewritten in the same second at the same size runs its old bytecode, and
+    # models blamed "stale bytecode" for their own bugs anyway
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", **extra}
+    if sys.prefix != sys.base_prefix and not Path(sys.prefix).resolve().is_relative_to(Path(root).resolve()):
+        bin_dir = os.path.realpath(Path(sys.prefix) / "bin")
+        env["PATH"] = os.pathsep.join(d for d in env.get("PATH", "").split(os.pathsep)
+                                      if d and os.path.realpath(d) != bin_dir)
+        if env.get("VIRTUAL_ENV") and os.path.realpath(env["VIRTUAL_ENV"]) == os.path.realpath(sys.prefix):
+            del env["VIRTUAL_ENV"]
+    return env
+
+
 def run_shell(command, root, timeout=120):
     """Run a bash command. Returns (output, exit code); exit code -1 means it timed out.
     Output goes to a temporary file, not a pipe: a server started in the background (`cmd &`)
@@ -840,7 +858,7 @@ def run_shell(command, root, timeout=120):
         with tempfile.TemporaryFile() as out:
             proc = subprocess.Popen(["bash", "-c", script], stdout=out, stderr=subprocess.STDOUT, cwd=root,
                                     stdin=subprocess.DEVNULL, start_new_session=True,
-                                    env={**os.environ, "PURR_PS": ps_file})
+                                    env=child_env(root, PURR_PS=ps_file))
             try:
                 code = proc.wait(timeout=int(timeout))
             except subprocess.TimeoutExpired:

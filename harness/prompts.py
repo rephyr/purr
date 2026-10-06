@@ -286,11 +286,15 @@ and line numbers. Your reply is all the other agent will see."""
 
 # the model that wrote a change reads its own assumptions back; a call with only the request and the
 # diff doesn't (DeepSWE: a spec's x() overruled by habit, a rule quoted and then built the other way)
+# It sees no commands: Ornith-9B's reviews said "the tests weren't run" on every task that asked for them.
 REVIEW = """You review a code change against the request it was made for. You did not write it. \
 Compare them point by point and list every requirement in the request that the change does not meet \
 or gets wrong (a name, a signature, a type, an order, a case it doesn't handle, "all" done as "one"), \
-quoting the request's words and saying where in the diff. Don't suggest style changes or anything the \
-request didn't ask for. If it meets every requirement, answer exactly: ALL MET
+quoting the request's words and saying where in the diff. List only what you can point at: a line in \
+the change that does it wrong, or something the request names that the change leaves out. You see \
+only the code, not the commands that were run: whether tests were run, or a fix can be "confirmed", \
+isn't yours to judge. Don't suggest style changes or anything the request didn't ask for. If it meets every \
+requirement, answer exactly: ALL MET
 
 The request:
 {request}

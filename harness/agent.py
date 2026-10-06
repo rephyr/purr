@@ -35,7 +35,7 @@ from .prompts import (  # noqa: F401 - the words purr says; some only re-exporte
     MEASURE_ASK, LIMIT_NOTE, BLIND_SPEC, BLIND_NOTE,
     PLAN_DRAFT, PLAN_ANGLES, PLAN_PICK, PLAN_NOTE, TESTER, TESTER_TASK, FRESH_NOTE,
 )
-from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, clip, files_under, run_shell, schemas, search
+from .tools import READ_ONLY, TOOL_ALIASES, TOOL_NAMES, Tools, child_env, clip, files_under, run_shell, schemas, search
 
 
 LEARN_TODO_LINES = 4  # a longer TODO(you) comment has usually written out the answer
@@ -118,6 +118,10 @@ HEDGE = re.compile(r"say so|tell me if|if you'?d (rather|prefer|like)|if you (wa
                    r"say the word|shall i|want me to|judge?ment call", re.I)
 
 REFINE_MODES = ("auto", "on", "off")
+
+# the second reader's "nothing to fix", said its own way ("All requirements are met.", not ALL MET)
+ALL_MET = re.compile(r"\ball\b[\w ]{0,25}\bmet\b", re.I)
+NOT_MET = re.compile(r"\bnot (?:all |every \w+ )?(?:yet )?met\b|\bunmet\b|\bmissing\b|\bnot (?:meet|handled|done)\b", re.I)
 
 
 # PURR_STATE moves saved chats and history elsewhere (tests use it to stay away from your real ones)
@@ -248,13 +252,16 @@ def calls_from_text(text):
     return calls, cleaned
 
 
+# what an old read becomes after an edit. Not "stale": Ornith-9B took "[stale: ...]" to mean purr's reads
+# were out of date and spent whole tasks hunting a cache
+EARLIER_READ = "[an earlier read of"
 LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file does
 ROUTINE_TOOLS = (*LOOKS, "outline", "find_symbol", "todo")  # steps routine_effort may think less after
 
 
 def _new_stats():
     """A turn's numbers, every key there from the start (purr bench and the window read them)."""
-    return {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0, "in": 0,
+    return {"start": time.monotonic(), "out": 0, "gen": 0.0, "calls": 0, "model_s": 0.0, "side_s": 0.0, "in": 0,
             "cached": 0, "providers": {}}
 
 
@@ -534,6 +541,7 @@ class Agent:
         self.time_limit = None   # seconds for a turn (purr --time-limit): reminders at half and four fifths
         self.one_shot = False    # nobody answers questions (purr -p, benchmarks): set_one_shot
         self._echo_all = False   # True once a provider refused trimmed thinking (_for_provider)
+        self._think_refused = False  # True once a local server refused a side call without thinking (_body)
         self._bash = None        # minimal mode's bash session, opened by its first command
         # /refine: "auto" rewrites a short first message into a clear task (you approve it),
         # "on" every message, "off" none. It helped most on vague asks in (small) purr bench runs.
@@ -731,7 +739,7 @@ class Agent:
         listing = "\n".join(files[:80]) + (f"\n… {len(files) - 80} more files" if len(files) > 80 else "")
         notes = _notes(Path(self.root) / "AGENTS.md", "Project notes (AGENTS.md)")[:3000]
         prompt = REFINE.format(files=listing, notes=notes + "\n" if notes else "", request=text)
-        reply = self._call([{"role": "user", "content": prompt}], tools=False, quiet=True)
+        reply = self._call([{"role": "user", "content": prompt}], tools=False, quiet=True, think=False)
         self._count(reply["usage"])
         return reply["text"].strip()
 
@@ -1030,7 +1038,7 @@ class Agent:
 
     # ---- one model call ----
 
-    def _body(self, messages, tools, hard=False):
+    def _body(self, messages, tools, hard=False, think=True):
         msgs = messages or self.messages
         if tools and self.mode_level() == "none":
             tools, msgs = False, plain_history(msgs)
@@ -1068,6 +1076,13 @@ class Agent:
                 body["reasoning"] = {**(body.get("reasoning") or {}), "effort": effort}
             else:
                 body["reasoning_effort"] = effort
+        if not think and self.model.get("provider") in LOCAL and not self._think_refused:
+            # a side call (checks from the request, the second reader, a summary) on a local thinking
+            # model: left to think, Ornith-9B spent 18k tokens (280 s of a 600 s task) before any code
+            if self.model.get("provider") == "ollama" or ":11434" in self.provider.get("base_url", ""):
+                body["reasoning_effort"] = "none"
+            else:  # llama.cpp, vLLM: the chat template's own switch (Qwen and others)
+                body["chat_template_kwargs"] = {**(body.get("chat_template_kwargs") or {}), "enable_thinking": False}
         return body
 
     def _takes_effort(self):
@@ -1181,17 +1196,23 @@ class Agent:
         self._use_model(pick)
         return True
 
-    def _call(self, messages=None, tools=True, quiet=False, hard=False):
+    def _call(self, messages=None, tools=True, quiet=False, hard=False, think=True):
         on_text = (lambda s: None) if quiet else self.view.text
         on_think = (lambda s: None) if quiet else self.view.thinking
         attempt = 0
         self._refused = 0  # 400s that made the free router switch, this call
         while True:
             hard_now = hard or (messages is None and getattr(self, "_think_hard", False))
-            body = self._body(messages, tools, hard_now)  # again after a switch: another model, id and hosts
+            body = self._body(messages, tools, hard_now, think)  # again after a switch: another model, id and hosts
             try:
-                return stream_chat(self.provider["base_url"], self.key, body, on_text, on_think, self.stopping)
+                reply = stream_chat(self.provider["base_url"], self.key, body, on_text, on_think, self.stopping)
+                if messages is not None and getattr(self, "turn_stats", None):
+                    self.turn_stats["side_s"] += reply.get("call_seconds", 0.0)  # checks, reviews, summaries
+                return reply
             except ApiError as e:
+                if not think and not self._think_refused and getattr(e, "status", None) in (400, 422):
+                    self._think_refused = True  # this server won't switch thinking off: ask the usual way
+                    continue
                 if not self._echo_all and getattr(e, "status", None) in (400, 422) and "reason" in str(e).lower():
                     self._echo_all = True  # it wants every reply's thinking back after all
                     self.tools.repairs.append("provider wanted all the thinking back -> sent it all")
@@ -1602,13 +1623,15 @@ class Agent:
         return True
 
 
-    # ---- blind acceptance checks (small models; blind_checks = false turns them off) ----
+    # ---- blind acceptance checks (off unless blind_checks = true) ----
 
     def _blind_card(self, request):
         """Before any code: one tool-less call that sees only the request and the machine writes the
-        spec card (what's easy to get wrong) and a check script purr runs at the final check."""
+        spec card (what's easy to get wrong) and a check script purr runs at the final check.
+        Off by default: Ornith-9B thought for 2 to 8 minutes of a 10-minute task on it, and without
+        thinking its card was confidently wrong ("1h5m10s" -> 3700, and the solver followed it)."""
         self._blind_script = None
-        if not (self.one_shot and self.coding) or self.helper or not self._helper_on("blind_checks"):
+        if not (self.one_shot and self.coding) or self.helper or not self.config.get("blind_checks", False):
             return ""
         small = self.limits.context <= 65_536
         prompt = BLIND_SPEC.format(request=_ends(request, 4000, 1500), files=self._given_files(),
@@ -1660,7 +1683,10 @@ class Agent:
         if self.tools._benchmark_lookup(Path(script).read_text()):
             return ""
         left = self._minutes_left()
-        output, code = run_shell(f"sh {shlex.quote(str(script))} </dev/null", self.root,
+        # it's asked for sh, but sometimes writes Python: sh would run `import time` as ImageMagick's
+        # screenshot tool, which waits for a click until the timeout
+        shell = "python3" if re.match(r"#!.*python|(?:import|from) \w", Path(script).read_text().lstrip()) else "sh"
+        output, code = run_shell(f"{shell} {shlex.quote(str(script))} </dev/null", self.root,
                                  min(120, max(20, left * 6)) if left else 120)
         rows = [line.strip() for line in output.splitlines() if re.match(r"\s*(PASS|FAIL|SKIP)\b", line)]
         if not rows:
@@ -1909,8 +1935,12 @@ class Agent:
         return True
 
     def _new_files_note(self):
-        """The files this run created that still exist, for the check: leftovers break real tests."""
-        new = [p for p, before in self.tools.session_changes().items() if before is None and p.exists()]
+        """The files this run created that still exist, for the check: leftovers break real tests.
+        Not the ones the request asks for: Ornith-9B deleted the test_sales.py it was told to write."""
+        request = getattr(self, "_request", "")
+        wants_tests = re.search(r"\btests?\b", request, re.I)
+        new = [p for p, before in self.tools.session_changes().items() if before is None and p.exists()
+               and p.name not in request and not (wants_tests and checks.TEST_FILE.search(p.name))]
         if not new:
             return ""
         names = [os.path.relpath(p, self.root) if self.root in p.parents else str(p) for p in new]
@@ -1977,12 +2007,13 @@ class Agent:
         self.view.note("♡ a second reader compares the request with the changes")
         try:
             reply = self._call([{"role": "user", "content": REVIEW.format(
-                request=_ends(getattr(self, "_request", ""), 3000, 1000), diff=diff)}], tools=False, quiet=True)
+                request=_ends(getattr(self, "_request", ""), 3000, 1000), diff=diff)}], tools=False, quiet=True,
+                think=False)
         except ApiError:
             return False
         self._count(reply.get("usage"))
         findings = (reply.get("text") or "").strip()
-        if not findings or "ALL MET" in findings[:200]:
+        if not findings or ALL_MET.search(findings[:200]) and not NOT_MET.search(findings):
             return False
         self.tools.repairs.append("second reader found unmet requirements -> sent back to check")
         self.messages.append({"role": "user", "content": REVIEW_NOTE.format(findings=findings[:3000])})
@@ -2053,7 +2084,7 @@ class Agent:
                         if d and not d.startswith(purr_dir) and "/opt/purr" not in d)
         try:
             res = subprocess.run(["bash", "-c", PROBE], capture_output=True, text=True, timeout=8,
-                                 cwd=self.root, env={**os.environ, "PATH": path}, stdin=subprocess.DEVNULL)
+                                 cwd=self.root, env={**child_env(self.root), "PATH": path}, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError):
             return ""
         line = res.stdout.strip().splitlines()[-1:] if res.returncode == 0 else []
@@ -2264,12 +2295,12 @@ class Agent:
             if m.get("role") == "assistant":
                 calls = {c["id"]: c["function"] for c in m.get("tool_calls") or []}
             fn = calls.get(m.get("tool_call_id")) if m.get("role") == "tool" else None
-            if not fn or fn.get("name") != "read_file" or str(m.get("content", "")).startswith("[stale:"):
+            if not fn or fn.get("name") != "read_file" or str(m.get("content", "")).startswith(EARLIER_READ):
                 continue
             read = _args(fn.get("arguments")).get("path")
             if read and (self.root / str(read)).resolve() == target:
-                m["content"] = (f"[stale: {path} was read here before it changed at step {self.tools.step}; "
-                                "the edit's result shows the new lines, read it again if you need more]")
+                m["content"] = (f"{EARLIER_READ} {path}, taken out: you changed the file after it. Your change's "
+                                "result shows the new lines; read_file shows the file as it is now]")
 
     def _look_in_parallel(self, calls):
         """When a reply asks for several read-only tools (read_file, grep, list_files, fetch_url),
@@ -2464,7 +2495,7 @@ class Agent:
         self.view.note("compacting the chat (summarising it to make room)…", "info")
         self.view.activity("compacting")
         prompt = COMPACT.format(transcript=self.transcript(self.messages[1:]))
-        reply = self._call([{"role": "user", "content": prompt}], tools=False, quiet=True)
+        reply = self._call([{"role": "user", "content": prompt}], tools=False, quiet=True, think=False)
         self._count(reply["usage"])
         summary = reply["text"].strip()
         if not summary:

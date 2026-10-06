@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from harness import agent as agent_module  # noqa: E402
 from harness import api  # noqa: E402
 from harness.api import ApiError  # noqa: E402
-from harness.tools import clip, run_shell  # noqa: E402
+from harness.tools import child_env, clip, run_shell  # noqa: E402
 from tests.test_limits import CONFIG, FakeView, agent, reply, scripted  # noqa: E402
 
 
@@ -60,6 +60,19 @@ class ShellTest(unittest.TestCase):
         self.assertEqual(run_shell("echo x # a comment", "."), ("x", 0))
         self.assertEqual(run_shell("sleep 0.1 & echo bg", "."), ("bg", 0))
 
+    def test_commands_dont_run_in_purrs_own_venv(self):
+        # in purr bench, `python3 -m unittest discover -s tests` ran purr's own tests from its venv
+        venv = Path(tempfile.mkdtemp()) / "purr-venv"
+        (venv / "bin").mkdir(parents=True)
+        env = {"PATH": f"{venv / 'bin'}{os.pathsep}/usr/bin", "VIRTUAL_ENV": str(venv)}
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "prefix", str(venv)), \
+                mock.patch.object(sys, "base_prefix", "/usr"):
+            elsewhere = child_env(tempfile.mkdtemp())
+            self.assertEqual(elsewhere["PATH"], "/usr/bin")
+            self.assertNotIn("VIRTUAL_ENV", elsewhere)
+            own = child_env(venv.parent)  # purr working on the project its venv belongs to
+            self.assertEqual(own["PATH"], env["PATH"])
+
     def test_progress_bars_and_bad_bytes(self):
         self.assertEqual(run_shell(r"printf '10%%\r50%%\r100%%\ndone\n'", ".")[0], "100%\ndone")
         out, code = run_shell(r"printf '\xff\xfeok'", ".")
@@ -88,13 +101,23 @@ class FinalCheckTest(unittest.TestCase):
     def test_one_shot_runs_check_the_spec(self):
         a = one_shot(time_limit=600)
         scripted(a, [reply("", tool=("write_file", {"path": "out.json", "content": "[]"})), reply("done"), reply("ok")])
-        a.turn("write out.json")
+        a.turn("save the result as json")
         check = next(u for u in users(a) if "before you finish" in u)
         self.assertIn("a wrong reading would give a different answer", check)
         self.assertIn("minutes left", check)
         self.assertIn("You created these files: out.json", check)  # leftovers break real tests
         self.assertNotIn("keep running", check)  # nothing was started
         self.assertNotIn("Nobody will answer", check)
+
+    def test_files_the_request_asks_for_are_not_called_scratch(self):
+        # Ornith-9B deleted the test_sales.py it was asked to write after "delete the scratch work"
+        a = one_shot(time_limit=600)
+        writes = [("sales.py", "x = 1\n"), ("test_sales.py", "import sales\n"), ("test_more.py", "\n"), ("try.py", "\n")]
+        scripted(a, [reply("", tool=("write_file", {"path": p, "content": c})) for p, c in writes]
+                 + [reply("done"), reply("ok")])
+        a.turn("Write monthly_totals(path) in sales.py. Add tests in test_sales.py and run them.")
+        check = next(u for u in users(a) if "before you finish" in u)
+        self.assertIn("You created these files: try.py.", check)
 
     def test_plenty_of_time_left_gets_one_more_look(self):
         a = one_shot(time_limit=5400)
@@ -512,7 +535,7 @@ class SecondReaderTest(unittest.TestCase):
         replies = iter([reply("", tool=("write_file", {"path": "moves.txt", "content": "e2e4\n"})),
                         reply("Done."), reply("Done."), reply(verdict), reply("Fixed both moves."), reply("Done.")])
 
-        def fake_call(messages=None, tools=True, quiet=False):
+        def fake_call(messages=None, tools=True, quiet=False, think=True):
             seen.append(messages)
             return next(replies, reply("Done."))
         a._call = fake_call
@@ -533,6 +556,13 @@ class SecondReaderTest(unittest.TestCase):
         a, _ = self.run_with_review("ALL MET")
         self.assertFalse(any("second reader" in u for u in users(a)))
 
+    def test_all_met_in_its_own_words_means_no_note(self):
+        for verdict in ("All requirements are met.\n\n1. moves.txt has e2e4 ✓", "**All met.**"):
+            a, _ = self.run_with_review(verdict)
+            self.assertFalse(any("second reader" in u for u in users(a)), verdict)
+        a, _ = self.run_with_review("**Not all met.**\n\n- g2g4 is missing")
+        self.assertTrue(any("second reader" in u for u in users(a)))
+
     def test_it_can_be_turned_off_and_chats_never_get_it(self):
         a, seen = self.run_with_review("something", review=False)
         self.assertFalse(any(m and "You review a code change" in m[0]["content"] for m in seen))
@@ -541,6 +571,43 @@ class SecondReaderTest(unittest.TestCase):
         scripted(b, [reply("", tool=("write_file", {"path": "a.txt", "content": "x"})), reply("done"), reply("ok")])
         b.turn("make a.txt")
         self.assertFalse(any("second reader" in u for u in users(b)))
+
+
+class SideCallThinkingTest(unittest.TestCase):
+    """A local model's side calls (blind checks, the second reader, summaries) go without thinking:
+    Ornith-9B thought for 280 s of a 600 s task on the blind checks alone."""
+
+    def test_local_side_calls_switch_thinking_off(self):
+        a = agent()
+        self.assertEqual(a._body([{"role": "user", "content": "x"}], False, think=False)["reasoning_effort"], "none")
+        self.assertNotIn("reasoning_effort", a._body(None, True))  # the work itself still thinks
+
+    def test_other_local_servers_use_the_template_switch(self):
+        a = agent()
+        a.provider = {"base_url": "http://127.0.0.1:8080/v1"}
+        a.model = {**a.model, "provider": "llamacpp"}
+        body = a._body([{"role": "user", "content": "x"}], False, think=False)
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertNotIn("reasoning_effort", body)
+
+    def test_api_models_keep_their_thinking(self):
+        body = agent("api")._body([{"role": "user", "content": "x"}], False, think=False)
+        self.assertNotIn("reasoning_effort", body)
+        self.assertNotIn("chat_template_kwargs", body)
+
+    def test_a_server_that_refuses_gets_the_usual_request(self):
+        a = agent()
+        bodies = []
+
+        def fake_stream(url, key, body, *rest):
+            bodies.append(body)
+            if len(bodies) == 1:
+                raise ApiError("unknown field reasoning_effort", status=400)
+            return reply("SPEC: ok")
+        with mock.patch.object(agent_module, "stream_chat", fake_stream):
+            a._call([{"role": "user", "content": "x"}], tools=False, quiet=True, think=False)
+        self.assertEqual(bodies[0]["reasoning_effort"], "none")
+        self.assertNotIn("reasoning_effort", bodies[1])
 
 
 class RoutineEffortTest(unittest.TestCase):

@@ -13,6 +13,8 @@ import threading
 import time
 import uuid
 
+from .tools import child_env
+
 SYSTEM = "You are a helpful software engineer assistant."
 TIMEOUT = 300       # seconds a command may run (DSH's persistent shell: 300)
 MAX_OUTPUT = 16000  # characters of output the model gets, from the start
@@ -41,7 +43,7 @@ class BashSession:
         self.proc = subprocess.Popen(
             ["bash", "--noprofile", "--norc"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, cwd=self.root, start_new_session=True,
-            env={**os.environ, "PS1": "", "PS2": ""})
+            env=child_env(self.root, PS1="", PS2=""))
         self.buf = bytearray()
         self.lock = threading.Condition()
         threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()

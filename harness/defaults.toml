@@ -33,7 +33,7 @@ code_checks = true
 #  proof_ledger = true   rerun the model's own checks in a fresh shell before it may stop
 #  margin_check = true   a stated limit (under 1 s, at most 50 MB) is measured, not assumed
 #  job_watch = true      (with a time limit) a background job's log is read: purr says when it won't finish
-# ... local models only:
+# ... off unless you set it (a 9B model thought for minutes on it, or without thinking got it wrong):
 #  blind_checks = true   before any code, write acceptance checks from the request alone
 # ... API models only (they don't loop, but pass a task in one run and fail it in the next):
 #  two_plans = true      before any code, two independent plans, and a third call keeps the better one
