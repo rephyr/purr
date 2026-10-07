@@ -24,12 +24,42 @@ class Stopped(Exception):
         self.partial = partial
 
 
+class _Sockets:
+    """A call's sockets, so another thread can cut them off.
+
+    connect (DNS, TCP, TLS) can still be running when the cut comes, so a socket that
+    connects after it is shut at once; otherwise the call went on after a stop or Ctrl-C
+    and its reply streamed in afterwards.
+    """
+
+    def __init__(self):
+        self.socks = []
+        self.cut = False
+
+    def add(self, sock):
+        self.socks.append(sock)
+        if self.cut:  # read after the append: either this or cut_all sees the socket
+            _shut(sock)
+
+    def cut_all(self):
+        self.cut = True
+        for sock in list(self.socks):
+            _shut(sock)
+
+
+def _shut(sock):
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+
+
 def _tracked(base, sockets):
     """An HTTP(S) connection class that hands its socket to `sockets` once connected."""
     class Tracked(base):
         def connect(self):
             super().connect()
-            sockets.append(self.sock)
+            sockets.add(self.sock)
     return Tracked
 
 
@@ -68,7 +98,7 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
     connection (a local model reading a 40k-token prompt sent nothing for minutes, so stop and
     the bench's time limit waited; cutting it also makes Ollama drop the work).
     """
-    sockets, out = [], {}
+    sockets, out = _Sockets(), {}
 
     def work():
         try:
@@ -81,25 +111,19 @@ def stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop=lamb
         while worker.is_alive():
             worker.join(0.2)
             if worker.is_alive() and should_stop():
-                _cut(sockets)
-                worker.join(10)
+                sockets.cut_all()
+                # still connecting (no socket yet): a hung connect can take long to give up, and a
+                # socket that connects after the cut is shut at once, so there's nothing to wait for
+                worker.join(10 if sockets.socks else 0.5)
                 break
     except BaseException:  # Ctrl-C: don't leave the model working for nobody
-        _cut(sockets)
+        sockets.cut_all()
         raise
     if "reply" in out:
         return out["reply"]
     if isinstance(out.get("error"), BaseException):
         raise out["error"]
     raise Stopped(None)
-
-
-def _cut(sockets):
-    for sock in sockets:
-        try:
-            sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
 
 
 def _stream_chat(base_url, api_key, body, on_text, on_reasoning, should_stop, sockets):
@@ -148,15 +172,20 @@ def _read_stream(resp, started, on_text, on_reasoning, should_stop):
     finish = None
     first = last = None
     served_by = None
+    done = False
+
+    def stopped():
+        return Stopped({"text": "".join(text), "reasoning": "".join(reasoning), "provider": served_by,
+                        "tool_calls": [{"name": c["name"], "args": c["args"]} for c in calls.values()]})
     for raw in resp:
         if should_stop():
-            raise Stopped({"text": "".join(text), "reasoning": "".join(reasoning), "provider": served_by,
-                           "tool_calls": [{"name": c["name"], "args": c["args"]} for c in calls.values()]})
+            raise stopped()
         line = raw.decode("utf-8", errors="replace").strip()
         if not line.startswith("data:"):
             continue
         data = line[5:].strip()
         if data == "[DONE]":
+            done = True
             break
         chunk = json.loads(data)
         if chunk.get("error"):
@@ -190,6 +219,10 @@ def _read_stream(resp, started, on_text, on_reasoning, should_stop):
                 slot["name"] += fn.get("name") or ""
                 slot["args"] += fn.get("arguments") or ""
             finish = choice.get("finish_reason") or finish
+    if not done and finish is None and should_stop():
+        # a stop cuts the connection while we wait for the next piece, and http.client takes that
+        # as the end of the stream: without this the half-written reply came back as a finished one
+        raise stopped()
 
     tool_calls = []
     for n, i in enumerate(sorted(calls)):
