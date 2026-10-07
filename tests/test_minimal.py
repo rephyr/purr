@@ -7,11 +7,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ["PURR_STATE"] = tempfile.mkdtemp()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from harness import minimal  # noqa: E402
+from harness import agent as agent_module, minimal  # noqa: E402
+from harness.api import Stopped  # noqa: E402
 from harness.agent import Agent  # noqa: E402
 from tests.test_limits import CONFIG, FakeView, reply, scripted  # noqa: E402
 
@@ -106,6 +108,36 @@ class MinimalAgentTest(unittest.TestCase):
     def test_a_call_without_a_command_gets_told(self):
         a = minimal_agent()
         self.assertIn("needs a command", a._minimal_bash("bash", json.dumps({"cmd": "ls"})))
+
+    def long_think(self, piece):
+        """A local model in minimal mode thinks for a long time, then answers (if not cut)."""
+        a = Agent({**CONFIG, "minimal": True}, tempfile.mkdtemp(), "big", FakeView())  # an Ollama model
+        a.set_one_shot()
+        calls = []
+
+        def fake(url, key, body, on_text, on_think, should_stop):
+            calls.append(body)
+            for i in range(12000):  # past the usual 8k-token budget
+                on_think(piece(i))
+                if should_stop():
+                    raise Stopped(None)
+            return reply("the answer")
+        with mock.patch.object(agent_module, "stream_chat", fake):
+            a.turn("fix the cache")
+        return a, calls
+
+    def test_a_long_think_is_not_cut(self):
+        # the think budget once cut it, and with no nudge in minimal mode the turn ended on an empty reply
+        a, calls = self.long_think(lambda i: f"step {i}: maybe the cache key should include {i * 7} or not; ")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(a.messages[-1]["content"], "the answer")
+        self.assertEqual(a.tools.repairs, [])
+
+    def test_a_loop_cut_says_so(self):
+        a, calls = self.long_think(lambda i: "Wait, I'll just write it. ")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("reply stuck repeating itself -> cut off", a.tools.repairs)
+        self.assertIn("the model got stuck repeating itself: purr cut it off", a.view.notes)
 
 
 class PublishLabelTest(unittest.TestCase):
