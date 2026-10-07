@@ -35,6 +35,9 @@ code_checks = true
 #  proof_ledger = true   rerun the model's own checks in a fresh shell before it may stop
 #  margin_check = true   a stated limit (under 1 s, at most 50 MB) is measured, not assumed
 #  job_watch = true      (with a time limit) a background job's log is read: purr says when it won't finish
+# Local models only: thinking past this many tokens in one step is cut, and the model acts on where its
+# thinking got to (Ornith-9B thought up to 18k tokens before one edit). 0 turns it off.
+#  think_budget = 8000
 #  safety_net = true     the files are kept each time the tests pass; ending with them failing puts that
 #                        state back (with a time limit, purr also stops at it, to leave time for this)
 # ... off unless you set it (a 9B model thought for minutes on it, or without thinking got it wrong):

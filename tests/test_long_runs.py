@@ -206,3 +206,44 @@ class SteerTest(unittest.TestCase):
         a._call = fake
         a.turn("explain it")
         self.assertEqual(calls["n"], 2)
+
+
+class ThinkBudgetTest(unittest.TestCase):
+    """A local model that thinks past its budget in one step is cut; it gets the end of its thinking
+    back and takes the next step without thinking."""
+
+    def run_it(self, **config):
+        from harness.api import Stopped
+        a = agent()
+        a.config = {**a.config, **config}
+        bodies = []
+
+        def fake(url, key, body, on_text, on_think, should_stop):
+            bodies.append(body)
+            if len(bodies) == 1:
+                for i in range(20000):
+                    on_think(f"step {i}: maybe the cache key should include {i * 7} or not; ")
+                    if should_stop():
+                        raise Stopped(None)
+            return reply("Done.")
+        with mock.patch.object(agent_module, "stream_chat", fake):
+            a.turn("fix the cache")
+        return a, bodies
+
+    def test_a_long_think_is_cut_and_the_next_step_acts(self):
+        a, bodies = self.run_it()
+        self.assertEqual(len(bodies), 2)
+        self.assertIn("thinking past its budget -> cut, next step acts", a.tools.repairs)
+        nudge = next(m["content"] for m in a.messages if m["role"] == "user" and "cut your thinking off" in m["content"])
+        self.assertIn("maybe the cache key", nudge)  # where it had got to
+        self.assertEqual(bodies[1].get("reasoning_effort"), "none")
+        self.assertNotIn("reasoning_effort", bodies[0])
+
+    def test_it_can_be_turned_off(self):
+        a, bodies = self.run_it(think_budget=0)
+        self.assertEqual(len(bodies), 1)
+
+    def test_api_models_have_no_budget(self):
+        self.assertEqual(agent("api")._think_budget(), 0)
+        self.assertEqual(agent("small")._think_budget(), 8000)
+        self.assertEqual(agent("big")._think_budget(), 8000)
