@@ -193,6 +193,13 @@ class SteerTest(unittest.TestCase):
         self.assertIn("(the user, while you were working:) use pathlib, not os.path", seen[1])
         self.assertEqual(a.steers, [])
 
+    def test_a_steer_attaches_its_at_files(self):
+        a = agent()
+        (a.root / "schema.sql").write_text("CREATE TABLE users (id INT);\n")
+        a.steers.append("use the table in @schema.sql")
+        a._take_steers()
+        self.assertIn('<file path="schema.sql">\nCREATE TABLE users', a.messages[-1]["content"])
+
     def test_a_steer_while_it_writes_its_answer_keeps_the_turn_going(self):
         a = agent()
         calls = {"n": 0}
@@ -206,6 +213,26 @@ class SteerTest(unittest.TestCase):
         a._call = fake
         a.turn("explain it")
         self.assertEqual(calls["n"], 2)
+
+    def test_a_steer_reaches_checkpoints_and_a_compaction(self):
+        # they quoted only the request the steer replaced, and a compaction dropped the steer itself
+        from harness.prompts import CHECKPOINT
+        a = agent()
+        a._begin_turn("store the API token in config.py")
+        a.messages += [{"role": "user", "content": "store the API token in config.py"},
+                       {"role": "assistant", "content": "reading config.py"},
+                       {"role": "user", "content": "x" * 100}, {"role": "assistant", "content": "ok"}]
+        a.steers.append("don't touch config.py, read it from an env var")
+        a._take_steers()
+        check = CHECKPOINT.format(steps=12, request=a._request_quote())
+        self.assertIn("store the API token in config.py", check)
+        self.assertIn("read it from an env var", check)
+        a._call = lambda *k, **kw: reply("- user wants the API token in config.py")
+        a.compact(auto=True)
+        self.assertEqual(len(a.messages), 2)
+        head = a.messages[1]["content"]
+        self.assertIn("read it from an env var", head)
+        self.assertNotIn("And earlier in this chat", head)  # not quoted twice
 
 
 class ThinkBudgetTest(unittest.TestCase):

@@ -468,8 +468,16 @@ class Tools:
             if not SPILL_DIR.exists():  # purr's own: gone when purr exits
                 atexit.register(shutil.rmtree, SPILL_DIR, ignore_errors=True)
             SPILL_DIR.mkdir(parents=True, exist_ok=True)
-            path = SPILL_DIR / f"{self.step:04d}-{re.sub(r'[^A-Za-z0-9_-]', '', name)[:30] or 'tool'}.txt"
-            path.write_text(text)
+            base = f"{self.step:04d}-{re.sub(r'[^A-Za-z0-9_-]', '', name)[:30] or 'tool'}"
+            n = 1
+            while True:  # pruning keeps several old outputs at one step: each gets its own file
+                path = SPILL_DIR / (f"{base}.txt" if n == 1 else f"{base}-{n}.txt")
+                try:
+                    with open(path, "x") as f:  # made here or not at all: no other writer's file is written over
+                        f.write(text)
+                    break
+                except FileExistsError:
+                    n += 1
             files = sorted(SPILL_DIR.iterdir(), key=lambda f: f.stat().st_mtime)
             total = sum(f.stat().st_size for f in files)
             while (total > SPILL_CAP or len(files) > SPILL_FILES) and len(files) > 1:
@@ -546,6 +554,8 @@ class Tools:
         return fixed
     def _saw(self, p, text):
         """Remember a file as the model last saw it, to notice when it changes behind its back."""
+        # changed_behind reads with universal newlines; written text can carry \r\n (a .bat file)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
         self.known[p.resolve()] = text if len(text) <= 200_000 else None
 
     def changed_behind(self):

@@ -219,3 +219,43 @@ class SteerWindowTest(Folders, unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause(0.3)
             self.assertEqual(app.agent.steers, ["use pathlib"])
+
+    async def test_plan_and_minimal_turns_take_no_steers(self):
+        # their turn never reads agent.steers: a steer would wait, then start a whole new plan
+        app = PurrApp(CONFIG, str(self.root), "small")
+        async with app.run_test(size=(110, 32)) as pilot:
+            await pilot.pause(0.3)
+            app.agent.mode = "plan"
+            app.busy, app.job = True, "turn"  # as if a plan turn were running
+            app.prompt.focus()
+            app.prompt.load_text("also use pytest")
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            self.assertEqual(app.agent.steers, [])
+            app.agent.mode = "code"
+            with mock.patch.dict(app.agent.config, minimal=True):  # the config may be shared
+                await pilot.press("enter")
+                await pilot.pause(0.3)
+            self.assertEqual(app.agent.steers, [])
+            self.assertEqual(app.prompt.text, "also use pytest")  # still in the box for later
+
+    async def test_a_steer_mid_answer_keeps_the_answer_in_one_block(self):
+        from textual.widgets import Markdown
+        app = PurrApp(CONFIG, str(self.root), "small")
+        async with app.run_test(size=(110, 32)) as pilot:
+            await pilot.pause(0.3)
+            app.busy, app.job = True, "turn"
+            first = "Here:\n\n```python\ndef f(x):\n    # double it\n"
+            rest = "    return x * 2\n```\n\nThat *doubles* x.\n"
+            await app.stream_batch([("text", first)])
+            app.prompt.focus()
+            app.prompt.load_text("use a lambda")  # typed while the code block streams
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+            await app.stream_batch([("text", rest)])
+            await app.end_reply()
+            await pilot.pause(0.3)
+            answers = [m for m in app.chat.query(Markdown) if m.has_class("assistant")]
+            self.assertEqual(len(answers), 1)  # split in two, the rest would render without its fence
+            self.assertEqual(answers[0].source, first + rest)
+            self.assertEqual(app.agent.steers, ["use a lambda"])

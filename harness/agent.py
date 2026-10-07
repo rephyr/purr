@@ -123,6 +123,7 @@ REFINE_MODES = ("auto", "on", "off")
 SAFETY_BYTES = 20_000_000  # the safety net keeps the changed files when tests pass, up to this much
 SAFETY_WAIT = 120          # seconds for its test run at the end (5% of a time limit, at least 15)
 SNAPSHOT_LIMIT = 20_000    # files a disk snapshot walks; one this big may have missed some (not a full walk)
+GREEN_COMMANDS = 8         # test commands the regression note remembers a pass of (the newest)
 
 
 def TESTS_FAILED(command, result):
@@ -1091,11 +1092,20 @@ class Agent:
         self.session_in = 0      # prompt tokens sent, and how many of them were cached
         self.session_cached = 0
         self.last_usage = self._main_usage = None
-        self._asks = []
-        self._green = None  # (test command, {path: text}, edit_gen): the last time the tests passed (_regression_note)
+        self._forget_chat()
         self.title = ""
         stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
         self.log_path = None if self.helper or self.private else LOG_DIR / f"{stamp}.json"  # private: never saved
+
+    def _forget_chat(self):
+        """What purr noted about this chat. /clear and /resume start another chat on the same agent:
+        without this the next one hears the old requests, old passing tests and old reads."""
+        self._asks = []
+        # {test command: (test command, {path: text}, edit_gen)}: the last time each one passed (_regression_note)
+        self._green = {}
+        self._regression_said = set()  # the green states (edit_gen) a note was given for: once each
+        self.tools.seen.clear()   # read-before-edit: the new chat hasn't read anything yet
+        self.tools.known.clear()  # "changed since you last saw them" is about this chat's reads
 
     # ---- sessions ----
 
@@ -1129,6 +1139,7 @@ class Agent:
         self.session_out = data.get("out", 0)
         self.session_in, self.session_cached = data.get("in", 0), data.get("cached", 0)
         self.last_usage = self._main_usage = None
+        self._forget_chat()
         self.log_path = Path(path)
 
     # ---- one model call ----
@@ -1406,12 +1417,11 @@ class Agent:
 
     def context_used(self):
         main = getattr(self, "_main_usage", None)
-        if main and main[1] <= len(self.messages) and (
-                "prompt_tokens_details" in main[0] or self.model.get("provider") not in LOCAL):
+        if main and main[1] <= len(self.messages) and main[2]:
             # the server's own count for the chat as it was sent, plus a guess for what came after.
             # Guessing it all (JSON characters / 4: escaped code counts double) said 23k where Ollama
             # counted 20k, and a 32k model's chat was summarised early (Qwen3-Coder lost its work)
-            usage, sent = main  # the reply itself (with its thinking, where it goes back) is in the guess
+            usage, sent, _ = main  # the reply itself (with its thinking, where it goes back) is in the guess
             return usage["prompt_tokens"] + self._guess_tokens(self.messages[sent:], base=0)
         used = 0
         if self.last_usage:
@@ -1711,6 +1721,12 @@ class Agent:
         earlier = "\n".join("- " + _ends(a, 500, 200) for a in asks[:-1])
         return f"The user asked earlier:\n{earlier}\nand now: {_ends(asks[-1], 1500, 600)}"
 
+    def takes_steers(self):
+        """Whether a turn reads what you type while it works. Plan mode hands the turn to a
+        planner and workers (their own Agents) and minimal mode has no steps to slip it into:
+        a steer there would sit until the end and then start a whole new turn."""
+        return not self.minimal and not (self.mode == "plan" and not self.helper)
+
     def _take_steers(self):
         """What you typed while the model worked goes in before its next step (the window took
         nothing while busy, and Esc threw the step away: minutes, at 60 tokens a second)."""
@@ -1719,7 +1735,19 @@ class Agent:
         said = []
         while self.steers:  # the window adds to it from its own thread: take them one by one
             said.append(self.steers.pop(0))
-        self.messages.append({"role": "user", "content": "(the user, while you were working:) " + "\n".join(said)})
+        # @files attach here too, as in a message: a steer typed just as the turn ends goes in as one
+        self.messages.append({"role": "user", "content":
+                              self.expand("(the user, while you were working:) " + "\n".join(said))})
+        # a steer usually corrects the request: it goes into it too, or the checkpoints and a
+        # compaction's word-for-word quote keep pointing at the request it replaced
+        request = getattr(self, "_request", "")
+        asks = getattr(self, "_asks", None)
+        self._request = (request + "\n\n" if request else "") + "Then, while you worked: " + "\n".join(said)
+        if asks and asks[-1] == request:
+            asks[-1] = self._request
+        # pair mode: what they said answers the hand-back like a new message would (a "go" typed
+        # while it wrote its summary), so its next step isn't held back; its next edit hands back again
+        self._pair_handing_back = False
 
     def _outside_changes(self):
         """Files the model has seen that changed since, not by its own edits: you in your editor,
@@ -1972,7 +2000,11 @@ class Agent:
         cost = self._count(reply["usage"])
         usage = reply["usage"] or {}
         if usage.get("prompt_tokens"):
-            self._main_usage = (usage, len(self.messages))  # what the chat so far came to (context_used)
+            # what the chat so far came to (context_used), and whether that is the whole prompt (an old
+            # Ollama counts only the uncached part). Decided now, by the model that counted it: after
+            # /model to an API model, an old Ollama's part must not pass for the whole chat
+            whole = "prompt_tokens_details" in usage or self.model.get("provider") not in LOCAL
+            self._main_usage = (usage, len(self.messages), whole)
         s = self.turn_stats
         s["out"] += usage.get("completion_tokens", 0)
         s["calls"] += 1
@@ -2244,8 +2276,12 @@ class Agent:
             return
         if not self.one_shot:
             files = {p: t for p, t in ((p, self._text_of(p)) for p in self.tools.session_changes()) if t is not False}
-            if files:
-                self._green = (command, files, self.tools.edit_gen)
+            if files:  # one per command: a narrower run passing later doesn't hide the whole suite's
+                key = " ".join(command.split())
+                self._green.pop(key, None)  # newest last
+                self._green[key] = (command, files, self.tools.edit_gen)
+                while len(self._green) > GREEN_COMMANDS:  # each keeps the changed files' text: not one per one-off run
+                    del self._green[next(iter(self._green))]
             return
         if not self._on("safety_net"):
             return
@@ -2310,8 +2346,16 @@ class Agent:
     def _regression_note(self, command):
         """Tests that passed earlier in this chat fail now: the diff since they passed, once, so a small
         model looks at what it changed instead of at the test (or at a "stale cache")."""
-        green = getattr(self, "_green", None)
-        if not green or green[2] == getattr(self, "_regression_said", None) or green[2] == self.tools.edit_gen:
+        # only the same run that passed: a narrower run passing says nothing about another file's tests
+        # (an old failure, a new TDD test), and outside code mode _green isn't kept (a TODO(you) stub fails on purpose)
+        key = " ".join(command.split())
+        green = (getattr(self, "_green", None) or {}).get(key) if self.coding else None
+        said = getattr(self, "_regression_said", None)
+        if said is None:
+            said = self._regression_said = set()
+        # once per green state: the whole suite and a narrower run that passed together, failing in turns,
+        # don't each repeat the same diff (up to 3000 characters into a small model's context)
+        if not green or green[2] in said or green[2] == self.tools.edit_gen:
             return ""
         _, files, gen = green
         files = dict(files)
@@ -2327,7 +2371,7 @@ class Agent:
                                                       f"a/{name}", f"b/{name}", n=1)))
         if not parts:
             return ""
-        self._regression_said = gen
+        said.add(gen)
         self.tools.repairs.append("tests passed earlier and fail now -> shown what changed since")
         diff = "".join(p if p.endswith("\n") else p + "\n" for p in parts)
         return ("\n(purr: the tests passed earlier in this chat, with `" + green[0][:80] + "`. Since then these "
@@ -2964,7 +3008,9 @@ class Agent:
         if need is not None:
             rank = {"read_file": 2, "grep": 1, "list_files": 1, "outline": 1, "find_symbol": 1}
             older = sorted(older, key=lambda m: rank.get(fn_of[id(m)].get("name"), 0))  # stable: oldest first
-        freed = 0
+        main = getattr(self, "_main_usage", None)
+        counted = {id(m) for m in self.messages[:main[1]]} if main else set()  # in the server's count
+        freed = freed_counted = 0
         for m in older:
             content = m.get("content") or ""
             if need is not None and freed >= need:
@@ -2978,8 +3024,16 @@ class Agent:
                             + (f"it's kept in {kept}: look at parts with grep -n or sed -n]" if kept
                                else "run it again if you need it]"))
             freed += len(content) - len(m["content"])
+            if id(m) in counted:
+                freed_counted += len(content) - len(m["content"])
         if freed:
-            self.last_usage = self._main_usage = None  # the old count is stale; use the fresh size guess
+            self.last_usage = None
+            if main:
+                # take what went out of the server's count rather than drop it: the size guess over-counts
+                # escaped code, and after every small prune it summarised a 32k chat early (#85 again)
+                usage, sent, whole = main
+                usage = dict(usage, prompt_tokens=max(0, usage["prompt_tokens"] - freed_counted // 4))
+                self._main_usage = (usage, sent, whole)
             self._repeats = {}  # a call whose output was just removed may well be needed again
             self.view.note(f"trimmed old tool output to save room ({ui.short(freed)} characters)", "info")
         return freed
@@ -3101,4 +3155,9 @@ class Agent:
         return output, code
 
     def undo(self):
-        return self.tools.undo()
+        paths = self.tools.undo()
+        if paths:
+            # The last green snapshot may hold the undone text: a later note would blame the user's undo
+            self._green = {}
+            self._regression_said = set()
+        return paths
