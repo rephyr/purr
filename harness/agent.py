@@ -4,6 +4,7 @@ Also: compacting long chats, saving/resuming sessions, undo, helpers (sub-agents
 @file attachments and !shell commands.
 """
 
+import collections
 import datetime
 import difflib
 import json
@@ -181,6 +182,8 @@ CUT_TAIL_CHARS = 1200  # of a cut-off reply's end, quoted back so it can carry o
 # a file path in a request: tests/test_x.py, cafe/cats.py, README.md (a name with a known extension)
 NAMED_FILE = re.compile(r"(?<![\w/.-])(?:[\w.-]+/)*[\w-]+\.(?:py|js|ts|jsx|tsx|go|rs|rb|java|c|h|cpp|gd|md|json|toml|"
                         r"yaml|yml|txt|csv|sh|html|css)\b")
+# tools whose names NAMED_FILE takes for files: "port the Node.js script"
+TECH_NAME = re.compile(r"(?i)(node|vue|next|nuxt|react|three|chart|d3|express|angular|ember|backbone|socket|p5)\.js")
 REMOVED_SHOWN = 6  # deleted lines the final check quotes
 COMMENT_LINE = re.compile(r"\s*(#|//|--|/\*|\*|\"\"\"|''')")
 OUTSIDE_DIFF_CHARS = 4000  # of the diff showing files that changed behind the model's back
@@ -985,6 +988,7 @@ class Agent:
             worker.tools.always_run = self.tools.always_run
             worker.title = f"ticket {idx + 1}/{total}: {title}"
             worker.log_path = LOG_DIR / f"plan_{plan_stamp}_ticket-{idx + 1:02d}.json"
+            worker._files_from = text  # _missing_files: later tickets' files aren't missing yet
             worker.turn(TICKET_WORK.format(i=idx + 1, total=total, request=request,
                                            titles=self._ticket_lines(titles, idx), ticket=text))
             self._merge_undo(worker)
@@ -1723,6 +1727,8 @@ class Agent:
         self._time_said = set()
         self.tools.deadline = self._started + self.time_limit if self.time_limit and not self.helper else None
         self._request = text  # kept word for word through a compaction
+        # the named files there before the turn: one the request renames or deletes isn't missing after
+        self._named_before = {name for name, p in self._named_paths(text) if p.exists()}
         if not self.helper:
             self._asks = (getattr(self, "_asks", []) + [text])[-ASKS_KEPT:]  # the chat's requests (_request_quote)
         if self.one_shot and not self.helper:
@@ -1786,6 +1792,9 @@ class Agent:
         request = getattr(self, "_request", "")
         asks = getattr(self, "_asks", None)
         self._request = (request + "\n\n" if request else "") + "Then, while you worked: " + "\n".join(said)
+        # "also delete old.py": a file the steer names is there now, so it isn't missing once deleted
+        self._named_before = getattr(self, "_named_before", set()) | {
+            name for name, p in self._named_paths("\n".join(said)) if p.exists()}
         if asks and asks[-1] == request:
             asks[-1] = self._request
         # pair mode: what they said answers the hand-back like a new message would (a "go" typed
@@ -2258,20 +2267,30 @@ class Agent:
     def _removed_lines(self):
         """Lines of the files as they were that the changes deleted outright (not rewrote): Qwen3.6 took
         the sword and potion recipes out of crafting.py, its own tests passed without them, and the
-        task's didn't. Said at the final check so the model confirms the request asked for it."""
+        task's didn't. Said at the final check so the model confirms the request asked for it.
+        Only this turn's changes: a deletion an earlier turn was asked for isn't to be put back."""
         gone = []
-        for p, before in self.tools.session_changes().items():
+        changed = self.tools.undo_stack[-1] if self.tools.undo_stack else {}
+        for p, before in changed.items():
             if not before or not p.exists():
                 continue
             try:
                 after = p.read_text(errors="replace")
             except OSError:
                 continue
-            old = before.splitlines()
-            ops = difflib.SequenceMatcher(None, old, after.splitlines(), autojunk=False).get_opcodes()
+            old, new = before.splitlines(), after.splitlines()
+            # a moved block shows up as a delete in one place and an insert in another: only lines
+            # the file now has fewer copies of are really gone, or the model re-adds a moved def
+            lost = collections.Counter(line.strip() for line in old)
+            lost.subtract(line.strip() for line in new)
+            ops = difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes()
             for tag, i1, i2, _, _ in ops:
-                if tag == "delete":
-                    gone += [line.strip() for line in old[i1:i2] if line.strip() and not COMMENT_LINE.match(line)]
+                if tag != "delete":
+                    continue
+                for line in old[i1:i2]:
+                    if line.strip() and not COMMENT_LINE.match(line) and lost[line.strip()] > 0:
+                        lost[line.strip()] -= 1
+                        gone.append(line.strip())
         if not gone:
             return ""
         shown = "; ".join(f"`{line[:80]}`" for line in gone[:REMOVED_SHOWN])
@@ -2279,20 +2298,39 @@ class Agent:
         return (f"(purr: your changes deleted these lines that were there before: {shown}{more}. Keep that only "
                 "if the request asks for it; otherwise put them back.)\n")
 
-    def _missing_files(self):
-        """Files the request names that don't exist: gpt-oss said it added tests/test_cat_of_the_day.py,
-        never wrote it, and the green tests (without it) let that pass."""
-        request = getattr(self, "_request", "")
-        named = dict.fromkeys(m.strip("`'\".,;:()") for m in NAMED_FILE.findall(request))
-        missing = []
-        for name in named:
+    def _named_paths(self, request):
+        """(name, path) for each file path the request names, inside the project."""
+        out = []
+        for name in dict.fromkeys(NAMED_FILE.findall(request)):  # no strip: it took .github's dot
+            if TECH_NAME.fullmatch(name):
+                continue
             p = Path(name).expanduser()
             p = p if p.is_absolute() else self.root / p
             try:
-                if not p.exists() and self.root in p.resolve().parents:
-                    missing.append(name)
+                if self.root in p.resolve().parents:
+                    out.append((name, p))
             except (OSError, ValueError):
                 continue
+        return out
+
+    def _missing_files(self):
+        """Files the request names that don't exist: gpt-oss said it added tests/test_cat_of_the_day.py,
+        never wrote it, and the green tests (without it) let that pass. A plan ticket checks only its own
+        text: the plan and the later tickets name files that aren't made yet."""
+        before = getattr(self, "_named_before", set())
+        request = getattr(self, "_files_from", None) or getattr(self, "_request", "")
+        missing = []
+        for name, p in self._named_paths(request):
+            if p.exists() or name in before:  # there, or there before the turn (renamed or deleted)
+                continue
+            # "fix parser.py" names src/app/parser.py: a bare name may live in any folder, a gitignored one too
+            if "/" not in name:
+                try:
+                    if files_under(self.root, glob=name, ignored=True):
+                        continue
+                except (subprocess.TimeoutExpired, OSError):
+                    continue  # a tree too big to look through: don't call it missing on a guess
+            missing.append(name)
         if not missing:
             return ""
         return (f"(purr: the request names {', '.join('`' + m + '`' for m in missing[:6])}, which "
@@ -2825,24 +2863,33 @@ class Agent:
         if ran is None:
             return ""
         output, code = ran
-        self._tests_green = TESTS_PASSED(f"{output}\n[exit code {code}]")
+        # red only for a real failure: a pass TESTS_PASSED can't read (go's "ok", cargo's "0 failed",
+        # mocha's "passing"), a timeout (-1) or "no tests ran" (5) isn't one, so it gets the plain check
+        passed = TESTS_PASSED(f"{output}\n[exit code {code}]")
+        self._tests_green = True if passed else (None if code in (0, -1, 5) else False)
+        note = ""
         if self._tests_green:
             self._green_gen = self.tools.edit_gen
             self._green_disk = self._code_snapshot() if self.one_shot else None
         elif not self.one_shot and TESTS_FAILED(cmd, f"{output}\n[exit code {code}]"):
-            output += self._regression_note(cmd)
-        if TESTS_PASSED(f"{output}\n[exit code {code}]"):
+            note = self._regression_note(cmd)
+        if passed:
             self._keep_good(cmd)
-        self.view.tool_result("run", {"command": cmd}, f"{output}\n[exit code {code}]")
+        self.view.tool_result("run", {"command": cmd}, f"{output}{note}\n[exit code {code}]")
+        # the tail is of the test output alone: a long diff in the note would push the failing test out
         tail = "\n".join(output.strip().splitlines()[-40:])
         verdict = "they pass" if code == 0 else (
             "THEY FAIL: if the failure comes from your changes or is part of the request, fix it "
             "first; if it is in code the request has nothing to do with, leave it and mention it "
             "in your answer")
+        if code and self._tests_green is None:  # pytest's 5: not a failure, so not "THEY FAIL" either
+            verdict = ("no tests ran: this run says nothing about your changes. If the request asks for "
+                       "tests, check that they are where this command looks for them")
         result = f"exit code {code}, {verdict}"
         if code == -1:  # stopped, not failed: something hangs, or the suite is just slow
             result = f"timed out after {self._test_timeout}s: check whether a test hangs (run one file at a time)"
-        return f"(purr, not the user, ran the tests itself: `{cmd}` → {result})\n```\n{tail}\n```\n"
+        return f"(purr, not the user, ran the tests itself: `{cmd}` → {result})\n```\n{tail}\n```\n" + (
+            f"{note.strip()}\n" if note else "")
 
     def on_my_gpu(self):
         """Speed only means something for local models: an API's depends on its load, routing, ..."""

@@ -9,10 +9,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ["PURR_STATE"] = tempfile.mkdtemp()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from harness import agent as agent_module  # noqa: E402
 from harness.agent import TESTS_FAILED  # noqa: E402
 from tests.test_limits import agent, known, reply, scripted  # noqa: E402
 
@@ -133,6 +135,22 @@ class RegressionNoteTest(unittest.TestCase):
         failing = tools(a)[-1]
         self.assertIn("NotImplementedError", failing)
         self.assertNotIn("passed earlier in this chat", failing)  # the stub fails on purpose
+
+    def test_the_final_checks_report_keeps_the_failure_next_to_a_long_diff(self):
+        # the report keeps the last 40 lines: a long diff in the note pushed the failing test out of them
+        a = self.chat()
+        many = "".join(f"def f{i}():\n    return {i}\n\n" for i in range(30))
+        scripted(a, [write("a.py", "def x():\n    return 1\n"), reply("", tool=RUN), reply("done"),
+                     write("a.py", many + "def x():\n    return 2\n"), reply("done")])
+        a.turn("write x() returning 1, with tests")
+        a.turn("add some helpers")
+        with mock.patch.object(agent_module.checks, "test_command", lambda root: RUN[1]["command"]):
+            report = a._test_report()
+        self.assertIn("THEY FAIL", report)
+        self.assertIn("FAIL: test_x", report)
+        self.assertIn("AssertionError", report)
+        self.assertIn("the tests passed earlier in this chat", report)
+        self.assertIn("+    return 2", report)
 
     def test_what_counts_as_a_failed_test_run(self):
         self.assertTrue(TESTS_FAILED("python3 -m unittest", "F\nFAIL: test_x (t.T)\n\nFAILED (failures=1)\n[exit code 1]"))
