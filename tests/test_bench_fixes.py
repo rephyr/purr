@@ -174,6 +174,25 @@ class FinalCheckTest(unittest.TestCase):
         self.assertIn("timed out after 180s", report)
         self.assertNotIn("FAIL", report)
 
+    def test_the_final_checks_tests_stop_before_the_time_limit(self):
+        # tbench T=600: purr's limit is 540, harbor kills at 600. Done at 530 with a hanging suite,
+        # a 180 s run ended at 710, so the safety net never put the last green files back
+        a = one_shot(time_limit=540)
+        a.tools.deadline = agent_module.time.monotonic() + 10
+        waits = []
+        with mock.patch.object(agent_module.checks, "test_command", lambda root: "pytest"), \
+                mock.patch.object(agent_module, "run_shell",
+                                  lambda cmd, root, timeout: waits.append(timeout) or ("", -1)):
+            report = a._test_report()
+        self.assertEqual(waits, [30])  # what t_run would get at the same moment
+        self.assertIn("timed out after 30s", report)
+        a.tools.deadline = None  # chats and the TUI have no limit: the full wait
+        with mock.patch.object(agent_module.checks, "test_command", lambda root: "pytest"), \
+                mock.patch.object(agent_module, "run_shell",
+                                  lambda cmd, root, timeout: waits.append(timeout) or ("", 0)):
+            a._test_report()
+        self.assertEqual(waits[-1], agent_module.TEST_TIMEOUT)
+
 
 class PromptTest(unittest.TestCase):
     def test_one_shot_prompt_drops_what_needs_a_person(self):

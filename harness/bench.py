@@ -233,7 +233,8 @@ def run_purr(config, model, task, work, log_dir, timeout, refine=False, final_ch
         config = {k: v for k, v in config.items() if k != "mcp"}
     if not extras:
         config = {**config, "final_check": False, "final_check_tests": False, "code_checks": False,
-                  "reminders": False, "edge_cases": False, "read_before_edit": False}
+                  "reminders": False, "edge_cases": False, "read_before_edit": False,
+                  "safety_net": False}  # it reruns the tests and stops the run at its time limit
     elif not final_check:
         config = {**config, "final_check": False}
     view = BenchView(r, work)

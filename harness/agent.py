@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -121,6 +122,7 @@ REFINE_MODES = ("auto", "on", "off")
 
 SAFETY_BYTES = 20_000_000  # the safety net keeps the changed files when tests pass, up to this much
 SAFETY_WAIT = 120          # seconds for its test run at the end (5% of a time limit, at least 15)
+SNAPSHOT_LIMIT = 20_000    # files a disk snapshot walks; one this big may have missed some (not a full walk)
 
 
 def TESTS_FAILED(command, result):
@@ -141,6 +143,24 @@ def TESTS_PASSED(result):
         return int(ran.group(1)) > 0 and re.search(r"^OK\b", text, re.M) is not None
     passed = re.search(r"\b(\d+) passed\b", text)
     return bool(passed and int(passed.group(1)) > 0 and not re.search(r"\b\d+ (failed|errors?)\b", text))
+
+# a step of a command that only runs tests (or moves to a folder, or trims what they print)
+TEST_STEP = re.compile(r"^(?:\w+=\S*\s+)*(?:timeout\s+\S+\s+)?(?:uv\s+run\s+)?(?:cd\s+\S+|"
+                       r"(?:\S*/)?python3?\s+(?:-\w+\s+)*-m\s+(?:pytest|unittest)\b.*|(?:\S*/)?pytest\b.*|"
+                       r"(?:\S*/)?python3?\s+(?:\S*/)?(?:test_\w+|\w+_test)\.py\b.*|"
+                       r"(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b.*|npx\s+(?:vitest|jest)\b.*|"
+                       r"cargo\s+test\b.*|go\s+test\b.*|(?:tail|head|grep)\b.*)$")
+
+
+def ONLY_TESTS(command):
+    """The command only runs tests: nothing in it writes files (a heredoc, sed -i, a checkout), so
+    running it again can't undo work done after it."""
+    text = re.sub(r"\d*>&\d+|\d*>\s*/dev/null", " ", command or "")
+    if re.search(r"[<>`]|\$\(", text):
+        return False
+    steps = [s.strip() for s in re.split(r"[;&|\n]+", text) if s.strip()]
+    return bool(steps) and all(TEST_STEP.match(s) for s in steps)
+
 
 # the second reader's "nothing to fix", said its own way ("All requirements are met.", not ALL MET)
 ALL_MET = re.compile(r"\ball\b[\w ]{0,25}\bmet\b", re.I)
@@ -1676,6 +1696,7 @@ class Agent:
         self._tested = False    # one-shot: the fresh-eyes tester at most once
         self._think_hard = False  # the next call gets effort_hard (effort_phases)
         self._good = None  # (test command, {path: bytes or None}): the files when the tests last passed
+        self._kept = None  # {path: bytes}: files the run hadn't touched yet when the tests first passed
         if self.one_shot and self.time_limit and not self.helper and self._on("safety_net"):
             # stop at the time limit (a benchmark's own is about 10% later): a model still editing when
             # it's killed leaves whatever it was in the middle of, and the safety net needs a moment
@@ -2205,11 +2226,14 @@ class Agent:
     # ---- the safety net (one-shot runs; safety_net = false turns it off) ----
 
     def _changed_files(self):
-        """The files this run changed or made: edits, and what commands changed on disk."""
+        """The files this run changed, made or deleted: edits, and what commands changed on disk."""
         paths = set(self.tools.session_changes())
         before = getattr(self, "_disk_before", None)
         if before is not None:
-            paths |= {p for p, st in self._disk_snapshot().items() if before.get(p) != st}
+            snap = self._disk_snapshot()
+            paths |= {p for p, st in snap.items() if before.get(p) != st}
+            if len(snap) < SNAPSHOT_LIMIT:  # a full walk: what's missing from it was deleted (`rm`, `mv`)
+                paths |= before.keys() - snap.keys()
         return paths
 
     def _keep_good(self, command):
@@ -2225,18 +2249,53 @@ class Agent:
             return
         if not self._on("safety_net"):
             return
+        if not ONLY_TESTS(command):
+            # the net runs it again at the end: one that also writes files (cat > a.py <<EOF ... &&
+            # pytest) would put old code back over later work, and then pass. The project's own
+            # test command instead.
+            command = checks.test_command(self.root)
+            if not command:
+                self._good = None  # an older pass would roll back past this one too
+                return
         files, size = {}, 0
         for p in self._changed_files():
             try:
-                data = p.read_bytes() if p.exists() else None
+                data = self._kept_bytes(p, SAFETY_BYTES - size)
             except OSError:
                 continue
+            if data is False:
+                # too big to keep (a build, a dataset): no net rather than half of one, and not an older
+                # pass either, which would roll back past this green state and delete the big files
+                self._good = None
+                return
             size += len(data or b"")
-            if size > SAFETY_BYTES:
-                return  # too big to keep (a build, a dataset): no net rather than half of one
             files[p] = data
+        if getattr(self, "_kept", None) is None:
+            # the files not touched yet, as they were, so ones a command deletes or changes after the
+            # pass can go back too (best effort: what fits next to the changed ones)
+            self._kept = {}
+            for p in (getattr(self, "_disk_before", None) or {}).keys() - files.keys():
+                try:
+                    data = self._kept_bytes(p, SAFETY_BYTES - size)  # size first: no FIFO, no dataset
+                except OSError:
+                    continue
+                if isinstance(data, bytes):  # not gone, not too big
+                    size += len(data)
+                    self._kept[p] = data
         if files:
             self._good = (command, files)
+
+    @staticmethod
+    def _kept_bytes(p, room):
+        """A file's bytes (None when it's gone), or False when it isn't a plain file or is bigger than
+        `room`. Checked before reading: a FIFO blocks the read forever, a dataset can be gigabytes."""
+        if not p.exists():
+            return None
+        st = p.stat()
+        if not stat.S_ISREG(st.st_mode) or st.st_size > room:
+            return False
+        data = p.read_bytes()
+        return data if len(data) <= room else False  # it grew while we looked
 
     @staticmethod
     def _text_of(p):
@@ -2302,33 +2361,67 @@ class Agent:
         "too many attempts")."""
         for p, text in list(self.tools.compiled.items()):
             try:
-                now = p.read_text()
+                now = p.read_bytes()
                 compile(now, str(p), "exec")
                 continue
             except SyntaxError:
                 pass
             except (OSError, ValueError):
                 continue
+            # purr's own Python may be older than the project's (uv's 3.12, the machine's 3.14 takes
+            # `except A, B:`): code the project's python3 or its venv compiles stays. Not "the tests
+            # passed with it": tests that never import the file prove nothing about it
+            if self._project_compiles(p):
+                continue
             p.write_text(text)
             self.tools.repairs.append("a file left with a syntax error -> its last version that compiled")
             self.view.note(f"♡ {p.name} ended with a syntax error: purr put back its last version that compiled", "warn")
 
-    def _tests_net(self, command, files):
-        now = {}
-        for p in set(files) | self._changed_files():
+    def _project_compiles(self, p):
+        """Whether the python3 the model's commands get (child_env), or the project's own venv (`uv run`,
+        `.venv/bin/python -m pytest`), compiles p. False when there's none."""
+        pythons = ["python3"] + [str(v) for v in (Path(self.root, d, "bin", "python") for d in (".venv", "venv"))
+                                 if v.exists()]
+        for python in pythons:
             try:
-                now[p] = p.read_bytes() if p.exists() else None
+                if subprocess.run([python, "-c", "import sys; compile(open(sys.argv[1], 'rb').read(), sys.argv[1], 'exec')",
+                                   str(p)], cwd=self.root, env=child_env(self.root), stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20).returncode == 0:
+                    return True
+            except (OSError, subprocess.SubprocessError):
+                continue
+        return False
+
+    def _tests_net(self, command, files):
+        before, kept = getattr(self, "_disk_before", None) or {}, getattr(self, "_kept", None) or {}
+        edited, then, now, size = self.tools.session_changes(), {}, {}, 0
+        for p in set(files) | self._changed_files():
+            if p in files:
+                then[p] = files[p]
+            elif p in kept:
+                then[p] = kept[p]  # untouched when they passed: changed or deleted after
+            elif edited.get(p) is not None:
+                then[p] = edited[p].encode()  # first edited after they passed: its text from before the run
+            elif p not in before and len(before) < SNAPSHOT_LIMIT:
+                then[p] = None  # made after they passed (a partial walk can't tell: never delete then)
+            else:
+                continue  # was there before the run but its bytes weren't kept: leave it be, never delete it
+            try:
+                now[p] = self._kept_bytes(p, SAFETY_BYTES - size)
             except OSError:
                 return
-        if all(now.get(p) == data for p, data in files.items()):
-            return  # nothing changed since they passed
+            if now[p] is False:
+                return  # too big to put back, or not a plain file: leave the work as it is
+            size += len(now[p] or b"")
+        if now == then:
+            return  # nothing changed since they passed (new and deleted files count too)
         wait = SAFETY_WAIT if not self.time_limit else max(15, min(SAFETY_WAIT, int(self.time_limit * 0.05)))
         if self.stopping():
             wait = min(wait, 20)  # stopped (by you, or a benchmark's clock): be quick about it
         output, code = run_shell(command, self.root, wait)
         if TESTS_PASSED(f"{output}\n[exit code {code}]"):
             return
-        self._put_files({p: files.get(p) for p in now})  # files made after it go too
+        self._put_files(then)  # files made after it go too, and deleted ones come back
         output, code = run_shell(command, self.root, wait)
         if not TESTS_PASSED(f"{output}\n[exit code {code}]"):
             self._put_files(now)  # failing either way (time, the machine): leave the latest work
@@ -2350,10 +2443,10 @@ class Agent:
 
     SNAPSHOT_SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", ".purr", ".cache", "dist", "build"}
 
-    def _disk_snapshot(self, limit=20000):
+    def _disk_snapshot(self, limit=None):
         """{path: (mtime, size)} of the project's files at the start of a one-shot run, so the review
         also sees files that commands made or changed (cp, a script, a build), not only edits."""
-        snap = {}
+        snap, limit = {}, limit or SNAPSHOT_LIMIT
         for dirpath, dirnames, filenames in os.walk(self.root):
             dirnames[:] = [d for d in dirnames if d not in self.SNAPSHOT_SKIP]
             for name in filenames:
@@ -2362,10 +2455,18 @@ class Agent:
                     st = p.stat()
                 except OSError:
                     continue
+                if not stat.S_ISREG(st.st_mode):
+                    continue  # a FIFO or socket a command made: reading it would hang the run
                 snap[p] = (st.st_mtime, st.st_size)
                 if len(snap) >= limit:
                     return snap
         return snap
+
+    def _code_snapshot(self):
+        """_disk_snapshot without hidden folders (.pytest_cache and the like), which a test run
+        rewrites without the code changing."""
+        return {p: st for p, st in self._disk_snapshot().items()
+                if not any(part.startswith(".") for part in p.relative_to(self.root).parts[:-1])}
 
     def _change_diff(self, budget):
         """The files this run changed, as a unified diff, at most `budget` characters: edits with their
@@ -2427,9 +2528,11 @@ class Agent:
         less than that left, so the look never came. Returns True when it asked."""
         if not (self.one_shot and self._checked and self.time_limit) or self._evidence or self.helper:
             return False
-        if self.limits.helpers == "full" and getattr(self, "_green_gen", None) == self.tools.edit_gen:
+        if (self.limits.helpers == "full" and getattr(self, "_green_gen", None) == self.tools.edit_gen
+                and getattr(self, "_green_disk", None) == self._code_snapshot()):
             # a small model whose tests passed and nothing changed since: "use the time" made it
-            # rewrite what worked, with check scripts of its own that were wrong
+            # rewrite what worked, with check scripts of its own that were wrong. The disk is compared
+            # too: edit_gen only counts edit tools, and a `sed -i` or `cat >` through run changes code
             return False
         left = self._minutes_left()
         total = max(1, round(self.time_limit / 60))
@@ -2617,7 +2720,12 @@ class Agent:
             ok, _ = self.tools._run_allowed(cmd)
             if not ok:
                 return None
-        return run_shell(cmd, self.root, timeout=TEST_TIMEOUT)
+        # A timed run (tbench) is killed at its limit: cut the wait to the time left, as t_run does,
+        # so a hanging suite at the final check can't use up the safety net's last minute
+        self._test_timeout = TEST_TIMEOUT
+        if self.tools.deadline:
+            self._test_timeout = min(TEST_TIMEOUT, int(max(30, self.tools.deadline - time.monotonic() - 60)))
+        return run_shell(cmd, self.root, timeout=self._test_timeout)
 
     def _test_report(self):
         """For the final check: purr runs the project's tests itself, so the model sees the real
@@ -2633,6 +2741,7 @@ class Agent:
         self._tests_green = TESTS_PASSED(f"{output}\n[exit code {code}]")
         if self._tests_green:
             self._green_gen = self.tools.edit_gen
+            self._green_disk = self._code_snapshot() if self.one_shot else None
         elif not self.one_shot and TESTS_FAILED(cmd, f"{output}\n[exit code {code}]"):
             output += self._regression_note(cmd)
         if TESTS_PASSED(f"{output}\n[exit code {code}]"):
@@ -2645,7 +2754,7 @@ class Agent:
             "in your answer")
         result = f"exit code {code}, {verdict}"
         if code == -1:  # stopped, not failed: something hangs, or the suite is just slow
-            result = f"timed out after {TEST_TIMEOUT}s: check whether a test hangs (run one file at a time)"
+            result = f"timed out after {self._test_timeout}s: check whether a test hangs (run one file at a time)"
         return f"(purr, not the user, ran the tests itself: `{cmd}` → {result})\n```\n{tail}\n```\n"
 
     def on_my_gpu(self):
