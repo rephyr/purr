@@ -789,11 +789,16 @@ class Tools:
             return None
         hole = checks.placeholder(before, content)
         old_n, new_n = len(before.splitlines()), len(content.splitlines())
+        tests = re.compile(r"^\s*(import unittest|import pytest|from unittest\b)|unittest\.TestCase\b|^def test_", re.M)
         if hole:
             why = (f"it contains the placeholder {hole!r} instead of the real code, so saving it would "
                    "delete that code")
         elif old_n >= 40 and new_n < old_n * 0.5:
             why = f"{path} would shrink from {old_n} to {new_n} lines"
+        elif tests.search(content) and not tests.search(before) and not checks.TEST_FILE.search(str(path)):
+            # Ornith-9B, wrapping up lru-cache, wrote its tests over cache.py itself
+            why = (f"{path} holds code, not tests, and this would replace it with a test module (did you "
+                   "mean a test file, like test_" + Path(path).name + "?)")
         else:
             return None
         self.rewrite_ok.add(key)
