@@ -191,14 +191,26 @@ that it answers."""
 
 FINAL_CHECK_LIGHT = """(purr: before you finish, read the user's request again. Is every part done, \
 including any tests they asked for, and checked where you can?{services} If not, do it now; \
-otherwise reply with a short summary of what you changed.)"""
+otherwise say so in one line: your summary above stands.)"""
+
+# the project's tests pass (purr just ran them): no probing for cases the request never mentions (small
+# models then rewrote code that worked), but the choices it made on its own go to the user
+FINAL_CHECK_GREEN = """(purr: before you finish, read the user's request again: is every part done?{services} If \
+something is missing, do it now, and don't change working code for cases the request doesn't mention. \
+Otherwise reply with one line starting "Decided:" naming any choice you made that the request didn't \
+spell out (or "Decided: nothing open"); your summary above stands.)"""
+
+# they fail: the failing tests are what to look at, not new inputs
+FINAL_CHECK_RED = """(purr: before you finish: the tests above fail. Fix what your change broke or what the \
+request asks for; if a failing test is about something the request has nothing to do with, leave it \
+and say so.{services} Then reply in one line: your summary above stands, or what changed.)"""
 
 FINAL_CHECK = """(purr: before you finish, read the user's request again and go through it point by \
 point. Is every part done, including any tests they asked for, and did you check it (run the tests \
 or the code) where you can? Then try 2 or 3 inputs other than the example, within what the request \
 describes (empty input, duplicates, the exact boundary of a limit), for example with python3 -c; \
 don't change behaviour the request specifies.{services} If something is missing, untested or breaks, \
-fix it now. If everything is really done, reply with a short summary of what you changed.)"""
+fix it now. If everything is really done, say so in one line: your summary above stands.)"""
 
 # one-shot runs (benchmarks, purr -p): what failed on Terminal-Bench was mostly the spec, not the
 # code: a tuple where a list was asked for, one image tested where the grader used 50, a choice the
@@ -365,7 +377,7 @@ STEP_BACK = ("(purr: you have changed {what} {n} times now and it still isn't do
 # every few steps for small models: the request again, and a look at whether it's getting closer
 # (a plain "reminder of what the user asked" came 13 times in one task and changed nothing). Ornith-9B had
 # duration working at 2 minutes, then chased a case it made up ("1h2x") for 8 more and ended broken
-CHECKPOINT = ("(purr: checkpoint after {steps} steps. The request: {request}\n"
+CHECKPOINT = ("(purr: checkpoint after {steps} steps. {request}\n"
               "In 3 short lines: what is done and proven, what is left, and whether your current "
               "approach is getting closer. If it isn't, switch to a different approach now. If everything "
               "the request asks for is done and proven, stop here and give your final answer: cases the "

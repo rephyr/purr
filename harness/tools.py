@@ -115,6 +115,8 @@ ARG_ALIASES = {"file_path": "path", "filePath": "path", "filename": "path", "fil
 UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 READ_ONLY = {"read_file", "list_files", "grep", "fetch_url"}
+ZERO_TESTS = re.compile(r"\bRan 0 tests\b|NO TESTS RAN|collected 0 items|\bno tests ran\b")
+NUMBERED = re.compile(r"^ *\d+\t")  # read_file's line numbers, pasted into an edit
 SKIP_DIRS = {"node_modules", "__pycache__", "venv", "dist", "build", "target"}  # besides hidden ones
 
 
@@ -679,6 +681,17 @@ class Tools:
                 old_text, new_text = fixed
                 count = before.count(old_text)
         if count == 0:
+            olds = [line for line in old_text.splitlines() if line.strip()]
+            if olds and all(NUMBERED.match(line) for line in olds):
+                # copied from read_file with its "   12\t" numbers (17 failed edits in purr bench)
+                plain = "\n".join(NUMBERED.sub("", line, count=1) for line in old_text.split("\n"))
+                if before.count(plain) == 1:
+                    news = [line for line in new_text.splitlines() if line.strip()]
+                    if news and all(NUMBERED.match(line) for line in news):
+                        new_text = "\n".join(NUMBERED.sub("", line, count=1) for line in new_text.split("\n"))
+                    old_text, count = plain, 1
+                    self.repairs.append("edit_file old_text had read_file's line numbers -> stripped")
+        if count == 0:
             loose = _loose_match(before, old_text, new_text)
             if not loose:
                 return self._not_found(path, before, old_text)
@@ -821,6 +834,12 @@ class Tools:
                 timeout = room
                 cut = f"(purr: timeout cut to {room}s: that is all the time left)\n"
         output, code = run_shell(command, self.root, timeout)
+        if ZERO_TESTS.search(output) or (re.search(r"\btests?\b|unittest|pytest", command)
+                                         and "No module named" in output):
+            right = checks.test_command(self.root)
+            ran = re.sub(r"^\s*cd\s+\S+\s*&&\s*", "", command).strip()
+            if right and ran != right:  # a guessed test command that found nothing
+                output += f"\n(purr: no tests ran there. This project's tests run with `{right}` from the project folder.)"
         for line in output.splitlines()[-4:]:
             self.view.note(line[:160])
         if code == -1 and output.startswith("timed out"):
