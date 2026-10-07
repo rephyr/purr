@@ -1842,7 +1842,10 @@ class Agent:
     def _outside_changes(self):
         """Files the model has seen that changed since, not by its own edits: you in your editor,
         /undo, a command. Their old reads go, they count as unread, and the model is told what
-        changed (a diff), so it doesn't edit against text that's gone or write over your change."""
+        changed (a diff), so it doesn't edit against text that's gone or write over your change.
+        Off (outside_changes = false), the old reads stay too: read_before_edit asks for no fresh one."""
+        if not self._on("outside_changes"):  # purr bench --chat's purr-nochat measures without it
+            return ""
         changed = self.tools.changed_behind() if not self.helper else []
         if not changed:
             return ""
@@ -2465,6 +2468,8 @@ class Agent:
     def _regression_note(self, command):
         """Tests that passed earlier in this chat fail now: the diff since they passed, once, so a small
         model looks at what it changed instead of at the test (or at a "stale cache")."""
+        if not self._on("regression_note"):  # likewise (purr-nochat)
+            return ""
         # only the same run that passed: a narrower run passing says nothing about another file's tests
         # (an old failure, a new TDD test), and outside code mode _green isn't kept (a TODO(you) stub fails on purpose)
         key = " ".join(command.split())
@@ -2870,8 +2875,8 @@ class Agent:
         return self.config[key] if key in self.config else self.limits.helpers != "full"
 
     def _on(self, key):
-        """A cheap check every model gets (proof_ledger, margin_check, job_watch) unless config.toml
-        turns it off."""
+        """A cheap check every model gets (proof_ledger, margin_check, job_watch, outside_changes,
+        regression_note) unless config.toml turns it off."""
         return self.config.get(key, True)
 
     def _run_tests(self, cmd, ask=True):

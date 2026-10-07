@@ -1,0 +1,10 @@
+{
+ "kind": "the user steers mid-turn",
+ "level": "easy",
+ "files_from": "cat-of-the-day",
+ "checks_from_task": true,
+ "turns": [
+  {"user": "Add cat_of_the_day(day=None) to cafe/cats.py. It returns one of the awake cats (a dict from CATS, never a sleepy one), always the same cat for the same date; day is a datetime.date and defaults to today. Add a last line to the receipt: \"cat of the day: <name> ♡\" (use today's cat). Write tests for it in tests/test_cat_of_the_day.py and run all the tests.",
+   "steer": {"at_step": 4, "text": "oh, one more thing: Pixel is moving to a new home next week, so she should never be the cat of the day."}}
+ ]
+}

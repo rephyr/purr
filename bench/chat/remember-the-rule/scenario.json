@@ -1,0 +1,12 @@
+{
+ "kind": "an early rule that matters later",
+ "level": "easy",
+ "files_from": "duration",
+ "turns": [
+  {"user": "Create duration.py with parse_duration(text) that turns things like \"1h 30m\", \"45s\", \"2h\" and \"1h5m10s\" into seconds (an int). Spaces are optional, units are h, m and s, each at most once. Empty or wrong input (like \"\", \"abc\", \"5x\", \"1h 1h\") raises ValueError. One rule for this whole project: every ValueError we raise has a message starting with \"duration: \" so the CLI can show it as is. Add test_duration.py and run it.",
+   "check": "turn1"},
+  {"user": "Add format_duration(seconds), the other way round: 5400 -> \"1h 30m\", 45 -> \"45s\", 3600 -> \"1h\", 0 -> \"0s\". Negative or non-int input raises ValueError.",
+   "check": "turn2"},
+  {"user": "Now days too, d, in both: \"1d 2h\" is 93600. And the units have to come biggest first, d h m s, so \"2h 1d\" is an error."}
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "kind": "a hand edit the model must keep",
+ "level": "hard",
+ "files_from": "rename",
+ "turns": [
+  {"user": "In shop/prices.py, give orders of 10 or more balls in total (all yarns together) 10% off in calc_total. Add a test for it and run the tests.",
+   "check": "turn1"},
+  {"before": [
+    {"edit": "shop/prices.py", "old": "\"cotton\": 4.0", "new": "\"cotton\": 4.5, \"alpaca\": 9.0", "keep": "\"cotton\": 4.5, \"alpaca\": 9.0"},
+    {"append": "tests/test_shop.py", "text": "\n\nclass AlpacaTest(unittest.TestCase):\n    def test_alpaca(self):\n        self.assertEqual(calc_total([(\"alpaca\", 2)]), 18.0)\n", "keep": "(\"alpaca\", 2)"}
+   ],
+   "user": "Now rename calc_total to order_total everywhere (the definition, every use and the tests) and run the tests."}
+ ]
+}

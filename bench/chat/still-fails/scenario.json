@@ -1,0 +1,12 @@
+{
+ "kind": "follow-up after a failing run",
+ "level": "easy",
+ "files_from": "cafe-discount",
+ "checks_from_task": true,
+ "turns": [
+  {"user": "Happy hour prices are wrong and a test fails. Find the cause and fix it, and run the tests.",
+   "check": "turn1"},
+  {"if_fails": "user",
+   "user": "it still fails for me, a tuna toastie at 16:30 is full price:\n```\n{output}\n```"}
+ ]
+}

@@ -1,0 +1,11 @@
+{
+ "kind": "/undo, then a different request",
+ "level": "easy",
+ "files_from": "slow-dedupe",
+ "turns": [
+  {"user": "In unique_photos, keep each picture's tags in the order they were first seen instead of sorting them. Update the docstring.",
+   "check": "turn1"},
+  {"before": [{"undo": true}],
+   "user": "Never mind. What I actually need: every picture unique_photos returns should also have \"paths\", the paths of all its copies in the order they came in. Add a test and run the tests."}
+ ]
+}

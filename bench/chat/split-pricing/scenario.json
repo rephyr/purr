@@ -1,0 +1,16 @@
+{
+ "kind": "a refactor across two turns",
+ "level": "hard",
+ "files_from": "cafe-discount",
+ "turns": [
+  {"user": "Move the happy hour rules out of cafe/menu.py into a new cafe/pricing.py: HAPPY_HOUR, HAPPY_HOUR_DISCOUNT and a function happy_hour_price(price, hour) that returns the price after any discount. menu.total uses it; nothing else changes.",
+   "check": "turn1"},
+  {"before": [
+    {"edit": "tests/test_menu.py",
+     "old": "        self.assertEqual(total([\"latte\", \"cat cookie\"], hour=15), 5.36)",
+     "new": "        self.assertEqual(total([\"latte\", \"cat cookie\"], hour=15), 5.36)\n\n    def test_happy_hour_ends_at_17(self):\n        self.assertEqual(total([\"latte\"], hour=17), 4.20)",
+     "keep": "test_happy_hour_ends_at_17"}
+   ],
+   "user": "Now the receipt: during happy hour show a line 'happy hour -20%' above the total, taking the percent from pricing.py (not hard-coded), and import the happy hour rules from pricing, not menu."}
+ ]
+}

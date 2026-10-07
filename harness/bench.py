@@ -9,6 +9,8 @@
     purr bench --runs 3                every task three times (models aren't the same twice)
     purr bench --vague --harness purr,purr+refine,opencode
                                        vague prompts: does refining them first help?
+    purr bench --chat -m gpt-oss-64k   chats instead (bench/chat/): several turns, with hand edits,
+                                       /undo and "it still fails" in between (harness/chatbench.py)
 
 Every run starts from a fresh copy of the task's files. When the model is done, the task's
 hidden tests are copied in and run, so the model never sees what it's graded on. Results go
@@ -41,6 +43,8 @@ from .tools import child_env
 
 TASKS_DIR = Path(__file__).resolve().parent.parent / "bench" / "tasks"
 BENCH_DIR = STATE_DIR / "bench"
+CHAT_CAP = 840   # seconds: the most a chat scenario (purr bench --chat), or one of its turns, may take
+CHAT_TURN = 420  # seconds: a chat turn's own default
 LEAKED_CALL = re.compile(r"<tool_call>|</tool_call>|<function=|<\|tool_call")
 CLAIM = re.compile(r"\b(fixed|done|pass(es|ed|ing)?|works|working|implemented|renamed|complete[d]?|"
                    r"success(ful(ly)?)?|all good)\b", re.I)
@@ -55,10 +59,9 @@ def load_tasks(names=None):
         if not (d / "task.json").exists() or (names and d.name not in names):
             continue
         spec = json.loads((d / "task.json").read_text())
-        files = list((d / "check").glob("test_*.py"))
-        hidden = sum(f.read_text().count("    def test_") for f in files)
+        hidden = count_tests(d / "check")
         # test_spec*.py: details only the clear prompt asks for; vague runs aren't graded on them
-        behaviour = sum(f.read_text().count("    def test_") for f in files if not f.name.startswith("test_spec"))
+        behaviour = count_tests(d / "check", skip_spec=True)
         tasks.append({"name": d.name, "dir": d, "expected": hidden, "expected_vague": behaviour, **spec})
     return tasks
 
@@ -100,15 +103,36 @@ def syntax_errors(python, work):
     return bad
 
 
+def count_tests(folders, skip_spec=False):
+    """The test methods in test_*.py files of a folder, or of a list of them (test_spec*.py left
+    out with skip_spec)."""
+    folders = folders if isinstance(folders, list) else [folders]
+    files = [f for d in folders for f in Path(d).glob("test_*.py")
+             if not (skip_spec and f.name.startswith("test_spec"))]
+    return sum(f.read_text().count("    def test_") for f in files)
+
+
 def grade(task, work):
     """Copy the hidden tests in and run them. Returns (passed, total, syntax errors)."""
+    # a chat scenario's come from more than one folder (chatbench); a vague request can't be
+    # graded on details it never mentioned
+    checks = task.get("check_dirs") or [task["dir"] / "check"]
+    return run_check(checks, work, task["expected"], skip_spec=task.get("is_vague", False))[:3]
+
+
+def run_check(check_dirs, work, total, skip_spec=False):
+    """Copy the tests in check_dirs (one folder, or a list: later ones over earlier ones) into
+    work/_bench_check and run them on the python3 the model's commands get (task_python):
+    (passed, total, syntax errors, the run's stderr). The folder keeps that name: checks import
+    from _bench_check.test_check."""
     python = task_python(work)
     syntax = syntax_errors(python, work)
     check = work / "_bench_check"
     shutil.rmtree(check, ignore_errors=True)
-    shutil.copytree(task["dir"] / "check", check)
+    for d in check_dirs if isinstance(check_dirs, list) else [check_dirs]:
+        shutil.copytree(d, check, dirs_exist_ok=True)
     (check / "__init__.py").touch()
-    if task.get("is_vague"):  # a vague request can't be graded on details it never mentioned
+    if skip_spec:
         for spec in check.glob("test_spec*.py"):
             spec.unlink()
     try:
@@ -117,14 +141,15 @@ def grade(task, work):
         out = r.stderr
     except subprocess.TimeoutExpired:
         out = ""
-    total = task["expected"]
-    ran = re.search(r"Ran (\d+) test", out)
-    if not ran or int(ran.group(1)) < total:  # it couldn't even import the code
-        return 0, total, syntax
-    bad = re.search(r"FAILED \((.*?)\)", out)
+    # the last of each: a check that runs the visible tests quotes that run's own "Ran 4 tests" and
+    # "FAILED (...)" in its failure message, above the real ones
+    ran = list(re.finditer(r"^Ran (\d+) tests? in", out, re.M))
+    if not ran or int(ran[-1].group(1)) < total:  # it couldn't even import the code
+        return 0, total, syntax, out
+    bad = re.search(r"^FAILED \((.*?)\)$", out[ran[-1].end():], re.M)
     # "FAILED (failures=1, errors=2, skipped=3)": skipped tests aren't wrong ones
     wrong = sum(int(n) for n in re.findall(r"(?:failures|errors)=(\d+)", bad.group(1))) if bad else 0
-    return max(0, total - wrong), total, syntax
+    return max(0, total - wrong), total, syntax, out
 
 
 TMPS = {Path("/tmp").resolve(), Path(tempfile.gettempdir()).resolve()}
@@ -211,7 +236,7 @@ class BenchView:
 
     def text(self, s):
         self.reply.append(s)
-        _live("text", s)
+        say_live("text", s)
 
     def end_reply(self):
         text = "".join(self.reply)
@@ -221,7 +246,7 @@ class BenchView:
         self.reply = []
 
     def tool_result(self, name, args, result):
-        _live("result", _short(result))
+        say_live("result", _short(result))
         self.r["tool_calls"] += 1
         where = outside(args, self.work, self.r.setdefault("scratch", []))
         if where == "outside":
@@ -244,13 +269,13 @@ class BenchView:
         return "y", ""  # benchmarks run with everything allowed, like opencode --auto
 
     def thinking(self, s):
-        _live("think", s)
+        say_live("think", s)
 
     def tool(self, line):
-        _live("tool", line)
+        say_live("tool", line)
 
     def note(self, s, kind="dim"):
-        _live("note", s)
+        say_live("note", s)
 
     def diff(self, path, before, after): pass
     def status(self, s): pass
@@ -279,13 +304,11 @@ def run_purr(config, model, task, work, log_dir, timeout, refine=False, final_ch
     except KeyError as e:
         r["error"] = e.args[0]
         return r
-    agent.tools.trust_all = True
     agent.time_limit = 0.9 * timeout  # like Terminal-Bench: purr hears its limit (less 10%) and gets reminders
     agent.set_one_shot()  # nobody answers questions during a bench run
-    agent.log_path = log_dir / "purr-session.json"
+    stopped = purr_setup(agent, log_dir)
     timer = threading.Timer(timeout, lambda: (r.__setitem__("timeout", True), setattr(agent, "stop_flag", True)))
     timer.start()
-    threading.Thread(target=lambda: STOP.wait() and setattr(agent, "stop_flag", True), daemon=True).start()
     start = time.monotonic()
     try:
         prompt = task["prompt"]
@@ -297,14 +320,43 @@ def run_purr(config, model, task, work, log_dir, timeout, refine=False, final_ch
         r["error"] = f"{type(e).__name__}: {e}"
     finally:
         timer.cancel()
+        stopped.set()
     r["seconds"] = round(time.monotonic() - start, 1)
-    s = getattr(agent, "turn_stats", {}) or {}
-    r["out_tokens"], r["calls"] = s.get("out", 0), s.get("calls", 0)
-    if s.get("providers"):
-        r["providers"] = s["providers"]  # which OpenRouter providers answered, and how often
-    r["in_tokens"], r["cached_in"] = s.get("in", 0), s.get("cached", 0)  # input sent, and how much was cached
-    r["model_seconds"] = round(s.get("model_s", 0.0), 1)
-    r["side_seconds"] = round(s.get("side_s", 0.0), 1)  # side calls: blind checks, the second reader, summaries
+    purr_record(r, agent, log_dir, [getattr(agent, "turn_stats", None) or {}])
+    return r
+
+
+def purr_setup(agent, log_dir):
+    """What every purr bench run does to its agent: everything allowed, its log kept, and STOP
+    heard. Returns the Event to set when the run is over (it ends the STOP watch, so a finished
+    run's agent and chat aren't held for the rest of the bench)."""
+    agent.tools.trust_all = True
+    agent.log_path = log_dir / "purr-session.json"
+    done = threading.Event()
+
+    def watch():
+        while not done.wait(0.5):
+            if STOP.is_set():  # again and again: a turn starting clears stop_flag
+                agent.stop_flag = True
+    threading.Thread(target=watch, daemon=True).start()
+    return done
+
+
+def purr_record(r, agent, log_dir, stats):
+    """A purr run's numbers into its row; stats: each turn's turn_stats (one, unless it's a chat)."""
+    r["out_tokens"] = sum(s.get("out", 0) for s in stats)
+    r["calls"] = sum(s.get("calls", 0) for s in stats)
+    providers = {}
+    for s in stats:
+        for name, n in (s.get("providers") or {}).items():
+            providers[name] = providers.get(name, 0) + n
+    if providers:
+        r["providers"] = providers  # which OpenRouter providers answered, and how often
+    r["in_tokens"] = sum(s.get("in", 0) for s in stats)  # input sent, and how much was cached
+    r["cached_in"] = sum(s.get("cached", 0) for s in stats)
+    r["model_seconds"] = round(sum(s.get("model_s", 0.0) for s in stats), 1)
+    # side calls: blind checks, the second reader, summaries
+    r["side_seconds"] = round(sum(s.get("side_s", 0.0) for s in stats), 1)
     r["cost"] = round(agent.session_cost, 5)
     r["repaired"] = len(agent.tools.repairs)  # slips purr fixed by itself (search -> grep, ...)
     r["caught"] = len(agent.tools.warnings)   # problems purr's code checks pointed out
@@ -315,7 +367,6 @@ def run_purr(config, model, task, work, log_dir, timeout, refine=False, final_ch
     r["leaked_calls"] = max(0, r["leaked_calls"] - rescued)
     if agent.tools.repairs:
         (log_dir / "purr-repairs.txt").write_text("\n".join(agent.tools.repairs) + "\n")
-    return r
 
 
 # ---- opencode ----
@@ -351,14 +402,14 @@ def watch_opencode(line):
         return
     kind, part = e.get("type"), e.get("part") or {}
     if kind == "reasoning":
-        _live("think", (part.get("text") or "") + "\n")
+        say_live("think", (part.get("text") or "") + "\n")
     elif kind == "text":
-        _live("text", (part.get("text") or "") + "\n")
+        say_live("text", (part.get("text") or "") + "\n")
     elif kind == "tool_use":
         state = part.get("state") or {}
         args = " ".join(str(v)[:100] for v in (state.get("input") or {}).values())
-        _live("tool", f"{part.get('tool', '?')} {args}")
-        _live("result", _short(str(state.get("output") or state.get("error") or "")))
+        say_live("tool", f"{part.get('tool', '?')} {args}")
+        say_live("result", _short(str(state.get("output") or state.get("error") or "")))
 
 
 def end_opencode_session(events):
@@ -545,7 +596,7 @@ def summarise(results):
     """Per model and harness: the totals for the report."""
     rows = {}
     for r in results:
-        if (r["error"] and not r["calls"]) or r.get("left_folder"):
+        if (r["error"] and not r["calls"]) or r.get("left_folder") or r.get("not_counted"):
             continue
         k = (r["model"], r["harness"])
         s = rows.setdefault(k, {"model": k[0], "harness": k[1], "runs": 0, "solved": 0, "passed": 0,
@@ -595,10 +646,13 @@ def table_rows(summary):
     return out
 
 
-def markdown(results, summary, tasks):
-    lines = [f"# purr bench, {datetime.date.today()}", "",
-             "Same tasks, same model, both harnesses with everything allowed. Hidden tests decide "
-             "if a task is solved. tok/s = tokens written / time the model spent answering (local models only). "
+NOTE_ONE_SHOT = "Same tasks, same model, both harnesses with everything allowed. Hidden tests decide if a task is solved."
+
+
+def markdown(results, summary, tasks, title="purr bench", note=NOTE_ONE_SHOT):
+    """report.md. The chat bench gives its own title and note (and adds its tables below)."""
+    lines = [f"# {title}, {datetime.date.today()}", "",
+             note + " tok/s = tokens written / time the model spent answering (local models only). "
              "repaired = model slips purr fixed by itself (a tool name from another harness, an edit "
              "aimed at the wrong file, ...); they don't count as errors.", "",
              "| " + " | ".join(COLUMNS) + " |", "|" + "---|" * len(COLUMNS)]
@@ -631,7 +685,7 @@ STOP = threading.Event()  # set it to cancel the run going on and stop after it
 live = None  # live(kind, text): what the run going on is doing right now (watch mode)
 
 
-def _live(kind, text):
+def say_live(kind, text):
     if live and text:
         live(kind, text)
 
@@ -686,19 +740,56 @@ def tool_version(name):
         return None
 
 
-def run_all(config, models, tasks, harnesses, runs, timeout, out_dir, events):
+def sandbox_for(name, fill):
+    """The model works alone in a private temp folder named like a real project: next to other
+    runs it could find their answers (an OpenCode run once read purr's solution from the folder
+    beside it). fill(work) puts the starting files in. Returns (sandbox, work, what /tmp held)."""
+    sandbox = Path(tempfile.mkdtemp(prefix="purr-bench-"))
+    tmp_before = {p for tmp in TMPS for p in tmp.iterdir()}
+    work = sandbox / name
+    fill(work)
+    return sandbox, work, tmp_before
+
+
+def tidy(r, sandbox, work, kept, run_dir, tmp_before):
+    """Keep what the run did in w/NN (linked from its run folder), then remove its sandbox and
+    what it made in /tmp."""
+    shutil.copytree(work, kept, symlinks=True)
+    (run_dir / "work").symlink_to(kept)
+    shutil.rmtree(sandbox, ignore_errors=True)
+    for p in map(Path, set(r.pop("scratch", [])) - set(map(str, tmp_before))):
+        if p.is_dir() and not p.is_symlink():  # only what this run made in /tmp
+            shutil.rmtree(p, ignore_errors=True)
+        elif p.exists() or p.is_symlink():
+            p.unlink()
+
+
+def run_all(config, models, tasks, harnesses, runs, timeout, out_dir, events, table=None, fill=None,
+            report=None, meta=None, after_turn=False):
     """Run everything, model by model. events(kind, info) hears about it: "warming", "warm",
-    "start", "done", "finished". Returns (results, summary)."""
+    "start", "done", "finished". Returns (results, summary). purr bench --chat runs its chats with
+    it too: its own harness table, fill(task, work) for the starting files, report(results,
+    summary, tasks) for report.md, more in meta.json, and after_turn (its harnesses take
+    after_turn=save, so a long chat is saved turn by turn)."""
     global live
     live = lambda kind, text: events("live", {"kind": kind, "text": text})  # noqa: E731
+    table, report = table or HARNESSES, report or markdown
+    fill = fill or (lambda task, work: shutil.copytree(task["dir"] / "files", work))
     total = len(models) * len(tasks) * len(harnesses) * runs
     from . import full_version
     (out_dir / "meta.json").write_text(json.dumps({  # what this run was, for --publish
         "purr": full_version(), "date": datetime.date.today().isoformat(), "models": models,
         "harnesses": harnesses, "tasks": [t["name"] for t in tasks], "vague": any(t.get("is_vague") for t in tasks),
         "runs": runs, "timeout": timeout, "opencode": tool_version("opencode") if "opencode" in harnesses else None,
-        "ollama": tool_version("ollama"), "opencode_config": "stock (only the model under test)"}, indent=1))
+        "ollama": tool_version("ollama"), "opencode_config": "stock (only the model under test)", **(meta or {})},
+        indent=1))
     results, n = [], 0
+
+    def save(going=None):  # the report too, so quitting (or a crash) never loses what's done
+        rows = results + ([going] if going else [])
+        (out_dir / "results.json").write_text(json.dumps(rows, indent=1, default=str))
+        (out_dir / "report.md").write_text(report(results, summarise(results), tasks))
+
     for model in models:  # model by model, so a local model only loads once
         if STOP.is_set():
             break
@@ -719,20 +810,15 @@ def run_all(config, models, tasks, harnesses, runs, timeout, out_dir, events):
                     n += 1
                     run_dir = out_dir / "runs" / f"{model}__{task['name']}__{harness}{f'__{run + 1}' if runs > 1 else ''}"
                     run_dir.mkdir(parents=True)
-                    # the model works alone in a private temp folder named like a real project: next
-                    # to other runs it could find their answers (an OpenCode run once read purr's
-                    # solution from the folder beside it). Its files are kept in w/NN afterwards.
-                    sandbox = Path(tempfile.mkdtemp(prefix="purr-bench-"))
-                    tmp_before = {p for tmp in TMPS for p in tmp.iterdir()}
-                    work = sandbox / task["name"]
-                    shutil.copytree(task["dir"] / "files", work)
+                    sandbox, work, tmp_before = sandbox_for(task["name"], lambda w: fill(task, w))
                     kept = out_dir / "w" / f"{n:02d}" / task["name"]
                     before = disturbed_by(config, model)
                     if before:
                         events("disturbed", {"model": model, "others": sorted(before)})
                     events("start", {"n": n, "total": total, "model": model, "task": task["name"], "harness": harness})
-                    _live("start", f"{model} · {task['name']} · {harness}")
-                    r = HARNESSES[harness](config, model, task, work, run_dir, timeout)
+                    say_live("start", f"{model} · {task['name']} · {harness}")
+                    extra = {"after_turn": save} if after_turn else {}
+                    r = table[harness](config, model, task, work, run_dir, timeout, **extra)
                     others = before | disturbed_by(config, model)
                     if others:  # its time and speed don't mean much: say so
                         r["disturbed"] = sorted(others)
@@ -742,29 +828,20 @@ def run_all(config, models, tasks, harnesses, runs, timeout, out_dir, events):
                         r = finish(r, task, work, config["models"][model].get("provider") in LOCAL)
                     else:
                         r["hallucinations"] = 0
-                    shutil.copytree(work, kept, symlinks=True)  # keep what it did, then tidy up
-                    (run_dir / "work").symlink_to(kept)
-                    shutil.rmtree(sandbox, ignore_errors=True)
-                    for p in map(Path, set(r.pop("scratch", [])) - set(map(str, tmp_before))):
-                        if p.is_dir() and not p.is_symlink():  # only what this run made in /tmp
-                            shutil.rmtree(p, ignore_errors=True)
-                        elif p.exists() or p.is_symlink():
-                            p.unlink()
+                    tidy(r, sandbox, work, kept, run_dir, tmp_before)
                     r["run"] = run + 1
                     results.append(r)
                     events("done", {"n": n, "total": total, "result": r})
-                    (out_dir / "results.json").write_text(json.dumps(results, indent=1))
-                    # the report too, so quitting (or a crash) never loses what's done
-                    (out_dir / "report.md").write_text(markdown(results, summarise(results), tasks))
+                    save()
     summary = summarise(results)
-    report = out_dir / "report.md"
-    report.write_text(markdown(results, summary, tasks))
-    events("finished", {"results": results, "summary": summary, "report": report})
+    save()
+    events("finished", {"results": results, "summary": summary, "report": out_dir / "report.md"})
     return results, summary
 
 
-def printer(watch=False):
-    """events() for the plain text mode. With watch, the runs' live stream is printed too."""
+def printer(watch=False, line=line, working="working…", width=15):
+    """events() for the plain text mode. With watch, the runs' live stream is printed too. The chat
+    bench passes its own line(r) for a finished run, its word for one going on, and a wider name."""
     label = {"live": None}
     looks = {"think": ui.DIM + "\033[3m", "text": ui.RESET, "tool": ui.LILAC, "result": ui.DIM,
              "note": ui.DIM, "start": ui.PINK}
@@ -790,8 +867,8 @@ def printer(watch=False):
             ui.out("\033[2K" + f"  {ui.PINK}♡ {info['model']}{ui.RESET}  {ui.DIM}"
                    + (f"loaded in {s:.0f}s (not counted)" if s is not None else "couldn't warm it up") + ui.RESET)
         elif kind == "start":
-            label["now"] = f"    {ui.DIM}[{info['n']}/{info['total']}]{ui.RESET} {info['task']:<15} {info['harness']:<12}"
-            ui.out(label["now"] + f"{ui.DIM}working…{ui.RESET}", end="\r")
+            label["now"] = f"    {ui.DIM}[{info['n']}/{info['total']}]{ui.RESET} {info['task']:<{width}} {info['harness']:<12}"
+            ui.out(label["now"] + f"{ui.DIM}{working}{ui.RESET}", end="\r")
         elif kind == "done":
             ui.out("\033[2K" + label["now"] + line(info["result"]))
         elif kind == "unreachable":
@@ -809,9 +886,12 @@ def parse(argv):
     ap = argparse.ArgumentParser(prog="purr bench", description="benchmark purr against OpenCode")
     ap.add_argument("-m", "--models", help="comma-separated model names (from config.toml)")
     ap.add_argument("-t", "--tasks", help="comma-separated task names (default: all)")
-    ap.add_argument("--harness", default="purr,opencode", help="purr, opencode or both (default)")
+    ap.add_argument("--harness", help="purr, opencode or both (default); with --chat purr, purr-nochat")
     ap.add_argument("--runs", type=int, default=1, help="how often to run every task")
-    ap.add_argument("--timeout", type=int, default=600, help="seconds per run (default 600)")
+    ap.add_argument("--timeout", type=int, help="seconds per run (default 600); with --chat per scenario (840)")
+    ap.add_argument("--chat", action="store_true",
+                    help="chat scenarios instead: several turns, hand edits and /undo between them (bench/chat/)")
+    ap.add_argument("--turn-timeout", type=int, help=f"with --chat: seconds per turn (default {CHAT_TURN})")
     ap.add_argument("--vague", action="store_true",
                     help="use the tasks' short, vague prompts (try with --harness purr,purr+refine,opencode)")
     ap.add_argument("--level", choices=["easy", "hard"], help="only the easy or only the hard tasks")
@@ -819,7 +899,7 @@ def parse(argv):
                     help="show what each run is doing and thinking, live (in the window: w toggles it)")
     ap.add_argument("--plain", action="store_true", help="print lines instead of the full-screen window")
     ap.add_argument("--publish", nargs="?", const="latest", metavar="FOLDER",
-                    help="file a finished run (default: the latest) under benchmarks/purr-bench/ in the repo")
+                    help="file a finished run (default: the latest, chat or not) under benchmarks/purr-bench/ in the repo")
     ap.add_argument("--real", nargs="?", const="pick", choices=["pick", "terminal-bench", "deepswe"],
                     help="the real benchmarks instead (Terminal-Bench, DeepSWE), the way other harnesses are scored")
     ap.add_argument("--size", choices=["quick", "one", "full"], help="with --real: the quick 20, every task once, or x3")
@@ -827,7 +907,20 @@ def parse(argv):
     ap.add_argument("--edge-cases", action="store_true", help="with --real: purr's extra edge-case check on")
     ap.add_argument("--you", action="store_true", help="do the tasks yourself, for fun (your row joins the latest results)")
     ap.add_argument("--new", action="store_true", help="with --you: a results folder of your own")
-    return ap.parse_args(argv)
+    args = ap.parse_args(argv)
+    if not args.chat and args.turn_timeout is not None:
+        ap.error("--turn-timeout is for --chat")
+    if args.chat and args.vague:  # a chat's turns are worded as a user would: there's no vague version
+        ap.error("--vague and --chat don't go together")
+    if args.harness is None:  # OpenCode has no chat run yet
+        args.harness = "purr" if args.chat else "purr,opencode"
+    if args.timeout is None:
+        args.timeout = CHAT_CAP if args.chat else 600
+    if args.chat:
+        args.turn_timeout = args.turn_timeout or CHAT_TURN
+        if max(args.timeout, args.turn_timeout) > CHAT_CAP:
+            ap.error(f"--timeout and --turn-timeout with --chat: at most {CHAT_CAP // 60} minutes ({CHAT_CAP})")
+    return args
 
 
 def pick_tasks(names=None, vague=False, level=None):
@@ -836,8 +929,8 @@ def pick_tasks(names=None, vague=False, level=None):
             for t in tasks if t.get("vague")] if vague else tasks
 
 
-def new_out_dir():
-    out = BENCH_DIR / datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+def new_out_dir(suffix=""):
+    out = BENCH_DIR / (datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S") + suffix)
     out.mkdir(parents=True)
     return out
 
@@ -898,7 +991,8 @@ def _run_section(p, heading):
     many = len(models) > 1
     prompts = "vague" if m.get("vague") else "full"
     runs = m.get("runs", 1)
-    title = f"{m['date']} · {', '.join(models) or 'people'} · {len(m['tasks'])} tasks, {prompts} prompts"
+    what = f"{len(m['tasks'])} scenarios, chat" if m.get("chat") else f"{len(m['tasks'])} tasks, {prompts} prompts"
+    title = f"{m['date']} · {', '.join(models) or 'people'} · {what}"
     ranked = sorted(summary, key=lambda s: -s["solved"] / max(s["runs"], 1))
     unit = "tasks" if runs == 1 else "runs"
     headline = " · ".join(f"{'**' + _label(s, many) + '**' if i == 0 else _label(s, many)} solved "
@@ -1012,6 +1106,9 @@ def main(argv, config, window=False):
         return play(args)
     if args.real:
         return real(config, args, window and not args.plain)
+    if args.chat:  # plain only for now (--watch works): the window comes later
+        from .chatbench import main as chat
+        return chat(args, config)
     if window and not args.plain:
         from tui.bench_app import BenchApp
         if BenchApp(config, args).run() == "real":  # r on its setup screen

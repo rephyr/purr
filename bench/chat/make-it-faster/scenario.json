@@ -1,0 +1,12 @@
+{
+ "kind": "a vague follow-up",
+ "level": "hard",
+ "files_from": "slow-dedupe",
+ "turns": [
+  {"user": "Add a min_copies parameter to unique_photos (default 1): only pictures with at least that many copies are returned, in the same order as now. Add a test and run the tests.",
+   "check": "turn1"},
+  {"user": "make it faster"},
+  {"if_fails": "user",
+   "user": "still slow on my photos: {output}"}
+ ]
+}
