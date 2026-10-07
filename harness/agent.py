@@ -1036,7 +1036,7 @@ class Agent:
         self.session_out = 0
         self.session_in = 0      # prompt tokens sent, and how many of them were cached
         self.session_cached = 0
-        self.last_usage = None
+        self.last_usage = self._main_usage = None
         self.title = ""
         stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
         self.log_path = None if self.helper or self.private else LOG_DIR / f"{stamp}.json"  # private: never saved
@@ -1072,7 +1072,7 @@ class Agent:
         self.session_cost = data.get("cost", 0.0)
         self.session_out = data.get("out", 0)
         self.session_in, self.session_cached = data.get("in", 0), data.get("cached", 0)
-        self.last_usage = None
+        self.last_usage = self._main_usage = None
         self.log_path = Path(path)
 
     # ---- one model call ----
@@ -1305,6 +1305,14 @@ class Agent:
         return cost
 
     def context_used(self):
+        main = getattr(self, "_main_usage", None)
+        if main and main[1] <= len(self.messages) and (
+                "prompt_tokens_details" in main[0] or self.model.get("provider") not in LOCAL):
+            # the server's own count for the chat as it was sent, plus a guess for what came after.
+            # Guessing it all (JSON characters / 4: escaped code counts double) said 23k where Ollama
+            # counted 20k, and a 32k model's chat was summarised early (Qwen3-Coder lost its work)
+            usage, sent = main  # the reply itself (with its thinking, where it goes back) is in the guess
+            return usage["prompt_tokens"] + self._guess_tokens(self.messages[sent:], base=0)
         used = 0
         if self.last_usage:
             used = self.last_usage.get("prompt_tokens", 0)
@@ -1313,13 +1321,16 @@ class Agent:
                 # dropped, and its text is in the guess below (counting every thinking token as
                 # context made a 64k model prune and compact far too early)
                 used += self.last_usage.get("completion_tokens", 0)
-        # Ollama only counts the tokens it didn't have cached, so also guess (~4 characters a token)
-        sent = self._for_provider(self.messages) if getattr(self, "provider", None) else self.messages
+        # older Ollamas only count the tokens they didn't have cached, so also guess
+        return max(used, self._guess_tokens(self.messages))
+
+    def _guess_tokens(self, messages, base=1500):
+        """About how many tokens these messages are when sent (~4 characters a token)."""
+        sent = self._for_provider(messages) if getattr(self, "provider", None) else messages
         text = json.dumps(sent)
         images = text.count('"image_url"')
         text = re.sub(r'data:image/[^"]+', "", text)  # an image costs ~1k tokens, not its base64
-        guess = len(text) // 4 + 1500 + 1000 * images  # what's sent: old thinking is trimmed off
-        return max(used, guess)
+        return len(text) // 4 + base + 1000 * images  # what's sent: old thinking is trimmed off
 
     # ---- one turn: your message -> as many model calls + tools as it takes ----
 
@@ -1787,6 +1798,8 @@ class Agent:
         """One model call into the session's and the turn's numbers. Returns its price."""
         cost = self._count(reply["usage"])
         usage = reply["usage"] or {}
+        if usage.get("prompt_tokens"):
+            self._main_usage = (usage, len(self.messages))  # what the chat so far came to (context_used)
         s = self.turn_stats
         s["out"] += usage.get("completion_tokens", 0)
         s["calls"] += 1
@@ -2596,7 +2609,7 @@ class Agent:
                                else "run it again if you need it]"))
             freed += len(content) - len(m["content"])
         if freed:
-            self.last_usage = None  # the old count is stale; use the fresh size guess
+            self.last_usage = self._main_usage = None  # the old count is stale; use the fresh size guess
             self._repeats = {}  # a call whose output was just removed may well be needed again
             self.view.note(f"trimmed old tool output to save room ({ui.short(freed)} characters)", "info")
         return freed
@@ -2671,7 +2684,7 @@ class Agent:
         else:
             self.messages = [self.messages[0], {"role": "user", "content": head},
                              {"role": "assistant", "content": "Got it, I have the summary. What next?"}]
-        self.last_usage = None
+        self.last_usage = self._main_usage = None
         after = self.context_used()
         self.view.note(f"compacted: {ui.short(before)} → {ui.short(after)} tokens", "info")
         self.save_log()
