@@ -178,6 +178,10 @@ CUT_ACT = """(purr: your reply ran out of room again ({n} times now) and nothing
 working it all out in your head: write the simplest first version to the file now, even if it isn't \
 right yet, run it, and improve it from what the results show.)"""
 
+LOOP_NUDGE = """(purr: your reply got stuck repeating «{said}» and was cut off, so nothing in it happened. \
+Don't think it all through again: take the next step now with a tool call (read, edit or run), and keep \
+your reply short.)"""
+
 EMPTY_NUDGE = """(purr: your reply was empty. Look at the last results you got: if anything looks \
 wrong, fix it now; if everything is done, give a short summary of what you changed.)"""
 

@@ -28,7 +28,7 @@ from .jobs import Jobs
 from .prompts import (  # noqa: F401 - the words purr says; some only re-exported for others
     SYSTEM, ASK_TOOLS, LEARN, LEARN_NUDGE, LEARN_SHORTEN, PAIR,
     PAIR_HAND_BACK, CHAT, CREATE, PLAN, TICKET_WORK, TIME_INTRO, PILOT,
-    TIME_NOTES, CUT_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK,
+    TIME_NOTES, CUT_NUDGE, LOOP_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK,
     ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
     ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT, GAP_NUDGE, LEDGER_NOTE,
@@ -296,6 +296,18 @@ def call_from_json(text):
 
 LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file does
 ROUTINE_TOOLS = (*LOOKS, "outline", "find_symbol", "todo")  # steps routine_effort may think less after
+
+
+def repeating(text, probe=60, times=8):
+    """The bit a reply keeps repeating ("Wait, I'll just write it." x 500), or None: the stream's
+    last `probe` characters turn up `times` times or more near its end."""
+    tail = text[-4000:]
+    if len(tail) < probe * times:
+        return None
+    end = tail[-probe:]
+    if not end.strip() or tail.count(end) < times:
+        return None
+    return " ".join(end.split())
 
 
 def _new_stats():
@@ -1237,15 +1249,38 @@ class Agent:
         return True
 
     def _call(self, messages=None, tools=True, quiet=False, hard=False, think=True):
-        on_text = (lambda s: None) if quiet else self.view.text
-        on_think = (lambda s: None) if quiet else self.view.thinking
+        show_text = (lambda s: None) if quiet else self.view.text
+        show_think = (lambda s: None) if quiet else self.view.thinking
+        said = []  # everything this call has streamed, for the loop breaker
+        looping = []
+
+        def watch(show):
+            def seen(piece):
+                show(piece)
+                said.append(piece)
+                if len(said) % 50 == 0 and not looping:
+                    snippet = repeating("".join(said[-400:]))
+                    if snippet:
+                        looping.append(snippet)
+            return seen
+        on_text, on_think = watch(show_text), watch(show_think)
         attempt = 0
         self._refused = 0  # 400s that made the free router switch, this call
         while True:
             hard_now = hard or (messages is None and getattr(self, "_think_hard", False))
             body = self._body(messages, tools, hard_now, think)  # again after a switch: another model, id and hosts
             try:
-                reply = stream_chat(self.provider["base_url"], self.key, body, on_text, on_think, self.stopping)
+                try:
+                    reply = stream_chat(self.provider["base_url"], self.key, body, on_text, on_think,
+                                        lambda: self.stopping() or bool(looping))
+                except Stopped:
+                    if not looping or self.stopping():
+                        raise
+                    # stuck saying the same thing over and over (Gemma-4-12B: "Wait, I'll just write
+                    # it." for 30k tokens, eight minutes): cut it off and say so (turn() nudges it on)
+                    reply = {"text": "", "reasoning": "", "tool_calls": [], "usage": None, "finish": "loop",
+                             "loop": looping[0], "gen_seconds": 0.0, "call_seconds": 0.0}
+                    self.tools.repairs.append("reply stuck repeating itself -> cut off")
                 if messages is not None and getattr(self, "turn_stats", None):
                     self.turn_stats["side_s"] += reply.get("call_seconds", 0.0)  # checks, reviews, summaries
                 return reply
@@ -1351,6 +1386,7 @@ class Agent:
         todo_only = 0  # steps in a row that did nothing but update the task list
         empty = 0      # empty answers nudged this turn
         cut = 0        # replies cut off at the output limit, nudged this turn
+        loops = 0      # replies cut off for repeating themselves, nudged this turn
         cap = self._step_cap()
         try:
             while True:
@@ -1402,6 +1438,17 @@ class Agent:
 
                 self.messages.append(self._assistant_message(reply))
 
+                if reply["finish"] == "loop" and loops < 3:
+                    loops += 1
+                    self.view.note("the model got stuck repeating itself: purr cut it off", "warn")
+                    if re.search(r"<\|\w+\|?>|<\w+\|>", reply["loop"]) and loops == 1:
+                        # its own control tokens as text, over and over: the chat template is off
+                        self.view.note(f"{self.model_name} writes its own control tokens as text "
+                                       f"({reply['loop'][:40]}): its chat template looks broken on this "
+                                       "server; another build of the model (or a newer Ollama) may fix it", "error")
+                    self.messages[-1] = {"role": "assistant", "content": "(cut off: I kept repeating myself)"}
+                    self.messages.append({"role": "user", "content": LOOP_NUDGE.format(said=reply["loop"])})
+                    continue
                 if reply["finish"] == "length":
                     self.view.note("(the reply hit the output limit and was cut off)", "error")
                     if not reply["tool_calls"] and cut < (CUT_MAX if self.one_shot else 2):

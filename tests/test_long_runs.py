@@ -115,3 +115,58 @@ class OneShotTest(unittest.TestCase):
         with mock.patch.object(Agent, "turn", lambda agent, text: seen.append(agent.one_shot)):
             bench.run_purr(CONFIG, "small", task, work, Path(tempfile.mkdtemp()), 600)
         self.assertEqual(seen, [True])
+
+
+class LoopBreakerTest(unittest.TestCase):
+    """Gemma-4-12B thought "Wait, I'll just write it." for 30k tokens (eight minutes) before the
+    context ran out. purr cuts a reply that keeps repeating itself and nudges the model on."""
+
+    def test_what_counts_as_repeating(self):
+        from harness.agent import repeating
+        self.assertIn("Wait, I'll just write it.", repeating("thinking...\n" + "   Wait, I'll just write it.\n\n" * 200))
+        self.assertIsNotNone(repeating('- "sentence": "The boy. He is a. Student." ' * 120))
+        prose = " ".join(f"step {i}: check the cache, then the file number {i * 7}." for i in range(300))
+        self.assertIsNone(repeating(prose))
+        self.assertIsNone(repeating("short " * 5))
+
+    def test_a_looping_reply_is_cut_and_the_turn_goes_on(self):
+        from tests.test_limits import agent, reply
+        from harness.api import Stopped
+        a = agent()
+        calls = {"n": 0}
+
+        def fake(url, key, body, on_text, on_think, should_stop):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                for _ in range(2000):
+                    on_think("Wait, I'll just write it.\n")
+                    if should_stop():
+                        raise Stopped(None)
+                self.fail("never cut off")
+            return reply("Done: nothing to change.")
+        with mock.patch.object(agent_module, "stream_chat", fake):
+            a.turn("fix it")
+        self.assertEqual(calls["n"], 2)
+        self.assertIn("reply stuck repeating itself -> cut off", a.tools.repairs)
+        nudge = [m["content"] for m in a.messages if m["role"] == "user" and "stuck repeating" in m["content"]]
+        self.assertTrue(nudge and "Wait, I'll just write it." in nudge[0])
+
+
+class BrokenTemplateTest(unittest.TestCase):
+    def test_control_tokens_on_repeat_point_at_the_template(self):
+        from tests.test_limits import agent, reply
+        from harness.api import Stopped
+        a = agent()
+        calls = {"n": 0}
+
+        def fake(url, key, body, on_text, on_think, should_stop):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                for _ in range(2000):
+                    on_text("<|channel>thought ")
+                    if should_stop():
+                        raise Stopped(None)
+            return reply("ok")
+        with mock.patch.object(agent_module, "stream_chat", fake):
+            a.turn("hi")
+        self.assertTrue(any("chat template looks broken" in n for n in a.view.notes))
