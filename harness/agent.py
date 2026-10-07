@@ -572,14 +572,15 @@ def provider_key(provider):
 def opencode_key(integration):
     """A key you saved with `opencode auth login`, so it doesn't have to live in ~/.zshrc too. OpenCode
     is asked once per run, and only if it's installed: with no key it took up to 20 s a provider,
-    and purr asks about ~30 of them on first start."""
+    and purr asks about ~30 of them on first start. OpenCode 2 starting cold takes ~5 s before it
+    answers (warm: 0.1 s), so it gets 15: at 5 the keys went missing and fair.sh got a 401."""
     if None not in _OPENCODE_KEYS:  # asked already (None marks it)
         _OPENCODE_KEYS[None] = True
         try:
             data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "opencode"
             used = any((data / f).exists() for f in ("auth.json", "opencode.db"))  # v1, v2
             out = subprocess.run(["opencode", "auth", "export"], capture_output=True, text=True,
-                                 timeout=5).stdout if used and shutil.which("opencode") else "[]"
+                                 timeout=15).stdout if used and shutil.which("opencode") else "[]"
             creds = json.loads(out)
         except (OSError, subprocess.TimeoutExpired, ValueError):
             creds = []
