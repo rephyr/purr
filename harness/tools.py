@@ -312,6 +312,7 @@ class Tools:
         self.rewrite_ok = set()  # (path, content hash) rewrites the model insisted on
         self.read_before_edit = True  # edits only on files read this session
         self.seen = set()        # files read (or written) so far
+        self.known = {}          # those files' text as purr last read or wrote it (outside changes)
         self.limits = limits or Limits.for_model({})
         self.step = 0         # tool calls so far: spill files and stale marks say "as of step N"
         self.last_spill = None  # where the last call's whole output went, if it was cut
@@ -543,6 +544,25 @@ class Tools:
             return content
         self.repairs.append("write_file content ended with a stray quote -> removed")
         return fixed
+    def _saw(self, p, text):
+        """Remember a file as the model last saw it, to notice when it changes behind its back."""
+        self.known[p.resolve()] = text if len(text) <= 200_000 else None
+
+    def changed_behind(self):
+        """Files the model read or wrote that changed since, not by its own edits (your editor, /undo,
+        a command): [(path, text it saw, text now or None if gone)]. They count as unread again."""
+        out = []
+        for p, saw in list(self.known.items()):
+            try:
+                now = p.read_text(errors="replace") if p.exists() else None
+            except OSError:
+                continue
+            if saw is None or now == saw:
+                continue
+            del self.known[p]
+            self.seen.discard(p)
+            out.append((p, saw, now))
+        return out
 
     def _compiles(self, p, text):
         """Note text as p's last version that compiles (Python files only)."""
@@ -602,8 +622,10 @@ class Tools:
         p = self._path(path)
         if not p.is_file():
             return self._no_such_file(path)
-        lines = p.read_text(errors="replace").splitlines()
+        text = p.read_text(errors="replace")
+        lines = text.splitlines()
         self.seen.add(p.resolve())
+        self._saw(p, text)
         offset = max(1, int(offset))
         limit = self.limits.read_lines if limit is None else int(limit)
         room = self.limits.tool_output - 200  # whole lines only: clip() would cut out the middle
@@ -738,6 +760,7 @@ class Tools:
         self._remember(p)
         p.write_text(after)
         self._compiles(p, after)
+        self._saw(p, after)
         window = edit_window(after, before, self.limits.edit_window) if self.limits.edit_window else ""
         return (f"edited {path} ({count if replace_all else 1} change)" + window
                 + self._check_code(path, before, after))
@@ -803,6 +826,7 @@ class Tools:
         p.write_text(content)
         self._compiles(p, content)
         self.seen.add(p.resolve())  # it knows what it just wrote
+        self._saw(p, content)
         window = edit_window(content, before, self.limits.edit_window) if self.limits.edit_window and before else ""
         return f"wrote {path} ({len(content.splitlines())} lines)" + window + self._check_code(path, before, content)
 

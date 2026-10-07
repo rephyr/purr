@@ -154,6 +154,7 @@ NAMED_FILE = re.compile(r"(?<![\w/.-])(?:[\w.-]+/)*[\w-]+\.(?:py|js|ts|jsx|tsx|g
                         r"yaml|yml|txt|csv|sh|html|css)\b")
 REMOVED_SHOWN = 6  # deleted lines the final check quotes
 COMMENT_LINE = re.compile(r"\s*(#|//|--|/\*|\*|\"\"\"|''')")
+OUTSIDE_DIFF_CHARS = 4000  # of the diff showing files that changed behind the model's back
 ASKS_KEPT = 3  # the chat's latest requests a checkpoint quotes
 REPEAT_NUDGE = 2  # same tool call this many times: tell the model to stop repeating
 PRUNE_TO = 0.15  # trimming old output goes this far under prune_at (a share of the context)
@@ -1644,10 +1645,37 @@ class Agent:
         earlier = "\n".join("- " + _ends(a, 500, 200) for a in asks[:-1])
         return f"The user asked earlier:\n{earlier}\nand now: {_ends(asks[-1], 1500, 600)}"
 
+    def _outside_changes(self):
+        """Files the model has seen that changed since, not by its own edits: you in your editor,
+        /undo, a command. Their old reads go, they count as unread, and the model is told what
+        changed (a diff), so it doesn't edit against text that's gone or write over your change."""
+        changed = self.tools.changed_behind() if not self.helper else []
+        if not changed:
+            return ""
+        names, diffs, room = [], [], OUTSIDE_DIFF_CHARS
+        for p, saw, now in changed:
+            name = os.path.relpath(p, self.root) if self.root in p.parents else str(p)
+            names.append(name + (" (deleted)" if now is None else ""))
+            self._mark_stale(str(p), "the file changed after it, not by your edits (the user, /undo or a "
+                                     "command); read_file shows it as it is now")
+            if now is not None and self.mode != "pair":  # pair mode shows the user's changes already
+                diff = "".join(difflib.unified_diff(saw.splitlines(True), now.splitlines(True),
+                                                    f"a/{name}", f"b/{name}", n=1))
+                if diff and len(diff) <= room:
+                    diffs.append(diff if diff.endswith("\n") else diff + "\n")
+                    room -= len(diff)
+        note = (f"\n\n(purr: since you last saw them, these files changed, not by your edits (the user, /undo "
+                f"or a command): {', '.join(names)}. Read them again before you edit them, and keep the changes "
+                "you didn't make.)")
+        if diffs:
+            note += "\n```diff\n" + "".join(diffs) + "```"
+        self.tools.repairs.append(f"files changed outside the model's edits -> told ({len(names)})")
+        return note
+
     def _turn_content(self, text):
         """Your message as the model gets it: @files attached, your own edits (pair mode), the
         TODO(you)s still open (learn mode), the time it has (with a time limit)."""
-        content = self.expand(text)
+        content = self.expand(text) + self._outside_changes()
         if self.mode == "pair" and not self.helper:
             yours = self.pair_changes()
             if yours:
@@ -2570,7 +2598,8 @@ class Agent:
                                       "content": "cancelled: the user stopped it"})
             raise
 
-    def _mark_stale(self, path):
+    def _mark_stale(self, path, why="you changed the file after it. Your change's result shows the new lines; "
+                                     "read_file shows the file as it is now"):
         """After an edit (small models): earlier read_file results of that file show the old text,
         which a small model then edits against. Replace them with a short note."""
         if not path:
@@ -2585,8 +2614,7 @@ class Agent:
                 continue
             read = _args(fn.get("arguments")).get("path")
             if read and (self.root / str(read)).resolve() == target:
-                m["content"] = (f"{EARLIER_READ} {path}, taken out: you changed the file after it. Your change's "
-                                "result shows the new lines; read_file shows the file as it is now]")
+                m["content"] = f"{EARLIER_READ} {path}, taken out: {why}]"
 
     def _look_in_parallel(self, calls):
         """When a reply asks for several read-only tools (read_file, grep, list_files, fetch_url),
