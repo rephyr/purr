@@ -275,6 +275,21 @@ def _loose_match(text, old, new):
     ending = "\n" if real_text.endswith("\n") else ""
     return real_text, "\n".join(fixed) + ending
 
+def _unnumbered(text):
+    """text without read_file's line numbers: "   12\t" prefixes go, and a line that is only a number at
+    either end goes (an empty line, copied with its number). Unchanged when it has neither."""
+    lines = text.split("\n")
+    numbered = sum(1 for line in lines if NUMBERED.match(line))
+    bare = [i for i in (0, len(lines) - 1) if lines and re.fullmatch(r" *\d+ *", lines[i])]
+    if not numbered and not bare:
+        return text
+    lines = [NUMBERED.sub("", line, count=1) for line in lines]
+    for i in sorted(set(bare), reverse=True):
+        if len(lines) > 1:
+            del lines[i]
+    return "\n".join(lines)
+
+
 def _indent_map(model_lines, real_lines):
     """{model's indent: the file's} for lines that match ignoring indents; None if they disagree."""
     imap = {}
@@ -508,6 +523,26 @@ class Tools:
     def begin_turn(self):
         self.undo_stack.append({})
 
+    def _stray_quote(self, path, content):
+        """A Python file written with one stray quote at its very end (gpt-oss: ...return total\\n" ), which
+        doesn't compile while the text without it does: the quote goes. The model couldn't edit a lone \"
+        away (it matches everywhere)."""
+        tail = content.rstrip()
+        if not str(path).endswith(".py") or not tail.endswith(('"', "'")):
+            return content
+        try:
+            compile(content, str(path), "exec")
+            return content
+        except (SyntaxError, ValueError):
+            pass
+        fixed = tail[:-1].rstrip() + "\n"
+        try:
+            compile(fixed, str(path), "exec")
+        except (SyntaxError, ValueError):
+            return content
+        self.repairs.append("write_file content ended with a stray quote -> removed")
+        return fixed
+
     def _compiles(self, p, text):
         """Note text as p's last version that compiles (Python files only)."""
         if p.suffix == ".py" and text is not None:
@@ -681,16 +716,12 @@ class Tools:
                 old_text, new_text = fixed
                 count = before.count(old_text)
         if count == 0:
-            olds = [line for line in old_text.splitlines() if line.strip()]
-            if olds and all(NUMBERED.match(line) for line in olds):
-                # copied from read_file with its "   12\t" numbers (17 failed edits in purr bench)
-                plain = "\n".join(NUMBERED.sub("", line, count=1) for line in old_text.split("\n"))
-                if before.count(plain) == 1:
-                    news = [line for line in new_text.splitlines() if line.strip()]
-                    if news and all(NUMBERED.match(line) for line in news):
-                        new_text = "\n".join(NUMBERED.sub("", line, count=1) for line in new_text.split("\n"))
-                    old_text, count = plain, 1
-                    self.repairs.append("edit_file old_text had read_file's line numbers -> stripped")
+            # copied from read_file with its "   12\t" numbers (17 failed edits in purr bench), or with a
+            # bare "    12" line for an empty one (gpt-oss)
+            plain = _unnumbered(old_text)
+            if plain != old_text and before.count(plain) == 1:
+                old_text, new_text, count = plain, _unnumbered(new_text), 1
+                self.repairs.append("edit_file old_text had read_file's line numbers -> stripped")
         if count == 0:
             loose = _loose_match(before, old_text, new_text)
             if not loose:
@@ -758,6 +789,7 @@ class Tools:
             self.warnings.append(f"{path}: overwrite before reading refused")
             return f"error: {path} already exists: read it first (read_file) before replacing it."
         before = p.read_text() if p.exists() else ""
+        content = self._stray_quote(path, content)
         stop = self._suspicious_rewrite(path, before, content)
         if stop:
             return stop

@@ -148,3 +148,25 @@ class RemovedLinesTest(unittest.TestCase):
         check = next(u for u in users(a) if "before you finish" in u)
         self.assertIn('deleted these lines that were there before: `"sword": {"plank": 2},`', check)
         self.assertNotIn("return 1", check)  # rewritten, not deleted
+
+
+class GptOssEditSlipsTest(unittest.TestCase):
+    def setUp(self):
+        self.a = agent()
+        self.a.tools.trust_all = True
+
+    def test_a_bare_line_number_for_an_empty_line_is_taken_out(self):
+        Path(self.a.root, "cats.py").write_text("CATS = []\n\n\ndef awake():\n    return CATS\n")
+        self.a.tools.seen.add(Path(self.a.root, "cats.py").resolve())
+        out = self.a.tools.call("edit_file", json.dumps({"path": "cats.py", "old_text": "    3\ndef awake():\n    return CATS",
+                                                          "new_text": "    3\ndef awake():\n    return list(CATS)"}))
+        self.assertTrue(out.startswith("edited"), out)
+        self.assertEqual(Path(self.a.root, "cats.py").read_text(), "CATS = []\n\n\ndef awake():\n    return list(CATS)\n")
+
+    def test_a_stray_quote_at_the_end_of_a_written_file_goes(self):
+        out = self.a.tools.call("write_file", json.dumps({"path": "d.py", "content": "def f():\n    return 1\n\""}))
+        self.assertTrue(out.startswith("wrote d.py"), out)
+        self.assertNotIn("syntax error", out)
+        self.assertEqual(Path(self.a.root, "d.py").read_text(), "def f():\n    return 1\n")
+        out = self.a.tools.call("write_file", json.dumps({"path": "e.py", "content": 'x = "a"\n'}))  # a real quote stays
+        self.assertEqual(Path(self.a.root, "e.py").read_text(), 'x = "a"\n')
