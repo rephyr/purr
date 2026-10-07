@@ -49,6 +49,10 @@ code_checks = true
 #                        (DeepSeek and OpenRouter only)
 # And in every chat with an API model:
 #  fresh_context = true  past fresh_at tokens (160000) the chat goes on from a summary
+# In every chat, every model (purr bench --chat's purr-nochat turns both off to measure them):
+#  outside_changes = true   files changed behind the model's back (you, /undo, a command) are shown to it;
+#                           off, they also stay "read", so read_before_edit doesn't ask for a fresh read
+#  regression_note = true   tests that passed earlier in the chat and fail now come with the diff since
 # Edits only on files the model has read (so old_text matches what's really there).
 read_before_edit = true
 

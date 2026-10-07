@@ -36,6 +36,37 @@ are hard (★): subtle bugs behind passing tests, a bug hidden in a 15-file proj
 data, a dependency-order algorithm, a speed-up that mustn't change the output, and a game
 inventory feature across four files. `--level hard` runs only those.
 
+**Chat bench:** `purr bench --chat` measures what everyday use looks like: a chat of a few turns
+instead of one request. Each scenario in `bench/chat/<name>/` is a `scenario.json` (its turns,
+`files_from` to start from a bench task's files, and `checks_from_task` to be graded on that
+task's hidden tests too), a `files/` overlay, the hidden tests in `check/final/` that decide
+"solved" on the end state, optional `check/turnN/` graded on a copy after a turn (they show where
+the chat slipped, they don't change "solved"), an optional `check/user/` (the user's own run: a
+follow-up like "it still fails: {output}" is only sent when it fails, with its output), and a
+reference `solution/` (with `solution_turnN/` for a turn the end state moved on from) that a
+test checks really passes. Between turns the bench does what you would: edits, appends to, writes
+or deletes files, runs a command (`keep` marks text the model must not write over; for a command,
+`in` names its file) or calls `/undo`; a turn can also get a steer mid-way (`steer.at_step`).
+Nine scenarios: a follow-up after a failing run, a hand edit to keep through a rename, `/undo`
+then a different request, a steer on an easy feature, a rule from the first turn that matters in
+the third, tests that a later turn breaks, a vague "make it faster" (and "still slow" when it
+isn't), a refactor across two turns, and a rename the user did with `sed` between turns.
+
+Contestants: `purr`, and `purr-nochat`: purr without its notes for files changed behind its back
+and for tests that passed earlier and fail now (`outside_changes` and `regression_note` in the
+settings). Without `outside_changes` the files you changed also stay "read", so purr-nochat
+doesn't get `read_before_edit`'s request for a fresh read either. OpenCode comes later. Each turn
+gets `--turn-timeout` seconds (420; a scenario's own `timeout` for a turn replaces it) and the
+whole chat `--timeout` (840, also the most either may be); a turn leaves 30 seconds for each turn
+still to come, and a turn's commands are cut to fit its time. `--level easy` or `hard` and `-t`
+pick scenarios as usual. Besides the usual table, the report has a chat table (turn checks passed,
+counting a skipped turn's as failed; user edits lost; follow-ups needed; steers that came after
+the turn ended, or were lost for lack of time; outside-change and regression notes; "Decided:"
+lines after a green final check; `/undo` that left something behind; runs not counted because a
+hand edit couldn't apply) and every turn's result and events. Plain mode only for now (`--watch`
+works); results go to `~/.local/state/purr/bench/<date>_chat/`, and `--publish` takes the newest
+run, chat or not (`--you` never adds your row to a chat run).
+
 **Play it yourself:** `purr bench --you` hands you the tasks one by one: a fresh copy of the
 files and the prompt (**enter** opens VS Code, **n** nvim; **r** runs the task's program so you can see what it does, **t** runs the visible tests, **enter**
 again when you're done). The same hidden tests grade you, failures are named so you learn what

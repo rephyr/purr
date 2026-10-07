@@ -23,8 +23,10 @@ from .bench import BENCH_DIR, blank, grade, markdown, new_out_dir, pick_tasks, p
 
 
 def latest_bench():
-    """The newest bench folder that has results, or None."""
-    found = sorted(BENCH_DIR.glob("*/results.json"), key=lambda p: p.stat().st_mtime) if BENCH_DIR.exists() else []
+    """The newest bench folder that has results, or None. Not a chat bench's (<date>_chat/): your
+    one-shot rows and its plain report would end up in it."""
+    found = sorted((p for p in BENCH_DIR.glob("*/results.json") if not p.parent.name.endswith("_chat")),
+                   key=lambda p: p.stat().st_mtime) if BENCH_DIR.exists() else []
     return found[-1].parent if found else None
 
 

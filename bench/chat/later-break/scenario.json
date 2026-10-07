@@ -1,0 +1,12 @@
+{
+ "kind": "a later turn breaks earlier tests",
+ "level": "hard",
+ "files_from": "rename",
+ "turns": [
+  {"user": "Add Basket.remove(name, count=1): it takes balls off that yarn and drops it when none are left; removing more than there are raises ValueError and changes nothing. Add tests and run them.",
+   "check": "turn1"},
+  {"user": "Adding the same yarn twice gives two lines in the packing list. Store the basket as a dict from yarn name to count instead, so it's one line per yarn."},
+  {"if_fails": "user",
+   "user": "the tests fail now:\n```\n{output}\n```"}
+ ]
+}

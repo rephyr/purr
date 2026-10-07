@@ -1,0 +1,13 @@
+{
+ "kind": "a command the user ran between turns",
+ "level": "easy",
+ "files_from": "rename",
+ "turns": [
+  {"user": "In shop/prices.py, add wool at 6.0 a ball, and a test for an order with wool. Run the tests.",
+   "check": "turn1"},
+  {"before": [
+    {"run": "perl -pi -e 's/YARN/PRICES/g' shop/prices.py", "keep": "PRICES = {", "in": "shop/prices.py"}
+   ],
+   "user": "Add price_list() to shop/prices.py: it returns a list of strings, one per yarn like \"cotton 4.00\", cheapest first. Add a test and run the tests."}
+ ]
+}
