@@ -1088,6 +1088,14 @@ class PurrApp(App):
         if not text:
             return
         if self.busy and not text.startswith("/"):
+            if self.job == "turn" and not text.startswith("!"):
+                # steer it: the model gets this before its next step, without throwing this one away
+                self.prompt.clear()
+                self._remember(text)
+                self.add_user(text)
+                self.agent.steers.append(text)
+                self.add_line("↪ it gets this at its next step", "info")
+                return
             self.notify("still working on the last one (esc stops it)", severity="warning")
             return
         self.prompt.clear()
@@ -1251,6 +1259,12 @@ class PurrApp(App):
             else:
                 self.set_cat("happy")
         self.tick()
+        if self.agent.steers:  # typed as the turn ended: it's the next message
+            said = []
+            while self.agent.steers:
+                said.append(self.agent.steers.pop(0))
+            self.busy = True
+            self.run_turn("\n".join(said))
 
     def run_command(self, text):
         name, arg = commands.parse(text)

@@ -200,3 +200,22 @@ class WindowTest(Folders, unittest.IsolatedAsyncioTestCase):
             await pilot.press("shift+tab")  # and round again to code
             await pilot.pause(0.2)
             self.assertEqual(app.agent.mode, "code")
+
+
+@unittest.skipIf(PurrApp is None, "needs textual (uv sync)")
+class SteerWindowTest(Folders, unittest.IsolatedAsyncioTestCase):
+    async def test_typing_while_it_works_queues_a_steer(self):
+        app = PurrApp(CONFIG, str(self.root), "small")
+        async with app.run_test(size=(110, 32)) as pilot:
+            await pilot.pause(0.3)
+            app.busy, app.job = True, "turn"  # as if a turn were running
+            app.prompt.focus()
+            app.prompt.load_text("use pathlib")
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            self.assertEqual(app.agent.steers, ["use pathlib"])
+            app.job = "compact"  # anything but a turn still waits
+            app.prompt.load_text("later")
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            self.assertEqual(app.agent.steers, ["use pathlib"])

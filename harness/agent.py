@@ -592,6 +592,7 @@ class Agent:
         self._overview = None
         self.tools.spawn = None if helper else self._helper
         self.stop_flag = False  # the TUI sets this to stop an answer (plain mode uses ctrl+c)
+        self.steers = []         # what you typed while it worked: it gets them at its next step
         self.tools.code_checks = config.get("code_checks", True)
         self.tools.read_before_edit = config.get("read_before_edit", True)
         self.tools.hidden_fn = lambda: self.hidden_tools  # "no tool called X" lists only what it has
@@ -1414,6 +1415,7 @@ class Agent:
                         if ans != "y":
                             break
                         steps = 1
+                self._take_steers()
                 self._make_room()
                 try:
                     if (self._helper_on("reminders") and self.coding and not self.helper
@@ -1492,6 +1494,8 @@ class Agent:
                         self.messages.append({"role": "user", "content":
                             "(purr: your tool call came out as plain text, so it did not run. "
                             "Call the tool again.)"})
+                        continue
+                    if self.steers:  # you said something while it wrote this: that comes first
                         continue
                     if self._one_more_look(reply["text"]):
                         continue
@@ -1644,6 +1648,16 @@ class Agent:
             return "The request: " + _ends(asks[0], 2000, 800)
         earlier = "\n".join("- " + _ends(a, 500, 200) for a in asks[:-1])
         return f"The user asked earlier:\n{earlier}\nand now: {_ends(asks[-1], 1500, 600)}"
+
+    def _take_steers(self):
+        """What you typed while the model worked goes in before its next step (the window took
+        nothing while busy, and Esc threw the step away: minutes, at 60 tokens a second)."""
+        if self.helper or not self.steers:
+            return
+        said = []
+        while self.steers:  # the window adds to it from its own thread: take them one by one
+            said.append(self.steers.pop(0))
+        self.messages.append({"role": "user", "content": "(the user, while you were working:) " + "\n".join(said)})
 
     def _outside_changes(self):
         """Files the model has seen that changed since, not by its own edits: you in your editor,
