@@ -115,7 +115,8 @@ ARG_ALIASES = {"file_path": "path", "filePath": "path", "filename": "path", "fil
 UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 READ_ONLY = {"read_file", "list_files", "grep", "fetch_url"}
-ZERO_TESTS = re.compile(r"\bRan 0 tests\b|NO TESTS RAN|collected 0 items|\bno tests ran\b")
+ZERO_TESTS = re.compile(r"\bRan 0 tests\b|NO TESTS RAN|collected 0 items|\bno tests ran\b|Start directory is not "
+                        r"importable|ERROR: file or directory not found")
 NUMBERED = re.compile(r"^ *\d+\t")  # read_file's line numbers, pasted into an edit
 SKIP_DIRS = {"node_modules", "__pycache__", "venv", "dist", "build", "target"}  # besides hidden ones
 
