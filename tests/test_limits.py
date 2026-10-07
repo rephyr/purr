@@ -412,3 +412,29 @@ class TranscriptTest(unittest.TestCase):
         self.assertLessEqual(len(text), a.limits.context * 2 + 200)
         self.assertTrue(text.startswith("USER: GOAL: make the cat purr"))
         self.assertIn("left out", text)
+
+
+class ContextCountTest(unittest.TestCase):
+    def setUp(self):
+        from harness.agent import _new_stats
+        self.stats = _new_stats
+
+    def test_the_servers_count_beats_the_guess(self):
+        # JSON-escaped code guessed 23k where Ollama counted 20k: a 32k chat was summarised early
+        a = agent("small")
+        a.turn_stats = self.stats()
+        a.messages.append({"role": "user", "content": "x"})
+        a.messages.append({"role": "tool", "tool_call_id": "c", "content": '"\\n' * 8000})
+        whole = a.context_used()
+        a._record({"usage": {"prompt_tokens": 3000, "completion_tokens": 50,
+                             "prompt_tokens_details": {"cached_tokens": 2900}}, "text": "", "tool_calls": []})
+        self.assertLess(a.context_used(), whole)
+        a.messages.append({"role": "assistant", "content": "y" * 400})
+        self.assertEqual(a.context_used(), 3000 + a._guess_tokens(a.messages[-1:], base=0))
+
+    def test_an_old_ollama_count_is_only_a_floor(self):
+        a = agent("small")
+        a.turn_stats = self.stats()
+        a.messages.append({"role": "tool", "tool_call_id": "c", "content": "z" * 40000})
+        a._record({"usage": {"prompt_tokens": 100, "completion_tokens": 5}, "text": "", "tool_calls": []})
+        self.assertGreater(a.context_used(), 9000)  # it only counted what wasn't cached
