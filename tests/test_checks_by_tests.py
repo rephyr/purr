@@ -170,3 +170,21 @@ class GptOssEditSlipsTest(unittest.TestCase):
         self.assertEqual(Path(self.a.root, "d.py").read_text(), "def f():\n    return 1\n")
         out = self.a.tools.call("write_file", json.dumps({"path": "e.py", "content": 'x = "a"\n'}))  # a real quote stays
         self.assertEqual(Path(self.a.root, "e.py").read_text(), 'x = "a"\n')
+
+
+class RemovedDefinitionTest(unittest.TestCase):
+    def test_an_edit_that_drops_a_method_says_so_at_once(self):
+        a = agent()
+        a.tools.trust_all = True
+        code = "class C:\n    def __init__(self, n):\n        self.n = n\n\n    def get(self):\n        return self.n\n"
+        Path(a.root, "c.py").write_text(code)
+        a.tools.seen.add(Path(a.root, "c.py").resolve())
+        out = a.tools.call("edit_file", json.dumps({"path": "c.py", "old_text": "    def __init__(self, n):\n        self.n = n",
+                                                     "new_text": "    def get(self):\n        return 1"}))
+        self.assertIn("this change removed def __init__", out)
+        Path(a.root, "r.py").write_text("def calc_total(x):\n    return x\n")
+        a.tools.seen.add(Path(a.root, "r.py").resolve())
+        out = a.tools.call("edit_file", json.dumps({"path": "r.py", "old_text": "def calc_total(x):", "new_text": "def order_total(x):"}))
+        self.assertNotIn("removed", out)  # a rename
+        out = a.tools.call("edit_file", json.dumps({"path": "c.py", "old_text": "        return self.n", "new_text": "        return self.n + 1"}))
+        self.assertNotIn("removed", out)

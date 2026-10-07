@@ -812,6 +812,11 @@ class Tools:
         if not self.code_checks:
             return ""
         problems = checks.code_problems(path, before, after)
+        lost = checks.removed_definitions(path, before, after)
+        if lost:  # gpt-oss replaced the start of __init__ with another method: the constructor was gone
+            self.warnings.append(f"{path}: removed {lost[0]}")
+            problems = [f"this change removed {', '.join(lost[:4])} (no longer in the file): if that wasn't "
+                        "meant, put it back"] + problems
         weakened = checks.weakened_tests(path, before, after)
         if weakened:
             self.warnings.append(f"{path}: test expectations changed")

@@ -59,6 +59,21 @@ def code_problems(path, before, after, limit=5):
     return [f"line {line}: {msg} ({code})" for line, code, msg in sorted(new)[:limit]]
 
 
+DEFINITION = re.compile(r"^[ \t]*(?:async[ \t]+)?(def|class|func|fn|function)[ \t]+(\w+)", re.M)
+
+
+def removed_definitions(path, before, after):
+    """`def name` / `class name` lines in before whose name is defined nowhere in after: ["def __init__"]."""
+    if not before or not str(path).endswith((".py", ".gd", ".go", ".rs", ".js", ".ts")):
+        return []
+    then = {name for _, name in DEFINITION.findall(before)}
+    now = {name for _, name in DEFINITION.findall(after)}
+    lost = [f"{kind} {name}" for kind, name in dict.fromkeys(DEFINITION.findall(before)) if name not in now]
+    if lost and len(now - then) >= len(lost):  # as many new ones as gone: a rename, most likely
+        return []
+    return lost
+
+
 TEST_FILE = re.compile(r"(^|/)(test_[^/]*\.py|[^/]*_test\.py|[^/]*\.(test|spec)\.[jt]sx?|tests?/[^/]*)$")
 CHECK_LINE = re.compile(r"\bassert|\bexpect\(|\.toBe|\.toEqual|assert_eq!")
 
