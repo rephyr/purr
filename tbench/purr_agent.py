@@ -26,7 +26,8 @@ Agent kwargs (harbor run --ak key=value), all optional; tbench/fair.sh sets the 
                           (harness/minimal.py)
     extras=false          leave out the checks added after the published DeepSeek runs (v0.5.0): two plans,
                           the fresh-eyes tester, effort per phase, a fresh context, the proof ledger,
-                          the margin check, the job watch and blind checks. To compare with those runs
+                          the margin check, the job watch, blind checks and the safety net (which also
+                          stops the run at its time limit). To compare with those runs
 """
 
 
@@ -57,7 +58,7 @@ BRIDGE_PORT = 11435
 LOCAL_HOSTS = ("127.0.0.1", "localhost")
 PY = f"{REMOTE}/py"  # uv's Python 3.12, linked here when installing
 EXTRAS = ("two_plans", "fresh_eyes", "effort_phases", "fresh_context", "proof_ledger", "margin_check",
-          "job_watch", "blind_checks")  # extras=false turns these off
+          "job_watch", "blind_checks", "safety_net")  # extras=false turns these off
 SHIPPED = ("purr.py", "harness", "servers")  # all plain mode needs
 
 

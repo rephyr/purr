@@ -61,6 +61,17 @@ class FinalCheckByTestsTest(unittest.TestCase):
         a.turn("make a.py with x = 1")
         self.assertFalse(any("one line per requirement" in u for u in users(a)))
 
+    def test_a_shell_edit_after_green_tests_still_gets_the_extra_look(self):
+        # edit_gen only counts edit tools: a change through run after the green check looked like
+        # "nothing changed since" and the look was skipped
+        a = one_shot(time_limit=5400)
+        Path(a.root, "test_a.py").write_text(TEST)
+        scripted(a, [reply("", tool=("write_file", {"path": "a.py", "content": "x = 1\n"})), reply("done"),
+                     reply("", tool=("run", {"command": "echo 'x = 1  # one' > a.py"})), reply("done"), reply("ok")])
+        a.turn("make a.py with x = 1")
+        self.assertEqual(Path(a.root, "a.py").read_text(), "x = 1  # one\n")
+        self.assertTrue(any("one line per requirement" in u for u in users(a)))
+
 
 class TestCommandTest(unittest.TestCase):
     def test_the_prompt_names_the_test_command(self):
