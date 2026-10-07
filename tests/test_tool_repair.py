@@ -133,3 +133,27 @@ class GptOssArgumentsTest(unittest.TestCase):
         self.a.tools.seen.add(Path(self.a.root, "n.py").resolve())
         out = self.a.tools.call("edit_file", json.dumps({"path": "n.py", "old_text": "x1 = 1\n", "\nnew_text": "x1 = 100\n"}))
         self.assertTrue(out.startswith("edited n.py"), out)
+
+
+class TestsOverCodeTest(unittest.TestCase):
+    def test_tests_written_over_the_code_are_refused_once(self):
+        # Ornith-9B wrote its unittest module over cache.py at the end of a run
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "cache.py").write_text("class LRUCache:\n    pass\n")
+        a.tools.seen.add(Path(a.root, "cache.py").resolve())
+        tests = "import unittest\nfrom cache import LRUCache\n\nclass T(unittest.TestCase):\n    pass\n"
+        out = a.tools.call("write_file", json.dumps({"path": "cache.py", "content": tests}))
+        self.assertIn("would replace it with a test module", out)
+        self.assertIn("class LRUCache", Path(a.root, "cache.py").read_text())
+        out = a.tools.call("write_file", json.dumps({"path": "cache.py", "content": tests}))  # meant it
+        self.assertTrue(out.startswith("wrote cache.py"), out)
+
+    def test_test_files_and_new_files_are_fine(self):
+        a = agent()
+        a.tools.trust_all = True
+        tests = "import unittest\n\nclass T(unittest.TestCase):\n    pass\n"
+        self.assertTrue(a.tools.call("write_file", json.dumps({"path": "test_x.py", "content": tests})).startswith("wrote"))
+        Path(a.root, "test_y.py").write_text("x = 1\n")
+        a.tools.seen.add(Path(a.root, "test_y.py").resolve())
+        self.assertTrue(a.tools.call("write_file", json.dumps({"path": "test_y.py", "content": tests})).startswith("wrote"))
