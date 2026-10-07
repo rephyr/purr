@@ -716,7 +716,9 @@ class PurrApp(App):
         self.tick()
 
     def tick(self):
-        if gone(self, "#prompt"):
+        # the window is closing: any of the widgets this reads may already be gone (#pinned went before
+        # #prompt now and then, and CI's window tests failed on it)
+        if any(gone(self, w) for w in ("#prompt", "#pinned", "#status")):
             return
         if self.busy:
             self.busy_since = self.busy_since or time.monotonic()
