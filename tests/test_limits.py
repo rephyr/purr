@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ["PURR_STATE"] = tempfile.mkdtemp()  # keep test chats away from the real ones
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -432,9 +433,43 @@ class ContextCountTest(unittest.TestCase):
         a.messages.append({"role": "assistant", "content": "y" * 400})
         self.assertEqual(a.context_used(), 3000 + a._guess_tokens(a.messages[-1:], base=0))
 
+    def test_a_prune_keeps_the_servers_count(self):
+        # a prune used to drop the server's count, and the guess (escaped code counts double)
+        # then summarised a 32k chat it had just made room in
+        a = agent("small")
+        a.turn_stats = self.stats()
+        a.messages.append({"role": "user", "content": "x"})
+        for i, (name, out) in enumerate([("run", "o" * 2000)] + [("read_file", "r" * 3000)] * 3):
+            a.messages.append({"role": "assistant", "content": None, "tool_calls": [
+                {"id": f"c{i}", "type": "function", "function": {"name": name, "arguments": "{}"}}]})
+            a.messages.append({"role": "tool", "tool_call_id": f"c{i}", "content": out})
+        a.messages.append({"role": "assistant", "content": '"\\n' * 18000})  # guessed far over the count
+        ctx, lim = a.limits.context, a.limits
+        a._record({"usage": {"prompt_tokens": int(ctx * (lim.prune_at + lim.compact_at) / 2),
+                             "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 0}},
+                   "text": "", "tool_calls": []})
+        before = a.context_used()
+        a._compact_again_at = 0
+        with mock.patch.object(Agent, "compact") as compact:
+            a._make_room()
+        tools = [m["content"] for m in a.messages if m["role"] == "tool"]
+        self.assertTrue(tools[0].startswith("[old output of") and tools[1].startswith("r"))  # it did prune
+        self.assertGreater(a._guess_tokens(a.messages), ctx * lim.compact_at)  # the guess alone would compact
+        compact.assert_not_called()
+        self.assertLess(a.context_used(), before)  # what was freed comes off the count
+
     def test_an_old_ollama_count_is_only_a_floor(self):
         a = agent("small")
         a.turn_stats = self.stats()
         a.messages.append({"role": "tool", "tool_call_id": "c", "content": "z" * 40000})
         a._record({"usage": {"prompt_tokens": 100, "completion_tokens": 5}, "text": "", "tool_calls": []})
         self.assertGreater(a.context_used(), 9000)  # it only counted what wasn't cached
+
+    def test_an_old_ollama_count_stays_a_floor_after_switching_to_an_api_model(self):
+        # its count was only the uncached part; /model to an API model must not make it the whole chat
+        a = agent("small")
+        a.turn_stats = self.stats()
+        a.messages.append({"role": "tool", "tool_call_id": "c", "content": "z" * 40000})
+        a._record({"usage": {"prompt_tokens": 100, "completion_tokens": 5}, "text": "", "tool_calls": []})
+        a.set_model("api")
+        self.assertGreater(a.context_used(), 9000)

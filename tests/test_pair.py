@@ -76,3 +76,26 @@ class PairTest(unittest.TestCase):
         scripted(a, [reply("ok")])
         a.turn("go")
         self.assertNotIn("the user changed", str(a.messages[-2]["content"]))
+
+    def test_go_typed_during_the_hand_back_is_acted_on(self):
+        # a "go" steered in while it wrote the hand-back used to be held back too ("your move: say go")
+        a = pair({"calc.py": "def add(a, b):\n    return a - b\n"})
+        known(a)
+        steps = [reply("", tool=("edit_file", {"path": "calc.py", "old_text": "a - b", "new_text": "a + b"})),
+                 reply("Fixed add. Next I'd add a docstring."),
+                 reply("", tool=("edit_file", {"path": "calc.py", "old_text": "def add(a, b):\n",
+                                               "new_text": "def add(a, b):\n    \"\"\"Add.\"\"\"\n"})),
+                 reply("Added the docstring.")]
+        n = {"n": 0}
+
+        def call(*args, **kwargs):
+            n["n"] += 1
+            if n["n"] == 2:
+                a.steers.append("yes go, add the docstring now")
+            return steps[n["n"] - 1]
+        a._call = call
+        a.turn("fix add")
+        self.assertEqual(n["n"], 4)
+        self.assertIn('"""Add."""', (Path(a.root) / "calc.py").read_text())
+        self.assertFalse(any("held back" in note for note in a.view.notes))
+        self.assertTrue(any("your move" in note for note in a.view.notes))  # the second edit hands back

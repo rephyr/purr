@@ -69,3 +69,10 @@ class OutsideChangesTest(unittest.TestCase):
         a.turn("make x 2")
         a.turn("thanks")
         self.assertFalse(any("not by your edits" in u for u in users(a)))
+
+    def test_crlf_it_wrote_is_no_news(self):
+        a = agent()
+        a.tools.trust_all = True
+        a.tools.t_write_file("run.bat", "@echo off\r\necho hi\r\n")
+        self.assertEqual(a.tools.changed_behind(), [])  # \r\n reads back as \n: not a change
+        self.assertIn("wrote", a.tools.t_write_file("run.bat", "@echo off\r\necho bye\r\n"))

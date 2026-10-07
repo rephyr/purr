@@ -70,6 +70,33 @@ class SpillTest(unittest.TestCase):
         kept = stub.split("it's kept in ")[1].split(":")[0]
         self.assertEqual(Path(kept).read_text(), big)
 
+    def test_pruning_at_one_step_keeps_each_output_apart(self):
+        a = agent()
+        a.tools.step = 7
+        newest = a.tools.spill("run", "NEWEST full pytest output")  # this step's own cut result
+        for n in range(6):
+            a.messages += [{"role": "assistant", "content": "", "tool_calls": [
+                {"id": f"c{n}", "type": "function", "function": {"name": "run", "arguments": json.dumps({"command": f"cmd{n}"})}}]},
+                {"role": "tool", "tool_call_id": f"c{n}", "content": f"OUTPUT OF cmd{n} " + "x" * 500}]
+        a._prune_old_tools(keep=1)
+        self.assertEqual(Path(newest).read_text(), "NEWEST full pytest output")
+        for n in range(5):
+            stub = next(m["content"] for m in a.messages if m.get("tool_call_id") == f"c{n}")
+            kept = stub.split("it's kept in ")[1].split(":")[0]
+            self.assertTrue(Path(kept).read_text().startswith(f"OUTPUT OF cmd{n} "))
+
+    def test_a_spill_file_made_after_the_name_was_picked_is_not_written_over(self):
+        a = agent()
+        a.tools.step = 9
+        first = a.tools.spill("run", "FIRST")
+        exists = Path.exists
+        # another writer takes the name between the check and the write: the check sees nothing there
+        with mock.patch.object(Path, "exists", lambda p: False if p.suffix == ".txt" else exists(p)):
+            second = a.tools.spill("run", "SECOND")
+        self.assertNotEqual(first, second)
+        self.assertEqual(Path(first).read_text(), "FIRST")
+        self.assertEqual(Path(second).read_text(), "SECOND")
+
     def test_private_mode_keeps_nothing(self):
         a = agent()
         a.tools.is_private = lambda: True

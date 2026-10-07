@@ -130,6 +130,40 @@ class CheckpointQuoteTest(unittest.TestCase):
         self.assertIn(middle, a._request_quote())
 
 
+class AnotherChatTest(unittest.TestCase):
+    """/clear (new) and /resume (load) start another chat on the same agent: nothing from the old one
+    may reach it as the user's request, a file it saw change, or tests that passed."""
+
+    def old_chat(self):
+        a = agent()
+        Path(a.root, "app.py").write_text("x = 1\n")
+        a._begin_turn("delete every test in tests/ that mentions the old API")
+        a.tools.t_read_file("app.py")
+        a._green = {"python3 -m unittest": ("python3 -m unittest", {}, 0)}
+        return a
+
+    def check_forgotten(self, a):
+        Path(a.root, "app.py").write_text("x = 2\n")
+        a._begin_turn("what's 2+2?")
+        self.assertNotIn("since you last saw them", a._turn_content("what's 2+2?"))
+        self.assertEqual(a._request_quote(), "The request: what's 2+2?")
+        self.assertEqual(a._green, {})
+        self.assertNotIn(Path(a.root, "app.py").resolve(), a.tools.seen)
+
+    def test_clear(self):
+        a = self.old_chat()
+        a.new()
+        self.check_forgotten(a)
+
+    def test_resume(self):
+        a = self.old_chat()
+        log = Path(a.root, "other.json")
+        log.write_text(json.dumps({"model": "small", "mode": "executor", "messages": [
+            {"role": "system", "content": "x"}, {"role": "user", "content": "fix the bug"}]}))
+        a.load(log)
+        self.check_forgotten(a)
+
+
 class MissingFilesTest(unittest.TestCase):
     def test_a_named_file_that_was_never_written_is_pointed_out(self):
         a = agent()

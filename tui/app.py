@@ -1090,13 +1090,18 @@ class PurrApp(App):
         if not text:
             return
         if self.busy and not text.startswith("/"):
-            if self.job == "turn" and not text.startswith("!"):
+            if self.job == "turn" and not text.startswith("!") and self.agent.takes_steers():
                 # steer it: the model gets this before its next step, without throwing this one away
                 self.prompt.clear()
                 self._remember(text)
+                # the answer may still be streaming (maybe inside a ``` fence): keep its block open
+                # so the rest lands in the same widget, not a new one that never saw the fence
+                block = self.md_stream, self.cur_kind, self.cur_widget, self.cur_text
+                self.md_stream = None
                 self.add_user(text)
-                self.agent.steers.append(text)
                 self.add_line("↪ it gets this at its next step", "info")
+                self.md_stream, self.cur_kind, self.cur_widget, self.cur_text = block
+                self.agent.steers.append(text)
                 return
             self.notify("still working on the last one (esc stops it)", severity="warning")
             return
