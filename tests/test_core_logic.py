@@ -44,6 +44,15 @@ class LooseMatchTest(unittest.TestCase):
         self.assertEqual(real, "    if x:\n        return 1\n")
         self.assertEqual(fixed, "    if x:\n        return 10\n        # done\n")
 
+    def test_a_line_added_above_an_indented_first_line_keeps_the_code_valid(self):
+        # gpt-oss indents only the first line, then adds a decorator / comment above it
+        _, fixed = _loose_match("def f(x):\n    return x + 1\n", "    def f(x):\n    return x + 1",
+                                "    @functools.cache\n    def f(x):\n    return x + 2")
+        self.assertEqual(fixed, "@functools.cache\ndef f(x):\n    return x + 2\n")
+        _, fixed = _loose_match("server:\n  port: 80\n", "  server:\n  port: 80",
+                                "  # main server\n  server:\n  port: 8080")
+        self.assertEqual(fixed, "# main server\nserver:\n  port: 8080\n")
+
     def test_ambiguous_or_missing_is_none(self):
         twice = "a:\n    b\nc:\n    b\n"
         self.assertIsNone(_loose_match(twice, "  b", "  c"))
