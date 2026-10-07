@@ -132,3 +132,19 @@ class MissingFilesTest(unittest.TestCase):
         check = next(u for u in users(a) if "before you finish" in u)
         self.assertIn("`tests/test_cat_of_the_day.py`, which does not exist", check)
         self.assertNotIn("cafe/cats.py`", check)
+
+
+class RemovedLinesTest(unittest.TestCase):
+    def test_lines_deleted_outright_are_quoted_at_the_check(self):
+        # Qwen3.6 took the sword and potion recipes out; the task's tests needed them
+        a = agent()
+        a.tools.trust_all = True
+        recipes = 'RECIPES = {\n    "plank": {"wood": 2},\n    "sword": {"plank": 2},\n}\n\n\ndef craft():\n    return 1\n'
+        Path(a.root, "crafting.py").write_text(recipes)
+        a.tools.seen.add(Path(a.root, "crafting.py").resolve())
+        new = 'RECIPES = {\n    "plank": {"wood": 2},\n}\n\n\ndef craft():\n    return 2\n'
+        scripted(a, [reply("", tool=("write_file", {"path": "crafting.py", "content": new})), reply("done"), reply("ok")])
+        a.turn("make craft return 2")
+        check = next(u for u in users(a) if "before you finish" in u)
+        self.assertIn('deleted these lines that were there before: `"sword": {"plank": 2},`', check)
+        self.assertNotIn("return 1", check)  # rewritten, not deleted

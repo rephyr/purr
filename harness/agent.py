@@ -152,6 +152,8 @@ CUT_TAIL_CHARS = 1200  # of a cut-off reply's end, quoted back so it can carry o
 # a file path in a request: tests/test_x.py, cafe/cats.py, README.md (a name with a known extension)
 NAMED_FILE = re.compile(r"(?<![\w/.-])(?:[\w.-]+/)*[\w-]+\.(?:py|js|ts|jsx|tsx|go|rs|rb|java|c|h|cpp|gd|md|json|toml|"
                         r"yaml|yml|txt|csv|sh|html|css)\b")
+REMOVED_SHOWN = 6  # deleted lines the final check quotes
+COMMENT_LINE = re.compile(r"\s*(#|//|--|/\*|\*|\"\"\"|''')")
 ASKS_KEPT = 3  # the chat's latest requests a checkpoint quotes
 REPEAT_NUDGE = 2  # same tool call this many times: tell the model to stop repeating
 PRUNE_TO = 0.15  # trimming old output goes this far under prune_at (a share of the context)
@@ -2070,8 +2072,33 @@ class Agent:
             check = (FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT).format(services=services)
         if self.one_shot and self._on("margin_check"):
             check = check[:-1] + MEASURE_ASK + ")" if check.endswith(".)") else check + MEASURE_ASK
-        self.messages.append({"role": "user", "content": report + self._blind_report() + self._missing_files() + check})
+        self.messages.append({"role": "user", "content": report + self._blind_report() + self._missing_files()
+                              + self._removed_lines() + check})
         return True
+
+    def _removed_lines(self):
+        """Lines of the files as they were that the changes deleted outright (not rewrote): Qwen3.6 took
+        the sword and potion recipes out of crafting.py, its own tests passed without them, and the
+        task's didn't. Said at the final check so the model confirms the request asked for it."""
+        gone = []
+        for p, before in self.tools.session_changes().items():
+            if not before or not p.exists():
+                continue
+            try:
+                after = p.read_text(errors="replace")
+            except OSError:
+                continue
+            old = before.splitlines()
+            ops = difflib.SequenceMatcher(None, old, after.splitlines(), autojunk=False).get_opcodes()
+            for tag, i1, i2, _, _ in ops:
+                if tag == "delete":
+                    gone += [line.strip() for line in old[i1:i2] if line.strip() and not COMMENT_LINE.match(line)]
+        if not gone:
+            return ""
+        shown = "; ".join(f"`{line[:80]}`" for line in gone[:REMOVED_SHOWN])
+        more = f" and {len(gone) - REMOVED_SHOWN} more" if len(gone) > REMOVED_SHOWN else ""
+        return (f"(purr: your changes deleted these lines that were there before: {shown}{more}. Keep that only "
+                "if the request asks for it; otherwise put them back.)\n")
 
     def _missing_files(self):
         """Files the request names that don't exist: gpt-oss said it added tests/test_cat_of_the_day.py,
