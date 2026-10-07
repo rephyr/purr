@@ -123,6 +123,14 @@ SAFETY_BYTES = 20_000_000  # the safety net keeps the changed files when tests p
 SAFETY_WAIT = 120          # seconds for its test run at the end (5% of a time limit, at least 15)
 
 
+def TESTS_FAILED(command, result):
+    """A test run (by its command) that ran and failed: not a crash before any test, not a pass."""
+    text = result or ""
+    if not re.search(r"\btest|pytest|unittest", command) or re.search(r"\[exit code 0\]\s*$", text):
+        return False
+    return bool(re.search(r"^(FAIL|ERROR):|^FAILED\b|\b\d+ failed\b|\(failures=\d+|errors=\d+", text, re.M))
+
+
 def TESTS_PASSED(result):
     """A run's result (output + "[exit code N]") is a test suite that ran tests and passed."""
     text = result or ""
@@ -1062,6 +1070,7 @@ class Agent:
         self.session_cached = 0
         self.last_usage = self._main_usage = None
         self._asks = []
+        self._green = None  # (test command, {path: text}, edit_gen): the last time the tests passed (_regression_note)
         self.title = ""
         stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
         self.log_path = None if self.helper or self.private else LOG_DIR / f"{stamp}.json"  # private: never saved
@@ -2172,8 +2181,17 @@ class Agent:
         return paths
 
     def _keep_good(self, command):
-        """The tests just passed: remember the changed files as they are now, with the command."""
-        if not (self.one_shot and self.coding) or self.helper or not self._on("safety_net") or not command:
+        """The tests just passed: remember the changed files as they are now, with the command. One-shot
+        runs keep them for the safety net (this turn); every coding chat keeps the last green state for
+        the regression note (the whole chat)."""
+        if not self.coding or self.helper or not command:
+            return
+        if not self.one_shot:
+            files = {p: t for p, t in ((p, self._text_of(p)) for p in self.tools.session_changes()) if t is not False}
+            if files:
+                self._green = (command, files, self.tools.edit_gen)
+            return
+        if not self._on("safety_net"):
             return
         files, size = {}, 0
         for p in self._changed_files():
@@ -2187,6 +2205,42 @@ class Agent:
             files[p] = data
         if files:
             self._good = (command, files)
+
+    @staticmethod
+    def _text_of(p):
+        """A file's text (None when it's gone), or False when it can't be read or is too big to keep."""
+        try:
+            if not p.exists():
+                return None
+            return p.read_text(errors="replace") if p.stat().st_size <= 200_000 else False
+        except OSError:
+            return False
+
+    def _regression_note(self, command):
+        """Tests that passed earlier in this chat fail now: the diff since they passed, once, so a small
+        model looks at what it changed instead of at the test (or at a "stale cache")."""
+        green = getattr(self, "_green", None)
+        if not green or green[2] == getattr(self, "_regression_said", None) or green[2] == self.tools.edit_gen:
+            return ""
+        _, files, gen = green
+        files = dict(files)
+        for p, before in self.tools.session_changes().items():  # first changed after the green run
+            files.setdefault(p, before)
+        parts = []
+        for p, then in files.items():
+            now = self._text_of(p)
+            if now is False or now == then:
+                continue
+            name = os.path.relpath(p, self.root) if self.root in p.parents else str(p)
+            parts.append("".join(difflib.unified_diff((then or "").splitlines(True), (now or "").splitlines(True),
+                                                      f"a/{name}", f"b/{name}", n=1)))
+        if not parts:
+            return ""
+        self._regression_said = gen
+        self.tools.repairs.append("tests passed earlier and fail now -> shown what changed since")
+        diff = "".join(p if p.endswith("\n") else p + "\n" for p in parts)
+        return ("\n(purr: the tests passed earlier in this chat, with `" + green[0][:80] + "`. Since then these "
+                f"lines changed, and one of these changes most likely broke them:\n```diff\n{clip(diff, 3000)}```)")
 
     def _put_files(self, files):
         for p, data in files.items():
@@ -2547,6 +2601,8 @@ class Agent:
         self._tests_green = TESTS_PASSED(f"{output}\n[exit code {code}]")
         if self._tests_green:
             self._green_gen = self.tools.edit_gen
+        elif not self.one_shot and TESTS_FAILED(cmd, f"{output}\n[exit code {code}]"):
+            output += self._regression_note(cmd)
         if TESTS_PASSED(f"{output}\n[exit code {code}]"):
             self._keep_good(cmd)
         self.view.tool_result("run", {"command": cmd}, f"{output}\n[exit code {code}]")
@@ -2596,8 +2652,12 @@ class Agent:
                 else:
                     result = early[c["id"]] if c["id"] in early else self.tools.call(c["name"], c["args"])
                     self._executed.append((c["name"], c["args"], result))
-                    if c["name"] in ("run", "bash", "shell") and TESTS_PASSED(result):
-                        self._keep_good(str(_args(c["args"]).get("command", "")))
+                    if c["name"] in ("run", "bash", "shell"):
+                        command = str(_args(c["args"]).get("command", ""))
+                        if TESTS_PASSED(result):
+                            self._keep_good(command)
+                        elif TESTS_FAILED(command, result):
+                            result += self._regression_note(command)
                     if self.limits.edit_window and c["name"] in ("edit_file", "write_file") \
                             and result.startswith(("edited ", "wrote ")):
                         self._mark_stale(_args(c["args"]).get("path"))
