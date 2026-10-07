@@ -368,16 +368,32 @@ LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file 
 ROUTINE_TOOLS = (*LOOKS, "outline", "find_symbol", "todo")  # steps routine_effort may think less after
 
 
-def repeating(text, probe=60, times=8):
+def repeating(text, probe=60, times=8, span=6000, longest=24000):
     """The bit a reply keeps repeating ("Wait, I'll just write it." x 500), or None: the stream's
-    last `probe` characters turn up `times` times or more near its end."""
-    tail = text[-4000:]
-    if len(tail) < probe * times:
+    last `span` characters are one bit said over and over (`times` or more), with nothing between.
+    The span is long because real answers repeat too (an empty 20x20 board, a byte table, a tile
+    map): those end within a few thousand characters, while a stuck model goes on for tens of
+    thousands. A bit too long to fit `times` in the span (a whole paragraph) is checked over the
+    `times` copies it takes, up to `longest` characters."""
+    tail = text[-span:]
+    if len(tail) < span:
         return None
     end = tail[-probe:]
-    if not end.strip() or tail.count(end) < times:
+    if not end.strip():
         return None
-    return " ".join(end.split())
+    # The last time it was said before now gives the bit's length, unless the bit says its own end
+    # more than once (a code block with a line twice, a table's separator lines): then try each
+    # earlier time in turn, until one fits or the bit would be too long to say `times` times.
+    before = tail.rfind(end, 0, span - 1)
+    while before >= 0:
+        period = span - probe - before
+        if period * times > min(len(text), longest):
+            return None  # not said enough times (yet)
+        back = text[-period * times:] if period * times > span else tail  # a long bit: `times` copies
+        if back[:-period] == back[period:]:
+            return " ".join(end.split())
+        before = tail.rfind(end, 0, before + probe - 1)
+    return None  # other text in between: not stuck
 
 
 def _new_stats():
@@ -1231,7 +1247,9 @@ class Agent:
     def _think_budget(self):
         """Tokens a local model may think in one step before purr cuts in (0: no limit). think_budget in
         config.toml; by default 8k, or a quarter of a smaller context."""
-        if self.model.get("provider") not in LOCAL or self.helper:
+        if self.model.get("provider") not in LOCAL or self.helper or self.minimal:
+            return 0  # minimal mode has no nudge to carry a cut think on: it would end the turn empty
+        if self.mode_level() == "none":  # chat / create: no tools to act with, so let it think
             return 0
         default = min(THINK_BUDGET, self.limits.context // 4)
         return int(self.config.get("think_budget", default) or 0)
@@ -1348,6 +1366,7 @@ class Agent:
         said = []  # everything this call has streamed, for the loop breaker
         looping = []
         thought, thought_chars = [], [0]  # this call's thinking, for the thinking budget
+        first = [None]  # when this attempt's first piece came: a cut reply's writing time
         budget = self._think_budget() if messages is None and tools else 0
         if messages is None and getattr(self, "_skip_think", False):
             think, self._skip_think = False, False  # the step after an over-long think: act, don't think
@@ -1356,13 +1375,16 @@ class Agent:
             def seen(piece):
                 show(piece)
                 said.append(piece)
+                first[0] = first[0] or time.monotonic()
                 if thinking:
                     thought.append(piece)
                     thought_chars[0] += len(piece)
                     if budget and not looping and thought_chars[0] > budget * 4:
                         looping.append(None)  # thought too long: cut (None: not a repeat)
                 if len(said) % 50 == 0 and not looping:
-                    snippet = repeating("".join(said[-400:]))
+                    # pieces are a token or so (1+ chars, never empty): 24000 of them hold the up to
+                    # 24000 characters repeating() reads, so a loop of a long paragraph is caught too
+                    snippet = repeating("".join(said[-24000:]))
                     if snippet:
                         looping.append(snippet)
             return seen
@@ -1370,8 +1392,14 @@ class Agent:
         attempt = 0
         self._refused = 0  # 400s that made the free router switch, this call
         while True:
+            # a retry starts clean: a reply that broke off mid-thought mustn't eat the retry's
+            # thinking budget or be counted as the retry repeating itself
+            for kept in (said, looping, thought):
+                kept.clear()
+            thought_chars[0] = 0
             hard_now = hard or (messages is None and getattr(self, "_think_hard", False))
             body = self._body(messages, tools, hard_now, think)  # again after a switch: another model, id and hosts
+            started, first[0] = time.monotonic(), None
             try:
                 try:
                     reply = stream_chat(self.provider["base_url"], self.key, body, on_text, on_think,
@@ -1381,8 +1409,12 @@ class Agent:
                         raise
                     # stuck saying the same thing over and over (Gemma-4-12B: "Wait, I'll just write
                     # it." for 30k tokens, eight minutes): cut it off and say so (turn() nudges it on)
+                    # the server never sent its usage, but the minutes it ran are real: time them and
+                    # guess its tokens (~4 characters each), so bench and the window don't drop them
+                    now = time.monotonic()
                     reply = {"text": "", "reasoning": "", "tool_calls": [], "usage": None, "finish": "loop",
-                             "loop": looping[0], "gen_seconds": 0.0, "call_seconds": 0.0}
+                             "loop": looping[0], "gen_seconds": now - first[0] if first[0] else 0.0,
+                             "call_seconds": now - started, "out_guess": len("".join(said)) // 4}
                     if looping[0] is None:
                         reply.update(finish="overthought", tail=" ".join("".join(thought)[-THINK_TAIL:].split()))
                         self.tools.repairs.append("thinking past its budget -> cut, next step acts")
@@ -1493,6 +1525,7 @@ class Agent:
         empty = 0      # empty answers nudged this turn
         cut = 0        # replies cut off at the output limit, nudged this turn
         loops = 0      # replies cut off for repeating themselves, nudged this turn
+        thinks = 0     # over-long thinks cut in a row (reset once its tools run)
         cap = self._step_cap()
         try:
             while True:
@@ -1545,10 +1578,12 @@ class Agent:
 
                 self.messages.append(self._assistant_message(reply))
 
-                if reply["finish"] == "overthought" and loops < 3:
+                if reply["finish"] == "overthought" and thinks < 3:
                     # a local model thinking on and on (Ornith-9B: up to 18k tokens before one edit, minutes
-                    # at 60 tokens a second): keep where its thinking got to, and have it act on that
-                    loops += 1
+                    # at 60 tokens a second): keep where its thinking got to, and have it act on that.
+                    # Its own count, of cuts in a row: a long turn can need many, and past a cap the
+                    # cut reply would pass for an empty one and end the turn
+                    thinks += 1
                     self.view.note("it thought for a long time: purr cut the thinking and asked it to act", "warn")
                     self.messages[-1] = {"role": "assistant", "content": "(my thinking was cut off: too long)"}
                     self.messages.append({"role": "user", "content": THINK_NUDGE.format(tail=reply["tail"])})
@@ -1604,6 +1639,7 @@ class Agent:
                         continue
                     break
                 stopped = self._run_tools(reply["tool_calls"])
+                thinks = 0  # it acted: the next long think gets cut and nudged again
                 if self.tools.pending_images:  # look_at_image: show the model what it asked to see
                     shown = self.tools.pending_images
                     self.tools.pending_images = []
@@ -1672,6 +1708,8 @@ class Agent:
                 turn_cost += self._record(reply)
                 self.messages.append(self._assistant_message(reply))
                 self.save_log()
+                if reply["finish"] == "loop":  # cut by the loop breaker: no answer, say so
+                    self.view.note("the model got stuck repeating itself: purr cut it off", "warn")
                 if not reply["tool_calls"]:
                     break
                 calls, done = reply["tool_calls"], 0
@@ -2058,7 +2096,7 @@ class Agent:
             whole = "prompt_tokens_details" in usage or self.model.get("provider") not in LOCAL
             self._main_usage = (usage, len(self.messages), whole)
         s = self.turn_stats
-        s["out"] += usage.get("completion_tokens", 0)
+        s["out"] += usage.get("completion_tokens", reply.get("out_guess", 0))  # a cut reply has no usage
         s["calls"] += 1
         s["in"] += usage.get("prompt_tokens") or 0
         s["cached"] += _cached(usage)
