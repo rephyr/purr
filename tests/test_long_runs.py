@@ -150,3 +150,23 @@ class LoopBreakerTest(unittest.TestCase):
         self.assertIn("reply stuck repeating itself -> cut off", a.tools.repairs)
         nudge = [m["content"] for m in a.messages if m["role"] == "user" and "stuck repeating" in m["content"]]
         self.assertTrue(nudge and "Wait, I'll just write it." in nudge[0])
+
+
+class BrokenTemplateTest(unittest.TestCase):
+    def test_control_tokens_on_repeat_point_at_the_template(self):
+        from tests.test_limits import agent, reply
+        from harness.api import Stopped
+        a = agent()
+        calls = {"n": 0}
+
+        def fake(url, key, body, on_text, on_think, should_stop):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                for _ in range(2000):
+                    on_text("<|channel>thought ")
+                    if should_stop():
+                        raise Stopped(None)
+            return reply("ok")
+        with mock.patch.object(agent_module, "stream_chat", fake):
+            a.turn("hi")
+        self.assertTrue(any("chat template looks broken" in n for n in a.view.notes))

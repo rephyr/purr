@@ -1441,6 +1441,11 @@ class Agent:
                 if reply["finish"] == "loop" and loops < 3:
                     loops += 1
                     self.view.note("the model got stuck repeating itself: purr cut it off", "warn")
+                    if re.search(r"<\|\w+\|?>|<\w+\|>", reply["loop"]) and loops == 1:
+                        # its own control tokens as text, over and over: the chat template is off
+                        self.view.note(f"{self.model_name} writes its own control tokens as text "
+                                       f"({reply['loop'][:40]}): its chat template looks broken on this "
+                                       "server; another build of the model (or a newer Ollama) may fix it", "error")
                     self.messages[-1] = {"role": "assistant", "content": "(cut off: I kept repeating myself)"}
                     self.messages.append({"role": "user", "content": LOOP_NUDGE.format(said=reply["loop"])})
                     continue
