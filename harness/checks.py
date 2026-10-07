@@ -105,18 +105,23 @@ def placeholder(before, after):
     return None
 
 
-_PYTEST = []
+_PYTEST = {}
 
 
-def _has_pytest():
-    """Whether python3 (what the tests run with) has pytest. Asked once."""
-    if not _PYTEST:
+def _has_pytest(root):
+    """Whether python3 (what the tests run with) has pytest. Asked once per project folder.
+    Asked with the model's commands' environment: under `uv run purr` a bare python3 is purr's own
+    venv (no pytest), while the tests run with the machine's python3, which may have it."""
+    key = str(root)
+    if key not in _PYTEST:
+        from .tools import child_env  # tools imports this module
         try:
-            ok = subprocess.run(["python3", "-c", "import pytest"], capture_output=True, timeout=20).returncode == 0
+            ok = subprocess.run(["python3", "-c", "import pytest"], capture_output=True, timeout=20,
+                                cwd=root, env=child_env(root), stdin=subprocess.DEVNULL).returncode == 0
         except (OSError, subprocess.SubprocessError):
             ok = False
-        _PYTEST.append(ok)
-    return _PYTEST[0]
+        _PYTEST[key] = ok
+    return _PYTEST[key]
 
 
 def test_command(root):
@@ -130,7 +135,7 @@ def test_command(root):
                 + list(root.glob("*_test.py")))
     if py_tests:
         python = "python3"
-        if _has_pytest():
+        if _has_pytest(root):
             # only tests/ when that's where the tests are: pytest at the root also collects test
             # files that aren't the project's (fixtures, examples, purr's own bench tasks)
             only = " tests" if (root / "tests").is_dir() and not list(root.glob("test_*.py")) \

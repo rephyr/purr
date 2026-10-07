@@ -9,6 +9,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ["PURR_STATE"] = tempfile.mkdtemp()
 PURR = Path(__file__).resolve().parent.parent
@@ -95,6 +96,35 @@ class ClientTest(unittest.TestCase):
         self.assertIn("class Inventory", m.call("outline", {"path": "cafe/inventory.py"}))
         self.assertEqual(m.servers[0].proc.args and m.servers[0].env, {"PURR_OFFLINE": "1"})
         m.stop()
+
+    def test_servers_dont_run_in_purrs_own_venv(self):
+        # under `uv run purr`, `python3` was purr's venv: python_api reported purr's packages (textual)
+        # while the model's own `python3 app.py` said ModuleNotFoundError
+        venv = Path(tempfile.mkdtemp()) / "purr-venv"
+        (venv / "bin").mkdir(parents=True)
+        (venv / "bin" / "python3").write_text("#!/bin/sh\nexit 1\n")  # purr's venv python: not for servers
+        (venv / "bin" / "python3").chmod(0o755)
+        env = {"PATH": f"{venv / 'bin'}{os.pathsep}{os.environ['PATH']}", "VIRTUAL_ENV": str(venv)}
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "prefix", str(venv)), \
+                mock.patch.object(sys, "base_prefix", "/usr"):
+            m = Mcp({"mcp": {"stack": SERVERS["mcp"]["stack"]}}, project(CAFE))
+            self.assertIn("python_api", [s["function"]["name"] for s in m.schemas()])
+            # it asks the machine's python3, not the venv's (which says nothing at all)
+            self.assertIn("can't import no_such_pkg_xyz", m.call("python_api", {"name": "no_such_pkg_xyz"}))
+            m.stop()
+
+    def test_purrs_own_servers_start_when_python3_is_too_old(self):
+        # with purr's venv left out, a bare python3 was the machine's: a 3.9 or 3.10 can't import
+        # tomllib, and the codebase server was skipped
+        old = Path(tempfile.mkdtemp())
+        (old / "python3").write_text("#!/bin/sh\nexit 1\n")  # stands in for a python3 too old to run them
+        (old / "python3").chmod(0o755)
+        with mock.patch.dict(os.environ, {"PATH": f"{old}{os.pathsep}{os.environ['PATH']}"}):
+            m = Mcp(SERVERS, project(CAFE))
+            names = [s["function"]["name"] for s in m.schemas()]
+            m.stop()
+        self.assertIn("outline", names)
+        self.assertIn("python_api", names)
 
     def test_a_broken_server_is_skipped(self):
         notes = []

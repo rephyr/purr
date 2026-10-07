@@ -112,6 +112,23 @@ class FinalCheckTestsTest(unittest.TestCase):
             (root / "test_y.py").write_text("")
             self.assertFalse(checks.test_command(root).endswith(" tests"))
 
+    def test_pytest_is_looked_for_where_the_tests_run(self):
+        # under `uv run purr` a bare python3 was purr's venv (no pytest) while the tests ran with the
+        # machine's python3 (pytest): unittest found 0 tests and a passing suite was called failing
+        tmp = Path(tempfile.mkdtemp())
+        venv, system = tmp / "purr-venv", tmp / "system"
+        for d, code in ((venv / "bin", 1), (system, 0)):  # fake python3s: only the system one has pytest
+            d.mkdir(parents=True)
+            (d / "python3").write_text(f"#!/bin/sh\nexit {code}\n")
+            (d / "python3").chmod(0o755)
+        root = tmp / "project"
+        (root / "tests").mkdir(parents=True)
+        (root / "tests/test_x.py").write_text("def test_x():\n    assert True\n")
+        env = {"PATH": f"{venv / 'bin'}{os.pathsep}{system}{os.pathsep}/usr/bin", "VIRTUAL_ENV": str(venv)}
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "prefix", str(venv)), \
+                mock.patch.object(sys, "base_prefix", "/usr"), mock.patch.dict(checks._PYTEST, clear=True):
+            self.assertIn("pytest", checks.test_command(root))
+
 
 class ReadFirstTest(unittest.TestCase):
     def test_editing_an_unread_file_is_refused_until_read(self):

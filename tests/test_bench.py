@@ -1,6 +1,8 @@
 """Tests for purr bench's grading (no model is called).
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -8,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ["PURR_STATE"] = tempfile.mkdtemp()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -20,6 +23,28 @@ def copy_of(task_name):
     work = Path(tempfile.mkdtemp()) / "work"
     shutil.copytree(task["dir"] / "files", work)
     return task, work
+
+
+def script(path, body):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!/bin/sh\n{body}\n")
+    path.chmod(0o755)
+    return path
+
+
+@contextlib.contextmanager
+def in_purrs_venv():
+    """As under `uv run purr bench`: purr runs in its venv, whose python3 can't run the task's code
+    (exit 1), and the machine's python3 (the real one) is further down PATH. Yields (venv, machine)."""
+    root = Path(tempfile.mkdtemp())
+    venv, machine = root / "purr-venv", root / "machine"
+    script(venv / "bin" / "python3", "exit 1")
+    script(machine / "python3", f'exec "{sys.executable}" "$@"')
+    env = {"PATH": f"{venv / 'bin'}{os.pathsep}{machine}{os.pathsep}/usr/bin", "VIRTUAL_ENV": str(venv)}
+    with mock.patch.dict(os.environ, env), mock.patch.object(sys, "prefix", str(venv)), \
+            mock.patch.object(sys, "base_prefix", "/usr"), \
+            mock.patch.object(sys, "executable", str(venv / "bin" / "python3")):
+        yield venv, machine
 
 
 class GradeTest(unittest.TestCase):
@@ -62,6 +87,27 @@ class GradeTest(unittest.TestCase):
         (work / "broken.py").write_text("def oops(:\n")
         self.assertEqual(bench.grade(task, work)[2], 1)
 
+    def test_graded_with_the_python3_the_model_used(self):
+        # under `uv run purr bench` the model's python3 is the machine's (child_env drops purr's
+        # venv), but grading ran sys.executable: code fine on the model's 3.14 scored 0 on 3.12
+        task, work = copy_of("purr-meter")
+        f = work / "purr_meter.py"
+        f.write_text(f.read_text().replace("pets < 2", "pets <= 2"))
+        (work / "broken.py").write_text("def oops(:\n")
+        with in_purrs_venv() as (venv, machine):
+            self.assertEqual(bench.task_python(work), str(machine / "python3"))
+            self.assertEqual(bench.grade(task, work), (1, 1, 1))  # and the syntax error counted
+
+    def test_syntax_errors_counted_even_if_that_python_cant_say(self):
+        # the count ran in the model's python3 and became 0 when that printed anything but the number
+        task, work = copy_of("purr-meter")
+        (work / "broken.py").write_text("def oops(:\n")
+        bin_dir = Path(tempfile.mkdtemp())
+        for python in (script(bin_dir / "dead", "exit 1"),
+                       script(bin_dir / "chatty", f'echo "sitecustomize: hello"\nexec "{sys.executable}" "$@"')):
+            with mock.patch.object(bench, "task_python", lambda work: str(python)):
+                self.assertEqual(bench.grade(task, work)[2], 1, python.name)
+
     def test_false_claim_is_a_hallucination(self):
         task, work = copy_of("purr-meter")
         r = bench.blank("purr", "m", task)
@@ -98,6 +144,29 @@ class StockOpenCodeTest(unittest.TestCase):
         self.assertNotIn("providers", api)  # OpenCode's own provider list
 
 
+class OpenCodeEnvTest(unittest.TestCase):
+    def test_opencode_gets_the_models_environment(self):
+        # OpenCode's commands ran with purr's venv python3 while grading used the machine's
+        config = {"providers": {"ollama": {"base_url": "http://127.0.0.1:11434/v1"}},
+                  "models": {"m": {"provider": "ollama", "id": "x"}}}
+        task, work = copy_of("purr-meter")
+        seen = {}
+
+        def popen(cmd, **kw):
+            seen.update(kw["env"])
+            raise RuntimeError("stop here")
+
+        with in_purrs_venv() as (venv, machine), mock.patch.object(bench.subprocess, "Popen", popen):
+            with self.assertRaises(RuntimeError):
+                bench.run_opencode(config, "m", task, work, Path(tempfile.mkdtemp()), 60)
+        self.assertNotIn(str(venv / "bin"), seen["PATH"].split(os.pathsep))
+        self.assertIn(str(machine), seen["PATH"].split(os.pathsep))
+        self.assertNotIn("VIRTUAL_ENV", seen)
+        self.assertEqual(seen["PWD"], str(work))
+        self.assertTrue((Path(seen["XDG_CONFIG_HOME"]) / "opencode" / "opencode.json").is_file())
+        self.assertEqual(seen["PYTHONDONTWRITEBYTECODE"], "1")
+
+
 class ReachTest(unittest.TestCase):
     def test_a_server_that_is_down_is_reported(self):
         config = {"providers": {"llamacpp": {"base_url": "http://127.0.0.1:9/v1"}},
@@ -129,6 +198,15 @@ class OutsideTest(unittest.TestCase):
         edit = {"path": "cafe/receipt.py", "old_text": 'lines = ["~ cat café ~", ""]', "new_text": "x = a / b"}
         self.assertIsNone(bench.outside(edit, work))
         self.assertIsNone(bench.outside({"path": "notes.txt", "content": "see ~ and /etc/x"}, work))
+
+    def test_opencode_edit_text_is_not_a_path_either(self):
+        work = Path(tempfile.mkdtemp()) / "work"
+        work.mkdir()
+        target = str(work / "a.py")  # OpenCode's edit: filePath, oldString, newString
+        for text in ("print('~ cat café ~')", "    return total // 2", '    route = "/api/users"'):
+            self.assertIsNone(bench.outside({"filePath": target, "oldString": "x", "newString": text}, work))
+            self.assertIsNone(bench.outside({"filePath": target, "oldString": text, "newString": "x"}, work))
+        self.assertEqual(bench.outside({"filePath": "/home", "oldString": "x", "newString": "y"}, work), "outside")
 
     def test_scratch_in_tmp_is_fine_and_collected(self):
         work = Path(tempfile.mkdtemp(prefix="purr-bench-")) / "work"
@@ -202,6 +280,17 @@ class PlayTest(unittest.TestCase):
         self.assertIn("<details><summary>2026-10-01", readme)  # the older run, folded
         self.assertTrue((out / "results" / "2026-10-02_120000.json").exists())
 
+    def test_your_failed_tests_and_visible_tests_use_the_grading_python(self):
+        # grade() ran on the machine's python3, the list of failed tests and 't' on purr's venv
+        from harness import play
+        task, work = copy_of("idle-catchup")
+        with in_purrs_venv(), mock.patch("sys.stdout", io.StringIO()) as out:
+            passed, total, _ = bench.grade(task, work)
+            self.assertLess(passed, total)
+            self.assertIn("test_crumbs_add_up_to_whole_coins", play.failed_tests(task, work))
+            play.visible_tests(work)
+        self.assertIn("Ran ", out.getvalue())
+
     def test_you_get_graded_and_join_the_table(self):
         import io
         from unittest import mock
@@ -214,7 +303,7 @@ class PlayTest(unittest.TestCase):
         with mock.patch.object(play, "BENCH_DIR", state), mock.patch.object(bench, "BENCH_DIR", state), \
                 mock.patch("builtins.input", lambda prompt="": next(answers)), \
                 mock.patch.object(play, "open_folder", lambda work, how: opened.append((work.name, how))), \
-                mock.patch("shutil.which", lambda cmd: "/usr/bin/code" if cmd == "code" else None), \
+                mock.patch("shutil.which", lambda cmd, **kw: "/usr/bin/code" if cmd == "code" else None), \
                 mock.patch.dict(os.environ, {"EDITOR": "true"}), mock.patch("sys.stdout", io.StringIO()) as out:
             self.assertEqual(play.play(args), 0)
         results = json.loads(next(state.glob("*/results.json")).read_text())

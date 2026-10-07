@@ -16,11 +16,10 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import time
 
 from . import ui
-from .bench import BENCH_DIR, blank, grade, markdown, new_out_dir, pick_tasks, print_table, summarise
+from .bench import BENCH_DIR, blank, grade, markdown, new_out_dir, pick_tasks, print_table, summarise, task_python
 
 
 def latest_bench():
@@ -32,7 +31,8 @@ def latest_bench():
 def failed_tests(task, work):
     """The hidden tests that failed, by name (after grade() has run them)."""
     check = work / "_bench_check"
-    r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-v", "-s", "_bench_check", "-t", "."],
+    # the python grade() used: another one can list tests that passed there as failed, or none at all
+    r = subprocess.run([task_python(work), "-m", "unittest", "discover", "-v", "-s", "_bench_check", "-t", "."],
                        cwd=work, capture_output=True, text=True, timeout=120)
     shutil.rmtree(check, ignore_errors=True)
     # "test_x (...) ... FAIL", or with a docstring: "test_x (...)" then "the docstring ... FAIL"
@@ -44,7 +44,7 @@ def visible_tests(work):
     if not any(p for p in work.rglob("test_*.py") if "_bench_check" not in p.parts):
         ui.say(ui.DIM, "    this task has no visible tests: the hidden ones decide")
         return
-    r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", ".", "-t", ".", "-p", "test_*.py"],
+    r = subprocess.run([task_python(work), "-m", "unittest", "discover", "-s", ".", "-t", ".", "-p", "test_*.py"],
                        cwd=work, capture_output=True, text=True, timeout=120)
     tail = (r.stderr or r.stdout).strip().splitlines()[-12:]
     ui.out(ui.DIM + "\n".join("    " + line for line in tail) + ui.RESET)
