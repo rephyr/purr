@@ -318,22 +318,47 @@ EARLIER_READ = "[an earlier read of"
 REQUIRED = {s["function"]["name"]: set(s["function"]["parameters"].get("required", [])) for s in schemas()}
 
 
-def call_from_json(text):
+def call_from_json(text, offered=None):
     """gpt-oss sometimes ends with a tool call's arguments as its whole answer, {"path": "x.py",
-    "offset": 10}, so nothing runs and the turn ends. When only one tool takes exactly those keys,
-    that's the call: [call] or []."""
+    "offset": 10}, so nothing runs and the turn ends. When only one tool (of those offered) takes
+    exactly those keys, that's the call: [call] or []."""
+    args = _json_object(text)
+    if not args:
+        return []
+    keys = set(args)
+    fits = [name for name, params in PARAM_TYPES.items()
+            if (offered is None or name in offered) and REQUIRED[name] <= keys <= set(params)]
+    return [{"id": "json_call_0", "name": fits[0], "args": json.dumps(args)}] if len(fits) == 1 else []
+
+
+def _json_object(text):
+    """The whole answer as a non-empty JSON object (```json fences allowed), or None."""
     body = (text or "").strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     if not (body.startswith("{") and body.endswith("}")):
-        return []
+        return None
     try:
         args = json.loads(body)
     except ValueError:
-        return []
-    if not isinstance(args, dict) or not args:
-        return []
+        return None
+    return args if isinstance(args, dict) and args else None
+
+
+def looks_like_call(text):
+    """A JSON answer that is a tool call which didn't run: {"name": ..., "arguments": ...}, or keys that
+    are all some tool's arguments ({"path": "a.py"} fits several tools). Any other JSON is an answer
+    ({"scripts": {...}} for "what's in package.json?"), and being told to call the tool again misleads it."""
+    args = _json_object(text)
+    if not args:
+        return False
     keys = set(args)
-    fits = [name for name, params in PARAM_TYPES.items() if REQUIRED[name] <= keys <= set(params)]
-    return [{"id": "json_call_0", "name": fits[0], "args": json.dumps(args)}] if len(fits) == 1 else []
+    return ("name" in keys and bool(keys & {"arguments", "parameters"})) \
+        or any(keys <= set(params) for params in PARAM_TYPES.values())
+
+
+def asks_for_json(request):
+    """The request asks for JSON ("reply with JSON", "as json", "a JSON-formatted list"), not just
+    names a .json file: "bump the version in package.json" still gets gpt-oss's JSON-call rescue."""
+    return bool(re.search(r"(?<![\w./-])json(?![\w/]|\.\w)", request or "", re.I))
 
 
 LOOKS = ("read_file", "grep", "list_files")  # their result changes when a file does
@@ -1106,6 +1131,8 @@ class Agent:
         self._regression_said = set()  # the green states (edit_gen) a note was given for: once each
         self.tools.seen.clear()   # read-before-edit: the new chat hasn't read anything yet
         self.tools.known.clear()  # "changed since you last saw them" is about this chat's reads
+        self.tools.renumbered.clear()  # "an earlier edit moved those lines" is about this chat's reads too
+        self.tools.shown.clear()
 
     # ---- sessions ----
 
@@ -1501,8 +1528,8 @@ class Agent:
                 if not reply["tool_calls"] and "<function=" in reply["text"]:
                     reply["tool_calls"], reply["text"] = calls_from_text(reply["text"])
                     self.tools.repairs += ["tool call written as text -> real call"] * len(reply["tool_calls"])
-                elif not reply["tool_calls"] and call_from_json(reply["text"]):
-                    reply["tool_calls"], reply["text"] = call_from_json(reply["text"]), ""
+                elif not reply["tool_calls"] and self._json_call(reply["text"]):
+                    reply["tool_calls"], reply["text"] = self._json_call(reply["text"]), ""
                     self.tools.repairs.append("tool call written as text -> real call")
 
                 if self._pair_handing_back and reply["tool_calls"]:
@@ -1558,7 +1585,8 @@ class Agent:
                         continue
                     # local models sometimes write a tool call as plain text, so it never runs
                     said = (reply["text"] or "").strip()
-                    if ("tool_call>" in said or (said.startswith("{") and said.endswith("}") and '":' in said)) \
+                    # bare JSON only counts when it may be a call here and its keys are a call's: else it's the answer
+                    if ("tool_call>" in said or (said.startswith("{") and self._json_may_be_call() and looks_like_call(said))) \
                             and retries < 2:
                         retries += 1
                         self.view.note("tool call came out as text, asking it to try again")
@@ -1672,6 +1700,21 @@ class Agent:
         for line in result.splitlines()[-4:]:
             self.view.note(line[:160])
         return result
+
+    def _json_may_be_call(self):
+        """A bare JSON answer may be a tool call written as text (gpt-oss on Ollama) only from a local
+        model, in a mode with tools, when the request didn't ask for JSON. Otherwise it's the answer:
+        {"items": [...]} asked for as JSON became a todo call that emptied the task list. A one-shot
+        run's deliverable is its files, never the final text, so there it is always a call."""
+        return (self.model.get("provider") in LOCAL and not self.tools.no_tools and not self.minimal
+                and (self.one_shot or not asks_for_json(getattr(self, "_request", ""))))
+
+    def _json_call(self, text):
+        """call_from_json, limited to the tools this step offered (ask mode: no write_file or run)."""
+        if not self._json_may_be_call():
+            return []
+        offered = {s["function"]["name"] for s in schemas(read_only=self.looks_only(), hidden=self.hidden_tools)}
+        return call_from_json(text, offered)
 
     def _begin_turn(self, text):
         """Everything a turn starts from, in one place: the clock, the request, and every flag the
@@ -2826,6 +2869,7 @@ class Agent:
         """Runs the tool calls. Returns True when you said a plain no (the turn ends)."""
         done = 0
         self.tools.halt = False
+        self.tools.reply += 1  # these calls saw the results of earlier replies' calls, not of each other
         self._executed = []  # (name, args, result) for the repeat check
         early = self._look_in_parallel(calls)  # several reads/searches at once: all at the same time
         try:

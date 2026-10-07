@@ -113,6 +113,28 @@ class NumberedEditTest(unittest.TestCase):
         self.assertTrue(out.startswith("edited"), out)
         self.assertEqual(Path(a.root, "t.tsv").read_text(), "1\tone\n2\tTWO\n")
 
+    def test_a_plain_new_text_keeps_a_last_line_that_is_a_number(self):
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "expected.txt").write_text("total\nsum:\n41\n")
+        a.tools.seen.add(Path(a.root, "expected.txt").resolve())
+        out = a.tools.call("edit_file", json.dumps({"path": "expected.txt", "old_text": "    2\tsum:\n    3\t41",
+                                                     "new_text": "sum:\n42"}))
+        self.assertTrue(out.startswith("edited"), out)
+        self.assertEqual(Path(a.root, "expected.txt").read_text(), "total\nsum:\n42\n")
+
+    def test_numbered_empty_lines_in_the_middle_of_new_text_stay_empty(self):
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "a.py").write_text("def f():\n    return 0\n\n\ndef g():\n    pass\n")
+        a.tools.seen.add(Path(a.root, "a.py").resolve())
+        new = "    1\tdef f():\n    2\t    return 1\n    3\n    4\n    5\tdef h():\n    6\t    pass\n    7\t[\n42\n]"
+        out = a.tools.call("edit_file", json.dumps({"path": "a.py", "old_text": "    1\tdef f():\n    2\t    return 0",
+                                                     "new_text": new}))
+        self.assertTrue(out.startswith("edited"), out)
+        self.assertEqual(Path(a.root, "a.py").read_text(),
+                         "def f():\n    return 1\n\n\ndef h():\n    pass\n[\n42\n]\n\n\ndef g():\n    pass\n")
+
 
 class CheckpointQuoteTest(unittest.TestCase):
     def test_a_follow_up_doesnt_hide_the_task(self):
@@ -233,3 +255,24 @@ class RemovedDefinitionTest(unittest.TestCase):
         self.assertNotIn("removed", out)  # a rename
         out = a.tools.call("edit_file", json.dumps({"path": "c.py", "old_text": "        return self.n", "new_text": "        return self.n + 1"}))
         self.assertNotIn("removed", out)
+
+    def test_making_a_definition_public_is_not_removing_it(self):
+        from harness.checks import removed_definitions
+        for path, before, after in [
+            ("a.js", "function render(x) {\n}\n", "export function render(x) {\n}\n"),
+            ("a.ts", "function f() {}\nclass Foo {}\n", "export async function f() {}\nexport default class Foo {}\n"),
+            ("a.rs", "fn main() {}\nfn helper() {}\n", "fn main() {}\npub fn helper() {}\n"),
+            ("a.rs", "fn parse() {}\n", "pub(crate) async fn parse() {}\n"),
+            ("a.gd", "func make():\n\tpass\n", "static func make():\n\tpass\n"),
+            ("a.go", "func F() {}\n", "func (s *S) F() {}\n"),
+        ]:
+            self.assertEqual(removed_definitions(path, before, after), [], (path, after))
+        # a real removal behind a prefix is still seen
+        self.assertEqual(removed_definitions("a.rs", "pub fn a() {}\npub fn b() {}\n", "pub fn a() {}\n"), ["fn b"])
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "m.js").write_text("function render(x) {\n  return x\n}\n")
+        a.tools.seen.add(Path(a.root, "m.js").resolve())
+        out = a.tools.call("edit_file", json.dumps({"path": "m.js", "old_text": "function render", "new_text": "export function render"}))
+        self.assertNotIn("removed", out)
+        self.assertEqual(a.tools.warnings, [])

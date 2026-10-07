@@ -111,7 +111,10 @@ TOOL_ALIASES = {"search": "grep", "grep_search": "grep", "ripgrep": "grep", "fin
 ARG_ALIASES = {"file_path": "path", "filePath": "path", "filename": "path", "file": "path",
                "old_string": "old_text", "oldString": "old_text", "old_str": "old_text",
                "new_string": "new_text", "newString": "new_text", "new_str": "new_text",
-               "cmd": "command", "query": "pattern", "regex": "pattern"}
+               "cmd": "command", "query": "pattern", "regex": "pattern", "include": "glob"}
+# arguments other harnesses' tools take that only say why (OpenCode's bash requires description):
+# dropping them changes nothing the call does
+NOTE_ARGS = {"description", "explanation", "reason"}
 UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 READ_ONLY = {"read_file", "list_files", "grep", "fetch_url"}
@@ -214,17 +217,25 @@ def clip(s, limit=MAX_OUTPUT, spilled=None):
     return s[:half] + f"\n... [{len(s) - limit} chars cut; {where}] ...\n" + s[-half:]
 
 
-def edit_window(after, before, size):
-    """The numbered lines around the first change, for an edit's result."""
+def window_lines(after, before, size):
+    """The first and last line numbers edit_window shows (from 1), or None when it shows nothing."""
     old, new = before.splitlines(), after.splitlines()
     ops = [op for op in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes() if op[0] != "equal"]
-    if not ops or not new:
-        return ""
+    if not ops or not new or not size:
+        return None
     first, last = ops[0][3], max(op[4] for op in ops)
     start = max(0, min(first, (first + last) // 2) - size // 4)
-    end = min(len(new), start + size)
-    lines = "\n".join(f"{n + 1:>5}\t{new[n]}" for n in range(start, end))
-    return f"\nnow (lines {start + 1}-{end} of {len(new)}):\n{lines}"
+    return start + 1, min(len(new), start + size)
+
+
+def edit_window(after, before, size):
+    """The numbered lines around the first change, for an edit's result."""
+    shown = window_lines(after, before, size)
+    if not shown:
+        return ""
+    new, (start, end) = after.splitlines(), shown
+    lines = "\n".join(f"{n:>5}\t{new[n - 1]}" for n in range(start, end + 1))
+    return f"\nnow (lines {start}-{end} of {len(new)}):\n{lines}"
 
 
 def _lead(line):
@@ -258,12 +269,17 @@ def _loose_match(text, old, new):
     if not imap:
         imap = {first[0]: first[1]} if first else {"": ""}
     keys = sorted(imap, key=len)
+    # lines added above the first line (a decorator, a comment) share its indent, so the first
+    # line's own indent covers new_text down to where that line reappears, not just line 0
+    top = 0
+    if first:
+        top = next((i for i, l in enumerate(new_lines) if l.strip() == old_lines[0].strip()), 0)
     fixed = []
     for i, l in enumerate(new_lines):
         lead, body = _lead(l), l.lstrip(" \t")
         if not body:
             fixed.append("")
-        elif i == 0 and first:
+        elif first and i <= top and lead == first[0]:
             fixed.append(first[1] + body)
         elif lead in imap:
             fixed.append(imap[lead] + body)
@@ -276,17 +292,27 @@ def _loose_match(text, old, new):
     ending = "\n" if real_text.endswith("\n") else ""
     return real_text, "\n".join(fixed) + ending
 
+def _has_numbers(text):
+    return any(NUMBERED.match(line) for line in text.split("\n"))
+
+
 def _unnumbered(text):
-    """text without read_file's line numbers: "   12\t" prefixes go, and a line that is only a number at
-    either end goes (an empty line, copied with its number). Unchanged when it has neither."""
+    """text without read_file's line numbers: "   12\t" prefixes go, and a line that is only a number (an
+    empty line, copied with its number) goes at either end and turns empty in the middle. Unchanged when
+    it has neither."""
     lines = text.split("\n")
-    numbered = sum(1 for line in lines if NUMBERED.match(line))
-    bare = [i for i in (0, len(lines) - 1) if lines and re.fullmatch(r" *\d+ *", lines[i])]
-    if not numbered and not bare:
+    offsets = {int(m.group(1)) - i for i, line in enumerate(lines) if (m := re.match(r" *(\d+)\t", line))}
+    bare = [i for i, line in enumerate(lines) if (m := re.fullmatch(r" *(\d+) *", line))
+            # with numbered lines around, only a number that carries on their count is one; "42" in data stays
+            and (int(m.group(1)) - i in offsets if offsets else i in (0, len(lines) - 1))]
+    if not offsets and not bare:
         return text
+    last = len(lines) - 1
     lines = [NUMBERED.sub("", line, count=1) for line in lines]
-    for i in sorted(set(bare), reverse=True):
-        if len(lines) > 1:
+    for i in reversed(bare):
+        if 0 < i < last:
+            lines[i] = ""
+        elif len(lines) > 1:
             del lines[i]
     return "\n".join(lines)
 
@@ -313,6 +339,9 @@ class Tools:
         self.read_before_edit = True  # edits only on files read this session
         self.seen = set()        # files read (or written) so far
         self.known = {}          # those files' text as purr last read or wrote it (outside changes)
+        self.renumbered = {}     # file -> first line whose number an edit moved since the model last read it
+        self.shown = {}          # file -> [(reply, first, last)]: edit results' numbered lines since then
+        self.reply = 0           # the model's replies so far (the agent counts them): which calls saw which results
         self.limits = limits or Limits.for_model({})
         self.step = 0         # tool calls so far: spill files and stale marks say "as of step N"
         self.last_spill = None  # where the last call's whole output went, if it was cut
@@ -422,16 +451,28 @@ class Tools:
             self.view.tool(self.summary(name, args))
         self.step += 1
         self.last_spill = None
-        # arguments the tool doesn't have are dropped, not fatal: gpt-oss added replace_whole_file
-        # to every edit_file call, and each failed whole ("unexpected keyword argument")
+        # an argument the tool doesn't have, set to false/empty, asks for nothing: dropped (gpt-oss
+        # added replace_whole_file: false to every edit_file call, and each failed whole). One with
+        # a value would change what the call does (append: true, cwd: "frontend"), so running
+        # without it would do something else and report success: refused, nothing done
         import inspect
         known = inspect.signature(fn).parameters
         extra = [k for k in args if k not in known]
+        meant = []
         if extra and not any(p.kind == p.VAR_KEYWORD for p in known.values()):
             for k in extra:
-                args.pop(k)
-                self.repairs.append(f"unknown argument {k} for {name} -> dropped")
+                if args[k] in (None, False, "", [], {}) or k in NOTE_ARGS:
+                    args.pop(k)
+                    self.repairs.append(f"unknown argument {k} for {name} -> dropped")
+                else:
+                    meant.append(k)
         try:
+            if meant:
+                have = ", ".join(k for k in known if k != "self")
+                raise TypeError(f"{name} has no argument {', '.join(meant)} (its arguments: {have}). "
+                                "Nothing was done; call it again without "
+                                + ("it" if len(meant) == 1 else "them")
+                                + (" (for a folder, put cd <folder> && in the command)" if name == "run" else ""))
             raw = fn(**args)
             if isinstance(raw, str) and len(raw) > self.limits.tool_output:
                 self.last_spill = self.spill(name, raw)
@@ -636,6 +677,8 @@ class Tools:
         lines = text.splitlines()
         self.seen.add(p.resolve())
         self._saw(p, text)
+        self.renumbered.pop(p.resolve(), None)  # its line numbers are fresh again
+        self.shown.pop(p.resolve(), None)
         offset = max(1, int(offset))
         limit = self.limits.read_lines if limit is None else int(limit)
         room = self.limits.tool_output - 200  # whole lines only: clip() would cut out the middle
@@ -711,25 +754,19 @@ class Tools:
         if old_text is None and content is not None and line_start is None:  # it meant "replace the whole file"
             self.repairs.append("edit_file with only content -> write_file")
             return self.t_write_file(path, content)
+        span = None
         if old_text is None and line_start is not None and (new_text is not None or content is not None):
-            # gpt-oss edits by line numbers: those lines (as read_file numbers them) are the old text
-            p = self._path(path)
-            if p.is_file() and (not self.read_before_edit or p.resolve() in self.seen):
-                lines = p.read_text().splitlines(keepends=True)
-                start, end = int(line_start), int(line_end if line_end is not None else line_start)
-                if 1 <= start <= end <= len(lines):
-                    old_text = "".join(lines[start - 1:end]).rstrip("\n")
-                    new_text = (new_text if new_text is not None else content).rstrip("\n")
-                    self.repairs.append("edit_file by line numbers -> those lines' text")
-        if old_text is None or new_text is None:
+            # gpt-oss edits by line numbers (as read_file numbers them). Replaced by position below, not by
+            # their text: a blank or repeated line's text matches in many places
+            span = int(line_start), int(line_end if line_end is not None else line_start)
+            new_text = (new_text if new_text is not None else content).rstrip("\n")
+            self.repairs.append("edit_file by line numbers -> those lines")
+        if span is None and (old_text is None or new_text is None):
             return ("error: edit_file needs old_text (copied from the file) and new_text. "
                     "To replace the whole file, use write_file(path, content).")
-        if self.code_checks and old_text and new_text:
-            hole = checks.placeholder(old_text, new_text)
-            if hole:
-                self.warnings.append(f"{path}: placeholder in edit refused")
-                return (f"error: new_text contains the placeholder {hole!r} instead of real code; that would "
-                        "delete code. Put the real lines in new_text.")
+        refused = None if span else self._placeholder(path, old_text, new_text)
+        if refused:
+            return refused
         p = self._path(path)
         outside = self._outside(path)
         if outside:
@@ -741,6 +778,8 @@ class Tools:
             return (f"error: read {path} first (read_file), so your old_text matches what is really in it. "
                     "Then make the edit.")
         before = p.read_text()
+        if span:
+            return self._edit_lines(path, p, before, span, new_text)
         count = before.count(old_text)
         if count == 0 and "\\u00" in old_text:  # "\u003c" written out instead of "<"
             fixed = [UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), t) for t in (old_text, new_text)]
@@ -753,7 +792,11 @@ class Tools:
             # bare "    12" line for an empty one (gpt-oss)
             plain = _unnumbered(old_text)
             if plain != old_text and before.count(plain) == 1:
-                old_text, new_text, count = plain, _unnumbered(new_text), 1
+                # new_text loses numbers only if it has them too: a plain "sum:\n42" after a numbered
+                # old_text keeps its 42
+                if _has_numbers(new_text) or not _has_numbers(old_text):
+                    new_text = _unnumbered(new_text)
+                old_text, count = plain, 1
                 self.repairs.append("edit_file old_text had read_file's line numbers -> stripped")
         if count == 0:
             loose = _loose_match(before, old_text, new_text)
@@ -763,6 +806,46 @@ class Tools:
         if count > 1 and not replace_all:
             return f"error: old_text matches {count} times. Add more surrounding lines so it is unique."
         after = before.replace(old_text, new_text) if replace_all else before.replace(old_text, new_text, 1)
+        return self._write_edit(path, p, before, after, count if replace_all else 1)
+
+    def _edit_lines(self, path, p, before, span, new_text):
+        """edit_file by line numbers: replace exactly those lines, keeping the last one's line ending."""
+        lines = before.splitlines(keepends=True)
+        start, end = span
+        moved = self.renumbered.get(p.resolve())
+        seen_since = any(r < self.reply and first <= start and end <= last
+                         for r, first, last in self.shown.get(p.resolve(), ()))
+        if moved is not None and end >= moved and not seen_since:
+            # numbered from a read before an earlier edit added or removed lines (often an edit
+            # earlier in the same reply): those numbers now point at other lines. Numbers from an
+            # edit's own result are fresh, once a later reply could have seen it
+            self.warnings.append(f"{path}: edit by stale line numbers refused")
+            return (f"error: an earlier edit added or removed lines in {path}, so line {start} is no "
+                    f"longer the line you read there. read_file {path} again for the new line "
+                    "numbers, or use old_text (copied from the file) instead.")
+        if not 1 <= start <= end <= len(lines):
+            return (f"error: {path} has {len(lines)} lines, so lines {start}-{end} can't be edited. "
+                    "Use old_text (copied from the file) and new_text instead.")
+        refused = self._placeholder(path, "".join(lines[start - 1:end]).strip("\n"), new_text)
+        if refused:
+            return refused
+        last = lines[end - 1]
+        ending = last[len(last.rstrip("\r\n")):]
+        after = "".join(lines[:start - 1]) + new_text + ending + "".join(lines[end:])
+        return self._write_edit(path, p, before, after, 1)
+
+    def _placeholder(self, path, old_text, new_text):
+        """The refusal for an edit whose new_text is a placeholder ("# ... rest unchanged"), or None."""
+        if not (self.code_checks and old_text and new_text):
+            return None
+        hole = checks.placeholder(old_text, new_text)
+        if not hole:
+            return None
+        self.warnings.append(f"{path}: placeholder in edit refused")
+        return (f"error: new_text contains the placeholder {hole!r} instead of real code; that would "
+                "delete code. Put the real lines in new_text.")
+
+    def _write_edit(self, path, p, before, after, count):
         self.view.diff(path, before, after)
         ok, reason = self._allowed("edit_file", f"edit {path}?")
         if not ok:
@@ -771,8 +854,18 @@ class Tools:
         p.write_text(after)
         self._compiles(p, after)
         self._saw(p, after)
+        old_lines, new_lines = before.splitlines(), after.splitlines()
+        if len(old_lines) != len(new_lines):  # lines below the change have new numbers now
+            same = next((i for i, (a, b) in enumerate(zip(old_lines, new_lines)) if a != b),
+                        min(len(old_lines), len(new_lines)))
+            key = p.resolve()
+            self.renumbered[key] = min(same + 1, self.renumbered.get(key, same + 1))
+            self.shown[key] = []  # lines shown before this edit have old numbers too
+        shown = window_lines(after, before, self.limits.edit_window)
+        if shown and p.resolve() in self.renumbered:  # the result below numbers these lines as they are now
+            self.shown.setdefault(p.resolve(), []).append((self.reply, *shown))
         window = edit_window(after, before, self.limits.edit_window) if self.limits.edit_window else ""
-        return (f"edited {path} ({count if replace_all else 1} change)" + window
+        return (f"edited {path} ({count} change)" + window
                 + self._check_code(path, before, after))
 
     def _not_found(self, path, text, old_text):
@@ -837,6 +930,8 @@ class Tools:
         self._compiles(p, content)
         self.seen.add(p.resolve())  # it knows what it just wrote
         self._saw(p, content)
+        self.renumbered.pop(p.resolve(), None)
+        self.shown.pop(p.resolve(), None)
         window = edit_window(content, before, self.limits.edit_window) if self.limits.edit_window and before else ""
         return f"wrote {path} ({len(content.splitlines())} lines)" + window + self._check_code(path, before, content)
 
@@ -880,8 +975,13 @@ class Tools:
                    "delete that code")
         elif old_n >= 40 and new_n < old_n * 0.5:
             why = f"{path} would shrink from {old_n} to {new_n} lines"
-        elif tests.search(content) and not tests.search(before) and not checks.TEST_FILE.search(str(path)):
-            # Ornith-9B, wrapping up lru-cache, wrote its tests over cache.py itself
+        elif (tests.search(content) and not tests.search(before) and str(path).endswith(".py")
+              and not checks.TEST_FILE.search(str(path))
+              and Path(path).name not in ("conftest.py", "test.py", "tests.py")
+              and {n for _, n in checks.DEFINITION.findall(before)} - {n for _, n in checks.DEFINITION.findall(content)}):
+            # Ornith-9B, wrapping up lru-cache, wrote its tests over cache.py itself. Only when code the
+            # file defined is gone: a README naming unittest, a fixture added to conftest.py or a module
+            # keeping its code and gaining a test_ function is not that
             why = (f"{path} holds code, not tests, and this would replace it with a test module (did you "
                    "mean a test file, like test_" + Path(path).name + "?)")
         else:

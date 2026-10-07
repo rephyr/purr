@@ -59,7 +59,12 @@ def code_problems(path, before, after, limit=5):
     return [f"line {line}: {msg} ({code})" for line, code, msg in sorted(new)[:limit]]
 
 
-DEFINITION = re.compile(r"^[ \t]*(?:async[ \t]+)?(def|class|func|fn|function)[ \t]+(\w+)", re.M)
+# Prefixes like `export`, `pub(crate)`, `static` are allowed: without them, making a function
+# public read as deleting it, and the model was told to put it back (a duplicate definition).
+# A Go method's receiver `func (s *S) F` is skipped so the name is F.
+DEFINITION = re.compile(r"^[ \t]*(?:(?:export|default|declare|abstract|async|static|unsafe|const|"
+                        r"pub(?:\([^)\n]*\))?|extern(?:[ \t]+\"[^\"\n]*\")?)[ \t]+)*"
+                        r"(def|class|func|fn|function)[ \t]+(?:\([^)\n]*\)[ \t]*)?(\w+)", re.M)
 
 
 def removed_definitions(path, before, after):
