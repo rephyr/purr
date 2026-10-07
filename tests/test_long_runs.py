@@ -170,3 +170,39 @@ class BrokenTemplateTest(unittest.TestCase):
         with mock.patch.object(agent_module, "stream_chat", fake):
             a.turn("hi")
         self.assertTrue(any("chat template looks broken" in n for n in a.view.notes))
+
+
+class SteerTest(unittest.TestCase):
+    """What you type while the model works reaches it at its next step (the window refused it before,
+    and Esc threw the step away)."""
+
+    def test_a_steer_goes_in_before_the_next_step(self):
+        a = agent()
+        a.tools.trust_all = True
+        a.config = {**a.config, "final_check": False}
+        seen = []
+        replies = iter([reply("", tool=("list_files", {"path": "."})), reply("ok, pathlib it is")])
+
+        def fake(messages=None, **kw):
+            seen.append([m.get("content") for m in a.messages])
+            if len(seen) == 1:
+                a.steers.append("use pathlib, not os.path")
+            return next(replies)
+        a._call = fake
+        a.turn("tidy the paths")
+        self.assertIn("(the user, while you were working:) use pathlib, not os.path", seen[1])
+        self.assertEqual(a.steers, [])
+
+    def test_a_steer_while_it_writes_its_answer_keeps_the_turn_going(self):
+        a = agent()
+        calls = {"n": 0}
+
+        def fake(messages=None, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                a.steers.append("also mention the tests")
+                return reply("Here's the answer.")
+            return reply("And the tests: none.")
+        a._call = fake
+        a.turn("explain it")
+        self.assertEqual(calls["n"], 2)

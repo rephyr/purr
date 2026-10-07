@@ -14,7 +14,9 @@ purr -p "fix the bug in mathy.py"   # one task, then exit
 Drag over any text to copy it (ctrl+c copies a selection too; with nothing selected it stops an
 answer or clears the box). In the message box: enter sends, ctrl+j makes a new line, up/down bring back old messages.
 `/` opens the command menu, `@` picks a file to attach, `!command` runs a shell command yourself
-(the model sees the output). Esc stops an answer, ctrl+q quits. Before edits and commands a popup
+(the model sees the output). Esc stops an answer, ctrl+q quits. While it works you can keep
+typing: what you send reaches the model before its next step ("use pathlib, not os.path"), without
+throwing away the step it's on. Before edits and commands a popup
 asks: y, a (always), n, or type what to do instead. A plain "n" ends the turn.
 
 A little cat above the message box shows what purr is doing: thinking, exploring (reading,
