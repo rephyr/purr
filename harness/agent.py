@@ -28,7 +28,7 @@ from .jobs import Jobs
 from .prompts import (  # noqa: F401 - the words purr says; some only re-exported for others
     SYSTEM, ASK_TOOLS, LEARN, LEARN_NUDGE, LEARN_SHORTEN, PAIR,
     PAIR_HAND_BACK, CHAT, CREATE, PLAN, TICKET_WORK, TIME_INTRO, PILOT,
-    TIME_NOTES, CUT_NUDGE, LOOP_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK,
+    TIME_NOTES, CUT_NUDGE, LOOP_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK, FINAL_CHECK_GREEN, FINAL_CHECK_RED,
     ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
     ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT, GAP_NUDGE, LEDGER_NOTE,
@@ -149,6 +149,12 @@ RETRY_WAITS = [5, 15, 30]  # seconds between tries when an API server hiccups (a
 RETRY_WAITS_LOCAL = [2]    # Ollama on this machine: one more try; it's up or it isn't
 CUT_MAX = 5  # one-shot runs: cut-off replies nudged on before the turn may end (a chat: 2)
 CUT_TAIL_CHARS = 1200  # of a cut-off reply's end, quoted back so it can carry on from there
+# a file path in a request: tests/test_x.py, cafe/cats.py, README.md (a name with a known extension)
+NAMED_FILE = re.compile(r"(?<![\w/.-])(?:[\w.-]+/)*[\w-]+\.(?:py|js|ts|jsx|tsx|go|rs|rb|java|c|h|cpp|gd|md|json|toml|"
+                        r"yaml|yml|txt|csv|sh|html|css)\b")
+REMOVED_SHOWN = 6  # deleted lines the final check quotes
+COMMENT_LINE = re.compile(r"\s*(#|//|--|/\*|\*|\"\"\"|''')")
+ASKS_KEPT = 3  # the chat's latest requests a checkpoint quotes
 REPEAT_NUDGE = 2  # same tool call this many times: tell the model to stop repeating
 PRUNE_TO = 0.15  # trimming old output goes this far under prune_at (a share of the context)
 
@@ -212,6 +218,10 @@ def system_prompt(root, model_id, provider, hidden=(), mode="code", mcp_tools=()
         purr_dir = Path(__file__).resolve().parent.parent
         if Path.home() not in purr_dir.parents:  # installed somewhere like /opt/purr (a container)
             text = text.replace("- System: Linux", f"- System: Linux ({purr_dir} is purr itself, not the task)")
+    if mode in ("code", "learn", "pair"):
+        tests = checks.test_command(root)
+        if tests:  # models guessed `unittest discover -s tests` where the tests sit at the root
+            text = text.replace("- System: Linux", f"- System: Linux\n- Tests: `{tests}` runs this project's tests", 1)
     if sys.platform == "darwin":  # BSD tools: GNU-only flags fail
         text = text.replace("- System: Linux", "- System: macOS (BSD sed/grep: `sed -i ''`, no GNU-only flags)")
     if overview:
@@ -1049,6 +1059,7 @@ class Agent:
         self.session_in = 0      # prompt tokens sent, and how many of them were cached
         self.session_cached = 0
         self.last_usage = self._main_usage = None
+        self._asks = []
         self.title = ""
         stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
         self.log_path = None if self.helper or self.private else LOG_DIR / f"{stamp}.json"  # private: never saved
@@ -1409,7 +1420,7 @@ class Agent:
                         # small models lose the goal on long tasks: say it again now and then, and
                         # have them look at whether the approach is getting anywhere
                         self.messages.append({"role": "user", "content": CHECKPOINT.format(
-                            steps=steps - 1, request=_ends(text, 500, 300))})
+                            steps=steps - 1, request=self._request_quote())})
                     self._time_note()
                     self.view.activity("thinking")
                     self._think_hard = steps == 1 or self._think_hard
@@ -1593,6 +1604,8 @@ class Agent:
         self._time_said = set()
         self.tools.deadline = self._started + self.time_limit if self.time_limit and not self.helper else None
         self._request = text  # kept word for word through a compaction
+        if not self.helper:
+            self._asks = (getattr(self, "_asks", []) + [text])[-ASKS_KEPT:]  # the chat's requests (_request_quote)
         if self.one_shot and not self.helper:
             self._one_shot_setup(text)
         self.tools.begin_turn()
@@ -1621,6 +1634,15 @@ class Agent:
             # stop at the time limit (a benchmark's own is about 10% later): a model still editing when
             # it's killed leaves whatever it was in the middle of, and the safety net needs a moment
             self._stop_at = self._started + self.time_limit
+
+    def _request_quote(self):
+        """The request, for checkpoints and summaries: whole unless it's long, and in a chat the earlier
+        asks too. Quoting only this turn's message gave "The request: it still fails"."""
+        asks = getattr(self, "_asks", None) or [getattr(self, "_request", "")]
+        if len(asks) == 1:
+            return "The request: " + _ends(asks[0], 2000, 800)
+        earlier = "\n".join("- " + _ends(a, 500, 200) for a in asks[:-1])
+        return f"The user asked earlier:\n{earlier}\nand now: {_ends(asks[-1], 1500, 600)}"
 
     def _turn_content(self, text):
         """Your message as the model gets it: @files attached, your own edits (pair mode), the
@@ -2035,17 +2057,67 @@ class Agent:
         self._checked = True
         self.view.note("♡ checking the request once more before finishing")
         services = " " + SERVICES if self._background else ""
+        report = self._test_report()
+        green = getattr(self, "_tests_green", None)
         if self.one_shot:
             left = self._minutes_left()
             check = ONE_SHOT_CHECK.format(time=f" (about {left} minutes left)" if left else "", services=services,
                                           nobody=NOBODY if self._hedges(reply) else "", scratch=self._new_files_note())
             self._hedged = self._hedged or self._hedges(reply)
-        else:
+        elif green:  # purr just ran the project's tests and they pass
+            check = FINAL_CHECK_GREEN.format(services=services)
+        elif green is False:
+            check = FINAL_CHECK_RED.format(services=services)
+        else:  # no tests to run: the edge-case probe is the only check there is
             check = (FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT).format(services=services)
         if self.one_shot and self._on("margin_check"):
             check = check[:-1] + MEASURE_ASK + ")" if check.endswith(".)") else check + MEASURE_ASK
-        self.messages.append({"role": "user", "content": self._test_report() + self._blind_report() + check})
+        self.messages.append({"role": "user", "content": report + self._blind_report() + self._missing_files()
+                              + self._removed_lines() + check})
         return True
+
+    def _removed_lines(self):
+        """Lines of the files as they were that the changes deleted outright (not rewrote): Qwen3.6 took
+        the sword and potion recipes out of crafting.py, its own tests passed without them, and the
+        task's didn't. Said at the final check so the model confirms the request asked for it."""
+        gone = []
+        for p, before in self.tools.session_changes().items():
+            if not before or not p.exists():
+                continue
+            try:
+                after = p.read_text(errors="replace")
+            except OSError:
+                continue
+            old = before.splitlines()
+            ops = difflib.SequenceMatcher(None, old, after.splitlines(), autojunk=False).get_opcodes()
+            for tag, i1, i2, _, _ in ops:
+                if tag == "delete":
+                    gone += [line.strip() for line in old[i1:i2] if line.strip() and not COMMENT_LINE.match(line)]
+        if not gone:
+            return ""
+        shown = "; ".join(f"`{line[:80]}`" for line in gone[:REMOVED_SHOWN])
+        more = f" and {len(gone) - REMOVED_SHOWN} more" if len(gone) > REMOVED_SHOWN else ""
+        return (f"(purr: your changes deleted these lines that were there before: {shown}{more}. Keep that only "
+                "if the request asks for it; otherwise put them back.)\n")
+
+    def _missing_files(self):
+        """Files the request names that don't exist: gpt-oss said it added tests/test_cat_of_the_day.py,
+        never wrote it, and the green tests (without it) let that pass."""
+        request = getattr(self, "_request", "")
+        named = dict.fromkeys(m.strip("`'\".,;:()") for m in NAMED_FILE.findall(request))
+        missing = []
+        for name in named:
+            p = Path(name).expanduser()
+            p = p if p.is_absolute() else self.root / p
+            try:
+                if not p.exists() and self.root in p.resolve().parents:
+                    missing.append(name)
+            except (OSError, ValueError):
+                continue
+        if not missing:
+            return ""
+        return (f"(purr: the request names {', '.join('`' + m + '`' for m in missing[:6])}, which "
+                f"{'does' if len(missing) == 1 else 'do'} not exist.)\n")
 
     # ---- the safety net (one-shot runs; safety_net = false turns it off) ----
 
@@ -2226,6 +2298,10 @@ class Agent:
         one more look (once). It was half: most runs that stopped early with a fragile result had
         less than that left, so the look never came. Returns True when it asked."""
         if not (self.one_shot and self._checked and self.time_limit) or self._evidence or self.helper:
+            return False
+        if self.limits.helpers == "full" and getattr(self, "_green_gen", None) == self.tools.edit_gen:
+            # a small model whose tests passed and nothing changed since: "use the time" made it
+            # rewrite what worked, with check scripts of its own that were wrong
             return False
         left = self._minutes_left()
         total = max(1, round(self.time_limit / 60))
@@ -2418,6 +2494,7 @@ class Agent:
     def _test_report(self):
         """For the final check: purr runs the project's tests itself, so the model sees the real
         result instead of trusting its own "tests pass". "" when there's nothing to run."""
+        self._tests_green = None  # True / False when purr ran them (the final check picks its words by it)
         cmd = checks.test_command(self.root) if self.config.get("final_check_tests", True) else None
         if not cmd:
             return ""
@@ -2425,6 +2502,9 @@ class Agent:
         if ran is None:
             return ""
         output, code = ran
+        self._tests_green = TESTS_PASSED(f"{output}\n[exit code {code}]")
+        if self._tests_green:
+            self._green_gen = self.tools.edit_gen
         if TESTS_PASSED(f"{output}\n[exit code {code}]"):
             self._keep_good(cmd)
         self.view.tool_result("run", {"command": cmd}, f"{output}\n[exit code {code}]")
@@ -2723,6 +2803,9 @@ class Agent:
             if request:
                 n = 3000 if self.limits.context > 65536 else 2000
                 head += "\n\nWhat the user asked for, word for word:\n" + _ends(request, n * 2 // 3, n // 3)
+                earlier = [a for a in getattr(self, "_asks", [])[:-1] if a != request]
+                if earlier:
+                    head += "\n\nAnd earlier in this chat:\n" + "\n".join("- " + _ends(a, 400, 150) for a in earlier)
             todos = [t["text"] for t in self.tools.todo_list if t["status"] != "done"]
             if todos:
                 head += "\n\nStill open on your task list: " + "; ".join(todos)

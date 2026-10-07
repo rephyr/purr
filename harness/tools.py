@@ -115,6 +115,9 @@ ARG_ALIASES = {"file_path": "path", "filePath": "path", "filename": "path", "fil
 UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 READ_ONLY = {"read_file", "list_files", "grep", "fetch_url"}
+ZERO_TESTS = re.compile(r"\bRan 0 tests\b|NO TESTS RAN|collected 0 items|\bno tests ran\b|Start directory is not "
+                        r"importable|ERROR: file or directory not found")
+NUMBERED = re.compile(r"^ *\d+\t")  # read_file's line numbers, pasted into an edit
 SKIP_DIRS = {"node_modules", "__pycache__", "venv", "dist", "build", "target"}  # besides hidden ones
 
 
@@ -272,6 +275,21 @@ def _loose_match(text, old, new):
     real_text = "".join(real)
     ending = "\n" if real_text.endswith("\n") else ""
     return real_text, "\n".join(fixed) + ending
+
+def _unnumbered(text):
+    """text without read_file's line numbers: "   12\t" prefixes go, and a line that is only a number at
+    either end goes (an empty line, copied with its number). Unchanged when it has neither."""
+    lines = text.split("\n")
+    numbered = sum(1 for line in lines if NUMBERED.match(line))
+    bare = [i for i in (0, len(lines) - 1) if lines and re.fullmatch(r" *\d+ *", lines[i])]
+    if not numbered and not bare:
+        return text
+    lines = [NUMBERED.sub("", line, count=1) for line in lines]
+    for i in sorted(set(bare), reverse=True):
+        if len(lines) > 1:
+            del lines[i]
+    return "\n".join(lines)
+
 
 def _indent_map(model_lines, real_lines):
     """{model's indent: the file's} for lines that match ignoring indents; None if they disagree."""
@@ -506,6 +524,26 @@ class Tools:
     def begin_turn(self):
         self.undo_stack.append({})
 
+    def _stray_quote(self, path, content):
+        """A Python file written with one stray quote at its very end (gpt-oss: ...return total\\n" ), which
+        doesn't compile while the text without it does: the quote goes. The model couldn't edit a lone \"
+        away (it matches everywhere)."""
+        tail = content.rstrip()
+        if not str(path).endswith(".py") or not tail.endswith(('"', "'")):
+            return content
+        try:
+            compile(content, str(path), "exec")
+            return content
+        except (SyntaxError, ValueError):
+            pass
+        fixed = tail[:-1].rstrip() + "\n"
+        try:
+            compile(fixed, str(path), "exec")
+        except (SyntaxError, ValueError):
+            return content
+        self.repairs.append("write_file content ended with a stray quote -> removed")
+        return fixed
+
     def _compiles(self, p, text):
         """Note text as p's last version that compiles (Python files only)."""
         if p.suffix == ".py" and text is not None:
@@ -679,6 +717,13 @@ class Tools:
                 old_text, new_text = fixed
                 count = before.count(old_text)
         if count == 0:
+            # copied from read_file with its "   12\t" numbers (17 failed edits in purr bench), or with a
+            # bare "    12" line for an empty one (gpt-oss)
+            plain = _unnumbered(old_text)
+            if plain != old_text and before.count(plain) == 1:
+                old_text, new_text, count = plain, _unnumbered(new_text), 1
+                self.repairs.append("edit_file old_text had read_file's line numbers -> stripped")
+        if count == 0:
             loose = _loose_match(before, old_text, new_text)
             if not loose:
                 return self._not_found(path, before, old_text)
@@ -745,6 +790,7 @@ class Tools:
             self.warnings.append(f"{path}: overwrite before reading refused")
             return f"error: {path} already exists: read it first (read_file) before replacing it."
         before = p.read_text() if p.exists() else ""
+        content = self._stray_quote(path, content)
         stop = self._suspicious_rewrite(path, before, content)
         if stop:
             return stop
@@ -767,6 +813,11 @@ class Tools:
         if not self.code_checks:
             return ""
         problems = checks.code_problems(path, before, after)
+        lost = checks.removed_definitions(path, before, after)
+        if lost:  # gpt-oss replaced the start of __init__ with another method: the constructor was gone
+            self.warnings.append(f"{path}: removed {lost[0]}")
+            problems = [f"this change removed {', '.join(lost[:4])} (no longer in the file): if that wasn't "
+                        "meant, put it back"] + problems
         weakened = checks.weakened_tests(path, before, after)
         if weakened:
             self.warnings.append(f"{path}: test expectations changed")
@@ -821,6 +872,12 @@ class Tools:
                 timeout = room
                 cut = f"(purr: timeout cut to {room}s: that is all the time left)\n"
         output, code = run_shell(command, self.root, timeout)
+        if ZERO_TESTS.search(output) or (re.search(r"\btests?\b|unittest|pytest", command)
+                                         and "No module named" in output):
+            right = checks.test_command(self.root)
+            ran = re.sub(r"^\s*cd\s+\S+\s*&&\s*", "", command).strip()
+            if right and ran != right:  # a guessed test command that found nothing
+                output += f"\n(purr: no tests ran there. This project's tests run with `{right}` from the project folder.)"
         for line in output.splitlines()[-4:]:
             self.view.note(line[:160])
         if code == -1 and output.startswith("timed out"):
