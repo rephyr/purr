@@ -182,6 +182,10 @@ LOOP_NUDGE = """(purr: your reply got stuck repeating «{said}» and was cut off
 Don't think it all through again: take the next step now with a tool call (read, edit or run), and keep \
 your reply short.)"""
 
+THINK_NUDGE = """(purr: you thought for a long time without acting, so purr cut your thinking off. It had got \
+to: «{tail}» Act on that now: take the next step with a tool call (a read, an edit, a test run), and check \
+the result instead of working everything out in your head.)"""
+
 EMPTY_NUDGE = """(purr: your reply was empty. Look at the last results you got: if anything looks \
 wrong, fix it now; if everything is done, give a short summary of what you changed.)"""
 

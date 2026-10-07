@@ -28,7 +28,7 @@ from .jobs import Jobs
 from .prompts import (  # noqa: F401 - the words purr says; some only re-exported for others
     SYSTEM, ASK_TOOLS, LEARN, LEARN_NUDGE, LEARN_SHORTEN, PAIR,
     PAIR_HAND_BACK, CHAT, CREATE, PLAN, TICKET_WORK, TIME_INTRO, PILOT,
-    TIME_NOTES, CUT_NUDGE, LOOP_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK, FINAL_CHECK_GREEN, FINAL_CHECK_RED,
+    TIME_NOTES, CUT_NUDGE, LOOP_NUDGE, THINK_NUDGE, EMPTY_NUDGE, SERVICES, FINAL_CHECK_LIGHT, FINAL_CHECK, FINAL_CHECK_GREEN, FINAL_CHECK_RED,
     ONE_SHOT_CHECK, EVIDENCE_PASS, SCRATCH_NOTE, ONE_SHOT_SHORT_CHECK, NOBODY, REFINE,
     HELPER, REVIEW, REVIEW_NOTE, COMPACT, TASK_LINE, ASK_LINE,
     ONE_SHOT_LINE, IDENTITY_TAIL, APPROVE_LINE, FOLDER_LINE, STEP_BACK, CHECKPOINT, CUT_TAIL, CUT_ACT, GAP_NUDGE, LEDGER_NOTE,
@@ -165,6 +165,8 @@ COMMENT_LINE = re.compile(r"\s*(#|//|--|/\*|\*|\"\"\"|''')")
 OUTSIDE_DIFF_CHARS = 4000  # of the diff showing files that changed behind the model's back
 ASKS_KEPT = 3  # the chat's latest requests a checkpoint quotes
 REPEAT_NUDGE = 2  # same tool call this many times: tell the model to stop repeating
+THINK_BUDGET = 8_000  # tokens of thinking in one step for a local model (think_budget overrides; 0 = none)
+THINK_TAIL = 1500      # characters of the cut thinking it gets back
 PRUNE_TO = 0.15  # trimming old output goes this far under prune_at (a share of the context)
 
 
@@ -1164,6 +1166,14 @@ class Agent:
         url = self.provider.get("base_url", "")
         return self.model.get("provider") in HARD_PROVIDERS or any(f"{p}." in url for p in HARD_PROVIDERS)
 
+    def _think_budget(self):
+        """Tokens a local model may think in one step before purr cuts in (0: no limit). think_budget in
+        config.toml; by default 8k, or a quarter of a smaller context."""
+        if self.model.get("provider") not in LOCAL or self.helper:
+            return 0
+        default = min(THINK_BUDGET, self.limits.context // 4)
+        return int(self.config.get("think_budget", default) or 0)
+
     def _routine_step(self):
         """The last step only looked around (read, grep, list, outline): every tool call in the last
         reply was one of those, and nothing came after their results (no check, no note)."""
@@ -1275,17 +1285,26 @@ class Agent:
         show_think = (lambda s: None) if quiet else self.view.thinking
         said = []  # everything this call has streamed, for the loop breaker
         looping = []
+        thought, thought_chars = [], [0]  # this call's thinking, for the thinking budget
+        budget = self._think_budget() if messages is None and tools else 0
+        if messages is None and getattr(self, "_skip_think", False):
+            think, self._skip_think = False, False  # the step after an over-long think: act, don't think
 
-        def watch(show):
+        def watch(show, thinking=False):
             def seen(piece):
                 show(piece)
                 said.append(piece)
+                if thinking:
+                    thought.append(piece)
+                    thought_chars[0] += len(piece)
+                    if budget and not looping and thought_chars[0] > budget * 4:
+                        looping.append(None)  # thought too long: cut (None: not a repeat)
                 if len(said) % 50 == 0 and not looping:
                     snippet = repeating("".join(said[-400:]))
                     if snippet:
                         looping.append(snippet)
             return seen
-        on_text, on_think = watch(show_text), watch(show_think)
+        on_text, on_think = watch(show_text), watch(show_think, thinking=True)
         attempt = 0
         self._refused = 0  # 400s that made the free router switch, this call
         while True:
@@ -1302,7 +1321,11 @@ class Agent:
                     # it." for 30k tokens, eight minutes): cut it off and say so (turn() nudges it on)
                     reply = {"text": "", "reasoning": "", "tool_calls": [], "usage": None, "finish": "loop",
                              "loop": looping[0], "gen_seconds": 0.0, "call_seconds": 0.0}
-                    self.tools.repairs.append("reply stuck repeating itself -> cut off")
+                    if looping[0] is None:
+                        reply.update(finish="overthought", tail=" ".join("".join(thought)[-THINK_TAIL:].split()))
+                        self.tools.repairs.append("thinking past its budget -> cut, next step acts")
+                    else:
+                        self.tools.repairs.append("reply stuck repeating itself -> cut off")
                 if messages is not None and getattr(self, "turn_stats", None):
                     self.turn_stats["side_s"] += reply.get("call_seconds", 0.0)  # checks, reviews, summaries
                 return reply
@@ -1461,6 +1484,15 @@ class Agent:
 
                 self.messages.append(self._assistant_message(reply))
 
+                if reply["finish"] == "overthought" and loops < 3:
+                    # a local model thinking on and on (Ornith-9B: up to 18k tokens before one edit, minutes
+                    # at 60 tokens a second): keep where its thinking got to, and have it act on that
+                    loops += 1
+                    self.view.note("it thought for a long time: purr cut the thinking and asked it to act", "warn")
+                    self.messages[-1] = {"role": "assistant", "content": "(my thinking was cut off: too long)"}
+                    self.messages.append({"role": "user", "content": THINK_NUDGE.format(tail=reply["tail"])})
+                    self._skip_think = True
+                    continue
                 if reply["finish"] == "loop" and loops < 3:
                     loops += 1
                     self.view.note("the model got stuck repeating itself: purr cut it off", "warn")
