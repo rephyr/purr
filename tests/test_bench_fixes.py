@@ -193,6 +193,26 @@ class FinalCheckTest(unittest.TestCase):
             a._test_report()
         self.assertEqual(waits[-1], agent_module.TEST_TIMEOUT)
 
+    def test_only_a_real_failure_is_called_red(self):
+        # go's "ok", cargo's "0 failed" and mocha's "passing" aren't read as a pass by TESTS_PASSED:
+        # with exit 0 they were told "the tests above fail" right under "they pass"
+        cases = [("ok  \texample.com/x\t0.01s", 0, None),
+                 ("test result: ok. 3 passed; 0 failed; 0 ignored", 0, None),
+                 ("  3 passing (5ms)", 0, None),
+                 ("timed out after 180s", -1, None),
+                 ("Ran 0 tests in 0.000s\n\nNO TESTS RAN", 5, None),
+                 ("===== 3 passed in 0.1s =====", 0, True),
+                 ("--- FAIL: TestX\nFAIL\texample.com/x", 1, False)]
+        for output, code, green in cases:
+            a = agent()
+            a.tools.trust_all = True
+            with mock.patch.object(agent_module.checks, "test_command", lambda root: "go test ./..."), \
+                    mock.patch.object(agent_module, "run_shell", lambda *a, **k: (output, code)):
+                report = a._test_report()
+            self.assertIs(a._tests_green, green, output)
+            # what the model reads follows the verdict: "no tests ran" isn't "THEY FAIL" either
+            self.assertEqual("THEY FAIL" in report, green is False, output)
+
 
 class PromptTest(unittest.TestCase):
     def test_one_shot_prompt_drops_what_needs_a_person(self):

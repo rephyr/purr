@@ -417,6 +417,25 @@ class TrustUndoTest(unittest.TestCase):
         self.assertEqual((Path(a.root) / "x.py").read_text(), "x = 0\n")  # back to the very start
 
 
+class MissingFilesTest(unittest.TestCase):
+    def test_later_tickets_files_arent_called_missing(self):
+        # the plan and ticket 2 name cli.py; ticket 1's final check mustn't push it to make it
+        view = PlanView()
+        a = make_agent(view)
+        a.tools.trust_all = True
+        write_tickets(a.root, [("Parse args in parser.py", "Files: parser.py, notes.md\nChange: add parse"),
+                               ("Add cli.py", "Files: cli.py\nChange: call parse")])
+        steps = [[reply("", tool=("write_file", {"path": "parser.py", "content": "def parse(): pass\n"})),
+                  reply("wrote parser.py"), reply("done")]]
+        prompts = []
+        with mock.patch.object(Agent, "_call", fake_calls(executor_steps=steps, prompts=prompts)), \
+                mock.patch("harness.checks.test_command", return_value=None):
+            a.run_tickets(1, "a parser in parser.py and a CLI in cli.py")
+        check = next(p for p in prompts if "the request names" in p)
+        self.assertIn("`notes.md`", check)  # this ticket's own file is still checked
+        self.assertNotIn("cli.py", check)
+
+
 class PromptTest(unittest.TestCase):
     def test_plan_demands_the_parts_and_small_tickets(self):
         for part in ("Files:", "Change:", "Done when:"):

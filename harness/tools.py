@@ -120,15 +120,20 @@ UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 READ_ONLY = {"read_file", "list_files", "grep", "fetch_url"}
 ZERO_TESTS = re.compile(r"\bRan 0 tests\b|NO TESTS RAN|collected 0 items|\bno tests ran\b|Start directory is not "
                         r"importable|ERROR: file or directory not found")
+MISSING_MODULE = re.compile(r"No module named '?([\w.]+)")
+TEST_RUNNERS = {"pytest", "_pytest", "nose", "nose2"}  # missing: the command is wrong, not the code
 NUMBERED = re.compile(r"^ *\d+\t")  # read_file's line numbers, pasted into an edit
 SKIP_DIRS = {"node_modules", "__pycache__", "venv", "dist", "build", "target"}  # besides hidden ones
 
 
-def files_under(base, glob=None):
+def files_under(base, glob=None, ignored=False):
     """The files below base, as `rg --files` lists them. ripgrep when it's installed (fast, knows
-    .gitignore); plain Python when it isn't (a fresh Mac or CI box), skipping hidden and build folders."""
+    .gitignore); plain Python when it isn't (a fresh Mac or CI box), skipping hidden and build folders.
+    ignored: gitignored files count too (still not hidden or build folders)."""
     if shutil.which("rg"):
         cmd = ["rg", "--files", str(base)] + (["--glob", glob] if glob else [])
+        if ignored:
+            cmd += ["--no-ignore"] + [arg for d in sorted(SKIP_DIRS) for arg in ("--glob", f"!{d}/")]
         return subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout.splitlines()
     base = Path(base)
     if base.is_file():
@@ -294,6 +299,19 @@ def _loose_match(text, old, new):
 
 def _has_numbers(text):
     return any(NUMBERED.match(line) for line in text.split("\n"))
+
+
+def _missing_test_module(output):
+    """True when an import error names the tests themselves (`unittest tests.test_a` run from the wrong
+    folder) or the test runner (`python3 -m pytest` where pytest isn't installed): a command problem.
+    A missing module the tests import (TDD: cache.py not written yet, or a missing dependency) is the
+    code's problem, and another test command fails the same way."""
+    for name in MISSING_MODULE.findall(output):
+        if name.split(".")[0] in TEST_RUNNERS:
+            return True
+        if any(re.fullmatch(r"tests?|test_\w*|\w*_tests?", part) for part in name.split(".")):
+            return True
+    return False
 
 
 def _unnumbered(text):
@@ -1006,8 +1024,8 @@ class Tools:
                 timeout = room
                 cut = f"(purr: timeout cut to {room}s: that is all the time left)\n"
         output, code = run_shell(command, self.root, timeout)
-        if ZERO_TESTS.search(output) or (re.search(r"\btests?\b|unittest|pytest", command)
-                                         and "No module named" in output):
+        if ZERO_TESTS.search(output) or (re.search(r"\btests?\b|unittest|pytest|nose", command)
+                                         and _missing_test_module(output)):
             right = checks.test_command(self.root)
             ran = re.sub(r"^\s*cd\s+\S+\s*&&\s*", "", command).strip()
             if right and ran != right:  # a guessed test command that found nothing

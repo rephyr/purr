@@ -7,15 +7,17 @@ Run: python3 -m unittest discover -s tests -t .
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ["PURR_STATE"] = tempfile.mkdtemp()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from harness import agent as agent_module  # noqa: E402
+from harness import agent as agent_module, tools as tools_module  # noqa: E402
 from tests.test_bench_fixes import one_shot, users  # noqa: E402
 from tests.test_limits import agent, reply, scripted  # noqa: E402
 
@@ -91,6 +93,47 @@ class TestCommandTest(unittest.TestCase):
         self.assertIn("This project's tests run with `python3 -m", out)
         out = a.tools.call("run", json.dumps({"command": "python3 -m unittest test_a"}))
         self.assertNotIn("purr: no tests ran", out)
+
+    def test_tests_from_the_wrong_folder_name_the_right_command(self):
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "a.py").write_text("x = 1\n")
+        Path(a.root, "test_a.py").write_text(TEST)
+        out = a.tools.call("run", json.dumps({"command": "python3 -m unittest tests.test_a"}))
+        self.assertIn("No module named 'tests", out)
+        self.assertIn("This project's tests run with `python3 -m", out)
+
+    def test_a_module_the_tests_import_missing_is_not_a_wrong_command(self):
+        # TDD: the test imports cache.py before it's written; every test command fails the same way, so
+        # pointing at another one sent the model off changing commands instead of writing cache.py
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "tests").mkdir()
+        Path(a.root, "tests", "test_cache.py").write_text(
+            "import unittest\nfrom cache import LRU\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        LRU()\n")
+        commands = ["python3 -m unittest tests.test_cache", "python3 tests/test_cache.py"]
+        has_pytest = subprocess.run(["python3", "-c", "import pytest"], env=tools_module.child_env(a.root), capture_output=True).returncode == 0
+        if has_pytest:  # without pytest on the python3 commands get, "No module named pytest" rightly gets the hint
+            commands.append("python3 -m pytest tests/test_cache.py -q")
+        for command in commands:
+            out = a.tools.call("run", json.dumps({"command": command}))
+            self.assertNotIn("purr: no tests ran", out, command)
+        Path(a.root, "app.py").write_text("import numpyzzz\n")
+        out = a.tools.call("run", json.dumps({"command": "python3 app.py --test"}))
+        self.assertIn("No module named 'numpyzzz'", out)
+        self.assertNotIn("purr: no tests ran", out)
+
+    def test_a_missing_test_runner_names_the_right_command(self):
+        # `python3 -m pytest` where pytest isn't installed: the command is wrong, not the code
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "a.py").write_text("x = 1\n")
+        Path(a.root, "test_a.py").write_text(TEST)
+        for missing in ("pytest", "nose2"):
+            with mock.patch.object(tools_module, "run_shell",
+                                   lambda *k, m=missing: (f"/usr/bin/python3: No module named {m}", 1)):
+                out = a.tools.call("run", json.dumps({"command": f"python3 -m {missing}"}))
+            self.assertIn("This project's tests run with `python3 -m", out, missing)
 
 
 class NumberedEditTest(unittest.TestCase):
@@ -200,6 +243,71 @@ class MissingFilesTest(unittest.TestCase):
         self.assertIn("`tests/test_cat_of_the_day.py`, which does not exist", check)
         self.assertNotIn("cafe/cats.py`", check)
 
+    def check_for(self, request, files, *tools):
+        a = agent()
+        a.tools.trust_all = True
+        for name in files:
+            Path(a.root, name).parent.mkdir(parents=True, exist_ok=True)
+            Path(a.root, name).write_text("x = 1\n")
+            a.tools.seen.add(Path(a.root, name).resolve())
+        scripted(a, [reply("", tool=t) for t in tools] + [reply("Done."), reply("ok")])
+        a.turn(request)
+        return next(u for u in users(a) if "before you finish" in u)
+
+    def test_files_that_are_there_or_were_are_not_called_missing(self):
+        # a bare name in a subfolder, a dot folder, a tool's name, and the old name of a rename
+        write = ("write_file", {"path": "src/app/parser.py", "content": "x = 2\n"})
+        check = self.check_for("Fix the off-by-one in parser.py and .github/workflows/ci.yml, like Node.js does.",
+                               ["src/app/parser.py", ".github/workflows/ci.yml"], write)
+        self.assertNotIn("the request names", check)
+        check = self.check_for("Rename utils.py to helpers.py.", ["utils.py"],
+                               ("write_file", {"path": "helpers.py", "content": "x = 1\n"}),
+                               ("run", {"command": "rm utils.py"}))
+        self.assertNotIn("the request names", check)
+        check = self.check_for("Rename utils.py to helpers.py.", ["utils.py"],
+                               ("write_file", {"path": "util.py", "content": "x = 1\n"}),
+                               ("run", {"command": "rm utils.py"}))
+        self.assertIn("`helpers.py`, which does not exist", check)  # the new name is still checked
+
+    def test_a_bare_name_in_a_gitignored_folder_is_there(self):
+        # rg --files skips gitignored folders: gen/schema.py was called missing
+        root = Path(tempfile.mkdtemp())
+        Path(root, ".git").mkdir()
+        Path(root, ".gitignore").write_text("gen/\n")
+        Path(root, "gen").mkdir()
+        Path(root, "gen", "schema.py").write_text("x = 1\n")
+        a = agent()
+        a.root, a._request = root.resolve(), "fix the types in schema.py and in models.py"
+        self.assertEqual(a._missing_files(), "(purr: the request names `models.py`, which does not exist.)\n")
+
+    def test_a_lookup_that_times_out_calls_nothing_missing(self):
+        a = agent()
+        a._request = "fix parser.py"
+        with mock.patch.object(agent_module, "files_under",
+                               mock.Mock(side_effect=agent_module.subprocess.TimeoutExpired("rg", 30))):
+            self.assertEqual(a._missing_files(), "")
+
+    def test_a_file_a_steer_says_to_delete_is_not_called_missing(self):
+        # "also delete old.py" typed while it worked: after `rm old.py` the check told it to make old.py
+        a = agent()
+        a.tools.trust_all = True
+        for name in ("utils.py", "old.py"):
+            Path(a.root, name).write_text("x = 1\n")
+            a.tools.seen.add(Path(a.root, name).resolve())
+        steps = iter([reply("", tool=("write_file", {"path": "utils.py", "content": "x = 2\n"})),
+                      reply("", tool=("run", {"command": "rm old.py"})), reply("Done."), reply("ok")])
+
+        def fake(*k, **kw):
+            if "old.py" not in a._request and not a.steers:  # typed during its first step
+                a.steers.append("also delete old.py, it's unused")
+            return next(steps)
+        a._call = fake
+        a.turn("tidy up utils.py")
+        self.assertIn("also delete old.py", a._request)
+        self.assertFalse(Path(a.root, "old.py").exists())
+        check = next(u for u in users(a) if "before you finish" in u)
+        self.assertNotIn("the request names", check)
+
 
 class RemovedLinesTest(unittest.TestCase):
     def test_lines_deleted_outright_are_quoted_at_the_check(self):
@@ -215,6 +323,36 @@ class RemovedLinesTest(unittest.TestCase):
         check = next(u for u in users(a) if "before you finish" in u)
         self.assertIn('deleted these lines that were there before: `"sword": {"plank": 2},`', check)
         self.assertNotIn("return 1", check)  # rewritten, not deleted
+
+    def test_a_deletion_from_an_earlier_turn_is_not_quoted_again(self):
+        # turn 1 took the debug print out on request; turn 2's check mustn't say "put them back"
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "app.py").write_text('def run(x):\n    print("debug", x)\n    return x\n')
+        a.tools.seen.add(Path(a.root, "app.py").resolve())
+        scripted(a, [reply("", tool=("write_file", {"path": "app.py", "content": "def run(x):\n    return x\n"})),
+                     reply("done"), reply("ok")])
+        a.turn("remove the debug prints")
+        scripted(a, [reply("", tool=("write_file", {"path": "cli.py", "content": "VERBOSE = True\n"})),
+                     reply("done"), reply("ok")])
+        a.turn("add a --verbose flag")
+        checks = [u for u in users(a) if "before you finish" in u]
+        self.assertEqual(len(checks), 2)
+        self.assertIn("deleted these lines", checks[0])
+        self.assertNotIn("deleted these lines", checks[1])
+
+    def test_a_moved_block_is_not_called_deleted(self):
+        # helper moved above main: the lines are still in the file, putting them back defines it twice
+        a = agent()
+        a.tools.trust_all = True
+        code = "import sys\n\n\ndef main():\n    print(helper(3))\n    return 0\n\n\ndef helper(x):\n    return x * 2\n"
+        Path(a.root, "m.py").write_text(code)
+        a.tools.seen.add(Path(a.root, "m.py").resolve())
+        new = "import sys\n\n\ndef helper(x):\n    return x * 2\n\n\ndef main():\n    print(helper(3))\n    return 0\n"
+        scripted(a, [reply("", tool=("write_file", {"path": "m.py", "content": new})), reply("done"), reply("ok")])
+        a.turn("move helper above main")
+        check = next(u for u in users(a) if "before you finish" in u)
+        self.assertNotIn("deleted these lines", check)
 
 
 class GptOssEditSlipsTest(unittest.TestCase):
