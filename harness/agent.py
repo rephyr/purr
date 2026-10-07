@@ -149,6 +149,9 @@ RETRY_WAITS = [5, 15, 30]  # seconds between tries when an API server hiccups (a
 RETRY_WAITS_LOCAL = [2]    # Ollama on this machine: one more try; it's up or it isn't
 CUT_MAX = 5  # one-shot runs: cut-off replies nudged on before the turn may end (a chat: 2)
 CUT_TAIL_CHARS = 1200  # of a cut-off reply's end, quoted back so it can carry on from there
+# a file path in a request: tests/test_x.py, cafe/cats.py, README.md (a name with a known extension)
+NAMED_FILE = re.compile(r"(?<![\w/.-])(?:[\w.-]+/)*[\w-]+\.(?:py|js|ts|jsx|tsx|go|rs|rb|java|c|h|cpp|gd|md|json|toml|"
+                        r"yaml|yml|txt|csv|sh|html|css)\b")
 ASKS_KEPT = 3  # the chat's latest requests a checkpoint quotes
 REPEAT_NUDGE = 2  # same tool call this many times: tell the model to stop repeating
 PRUNE_TO = 0.15  # trimming old output goes this far under prune_at (a share of the context)
@@ -2067,8 +2070,27 @@ class Agent:
             check = (FINAL_CHECK if self._helper_on("edge_cases") else FINAL_CHECK_LIGHT).format(services=services)
         if self.one_shot and self._on("margin_check"):
             check = check[:-1] + MEASURE_ASK + ")" if check.endswith(".)") else check + MEASURE_ASK
-        self.messages.append({"role": "user", "content": report + self._blind_report() + check})
+        self.messages.append({"role": "user", "content": report + self._blind_report() + self._missing_files() + check})
         return True
+
+    def _missing_files(self):
+        """Files the request names that don't exist: gpt-oss said it added tests/test_cat_of_the_day.py,
+        never wrote it, and the green tests (without it) let that pass."""
+        request = getattr(self, "_request", "")
+        named = dict.fromkeys(m.strip("`'\".,;:()") for m in NAMED_FILE.findall(request))
+        missing = []
+        for name in named:
+            p = Path(name).expanduser()
+            p = p if p.is_absolute() else self.root / p
+            try:
+                if not p.exists() and self.root in p.resolve().parents:
+                    missing.append(name)
+            except (OSError, ValueError):
+                continue
+        if not missing:
+            return ""
+        return (f"(purr: the request names {', '.join('`' + m + '`' for m in missing[:6])}, which "
+                f"{'does' if len(missing) == 1 else 'do'} not exist.)\n")
 
     # ---- the safety net (one-shot runs; safety_net = false turns it off) ----
 

@@ -117,3 +117,18 @@ class CheckpointQuoteTest(unittest.TestCase):
         middle = "the exact rule in the middle"
         a._begin_turn("x" * 1200 + middle + "y" * 600)
         self.assertIn(middle, a._request_quote())
+
+
+class MissingFilesTest(unittest.TestCase):
+    def test_a_named_file_that_was_never_written_is_pointed_out(self):
+        a = agent()
+        a.tools.trust_all = True
+        Path(a.root, "cafe").mkdir()
+        Path(a.root, "cafe/cats.py").write_text("CATS = []\n")
+        a.tools.seen.add(Path(a.root, "cafe/cats.py").resolve())
+        scripted(a, [reply("", tool=("write_file", {"path": "cafe/cats.py", "content": "CATS = [1]\n"})),
+                     reply("Added cat_of_the_day and tests/test_cat_of_the_day.py."), reply("ok")])
+        a.turn("Add cat_of_the_day() to cafe/cats.py. Write tests in tests/test_cat_of_the_day.py.")
+        check = next(u for u in users(a) if "before you finish" in u)
+        self.assertIn("`tests/test_cat_of_the_day.py`, which does not exist", check)
+        self.assertNotIn("cafe/cats.py`", check)
