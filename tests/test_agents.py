@@ -209,12 +209,13 @@ class SteerWindowTest(Folders, unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(110, 32)) as pilot:
             await pilot.pause(0.3)
             app.busy, app.job = True, "turn"  # as if a turn were running
-            await pilot.press(*"use pathlib")
+            app.prompt.focus()
+            app.prompt.load_text("use pathlib")
             await pilot.press("enter")
-            await pilot.pause(0.2)
+            await pilot.pause(0.3)
             self.assertEqual(app.agent.steers, ["use pathlib"])
             app.job = "compact"  # anything but a turn still waits
-            await pilot.press(*"later")
+            app.prompt.load_text("later")
             await pilot.press("enter")
-            await pilot.pause(0.2)
+            await pilot.pause(0.3)
             self.assertEqual(app.agent.steers, ["use pathlib"])
