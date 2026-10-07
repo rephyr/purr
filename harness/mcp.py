@@ -14,8 +14,11 @@ import json
 import os
 import queue
 import subprocess
+import sys
 import threading
 from pathlib import Path
+
+from .tools import child_env
 
 PURR_DIR = Path(__file__).resolve().parent.parent
 PROTOCOL = "2025-06-18"
@@ -31,6 +34,12 @@ class Server:
     def __init__(self, name, command, cwd, allow=None):
         self.name, self.cwd, self.allow = name, cwd, set(allow) if allow else None
         self.command = [os.path.expanduser(str(c).replace("{purr}", str(PURR_DIR))) for c in command]
+        if self.command[0] in ("python3", "python") and len(self.command) > 1 \
+                and Path(self.command[1]).resolve().is_relative_to(PURR_DIR / "servers"):
+            # purr's own servers run on purr's Python (3.11+, they import tomllib): the env below
+            # leaves purr's venv out, so a bare python3 would be the machine's, maybe a 3.9 or 3.10.
+            # What they report about the project still comes from the project's python3 (on PATH).
+            self.command[0] = sys.executable
         self.proc, self.tools, self.instructions = None, [], ""
         self.env = {}  # extra environment (PURR_OFFLINE=1 in private mode)
         self._id = 0
@@ -40,7 +49,9 @@ class Server:
     def start(self):
         self.proc = subprocess.Popen(self.command, cwd=self.cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, text=True, bufsize=1,
-                                     env={**os.environ, "PROJECT_ROOT": str(self.cwd), **self.env})
+                                     # the env the model's commands get: python_api must see the project's
+                                     # Python and packages, not purr's own venv (`uv run purr`)
+                                     env=child_env(self.cwd, PROJECT_ROOT=str(self.cwd), **self.env))
         self._lines = queue.Queue()  # a fresh one: a restarted server's old reader mustn't feed this one
         threading.Thread(target=self._read, args=(self.proc, self._lines), daemon=True).start()
         try:

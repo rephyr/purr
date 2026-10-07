@@ -37,6 +37,7 @@ from pathlib import Path
 from . import ui
 from .agent import STATE_DIR, Agent
 from .limits import LOCAL
+from .tools import child_env
 
 TASKS_DIR = Path(__file__).resolve().parent.parent / "bench" / "tasks"
 BENCH_DIR = STATE_DIR / "bench"
@@ -62,14 +63,47 @@ def load_tasks(names=None):
     return tasks
 
 
-def grade(task, work):
-    """Copy the hidden tests in and run them. Returns (passed, total, syntax errors)."""
-    syntax = 0
+def task_python(work):
+    """The python3 the model's commands get. Grading runs on it too: under `uv run purr bench`
+    sys.executable is purr's venv (3.12) while the model's python3 is the machine's (3.14), so
+    code that passed the model's own tests could fail to import in grading and score 0."""
+    return shutil.which("python3", path=child_env(work)["PATH"]) or sys.executable
+
+
+COUNT_SYNTAX = """import sys
+from pathlib import Path
+bad = 0
+for f in Path('.').rglob('*.py'):
+    try:
+        compile(f.read_text(errors='replace'), str(f), 'exec')
+    except (SyntaxError, ValueError):
+        bad += 1
+print(bad)"""
+
+
+def syntax_errors(python, work):
+    """How many .py files don't compile, asked of the python the model used, so syntax only a newer
+    Python knows isn't counted as an error. If that python can't answer (it doesn't start, or prints
+    no number), purr counts them itself rather than calling every file fine."""
+    try:
+        r = subprocess.run([python, "-c", COUNT_SYNTAX], cwd=work, capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            return int(r.stdout.strip().splitlines()[-1])  # the last line: a sitecustomize may say more
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        pass
+    bad = 0
     for f in work.rglob("*.py"):
         try:
             compile(f.read_text(errors="replace"), str(f), "exec")
         except (SyntaxError, ValueError):
-            syntax += 1
+            bad += 1
+    return bad
+
+
+def grade(task, work):
+    """Copy the hidden tests in and run them. Returns (passed, total, syntax errors)."""
+    python = task_python(work)
+    syntax = syntax_errors(python, work)
     check = work / "_bench_check"
     shutil.rmtree(check, ignore_errors=True)
     shutil.copytree(task["dir"] / "check", check)
@@ -78,7 +112,7 @@ def grade(task, work):
         for spec in check.glob("test_spec*.py"):
             spec.unlink()
     try:
-        r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "_bench_check", "-t", "."],
+        r = subprocess.run([python, "-m", "unittest", "discover", "-s", "_bench_check", "-t", "."],
                            cwd=work, capture_output=True, text=True, timeout=120)
         out = r.stderr
     except subprocess.TimeoutExpired:
@@ -107,7 +141,9 @@ def scratch(p):
     return None
 
 
-FILE_TEXT = {"old_text", "new_text", "content"}  # what goes into a file: "~ cat café ~" is no path
+# What goes into a file: "~ cat café ~" or `total // 2` is no path. OpenCode's edit names them
+# oldString/newString; skipping only purr's names would throw out OpenCode runs for the same edit.
+FILE_TEXT = {"old_text", "new_text", "content", "oldString", "newString"}
 
 
 def outside(args, work, made=None):
@@ -347,8 +383,9 @@ def run_opencode(config, model, task, work, log_dir, timeout):
     # its own process group, so a timeout also stops the server it starts
     # OpenCode takes its folder from $PWD, not the real working directory: set both, or it
     # works in whatever folder purr was started from
+    # child_env: the same python3 purr's model gets and grading uses, not purr's own venv
     stock = stock_opencode(config, model)
-    env = {**os.environ, "PWD": str(work), "XDG_CONFIG_HOME": str(stock)}
+    env = child_env(work, PWD=str(work), XDG_CONFIG_HOME=str(stock))
     proc = subprocess.Popen(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, start_new_session=True)
     lines, errs = [], []
